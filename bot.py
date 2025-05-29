@@ -31,7 +31,7 @@ last_posted_articles = {}
 scheduler = AsyncIOScheduler(timezone=pytz.utc)  
 
 # Hole die bereits existierende Event-Loop
-loop = asyncio.get_event_loop()
+loop = asyncio.get_running_loop()
 
 # Verbinde den Scheduler mit der bestehenden Event-Loop
 scheduler = AsyncIOScheduler(event_loop=loop)
@@ -141,7 +141,7 @@ rss_feeds = {}  # Struktur: {chat_id: {topic_id: [rss_urls]}}
 scheduler = AsyncIOScheduler(timezone=pytz.utc)
 
 # Funktion zum Abrufen von RSS-Feeds
-async def fetch_rss_feed(context: CallbackContext) -> None:
+async def fetch_rss_feed(context=None):
     for chat_id, feeds in rss_feeds.items():  # Iteriere über Gruppen und deren Feeds
         if not group_status.get(chat_id, False):  # Gruppe aktiv?
             logging.info(f"Bot ist für Gruppe {chat_id} deaktiviert.")
@@ -317,15 +317,14 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
 async def main():
-    # Erstelle die Application
-    application = Application.builder().token("YOUR_TOKEN").build()
-
-    # Erstelle den Scheduler
+    
+    # Initialisiere den Scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(fetch_rss_feed, 'interval', minutes=1)  # Beispiel-Job
+    scheduler.add_job(fetch_rss_feed, 'interval', minutes=1)
     scheduler.start()
 
-    # Führe die Telegram-Bot-Application aus
+    # Telegram Bot-Setup
+    application = Application.builder().token(BOT_TOKEN).build()
     await application.run_polling()
 
 if __name__ == "__main__":
