@@ -17,10 +17,26 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = "7656472273:AAHSmPqRPNbJABP4iy0IVqVFWMp48YOIm8E"
 
 # Globale Variablen
-rss_feeds = {}  # Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
-group_status = {}  # Speichert den Aktivierungsstatus für Gruppen
-last_posted_articles = {}  # Speichert die zuletzt geposteten Artikel
-scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Berlin'))  # Scheduler mit UTC konfigurieren
+
+# Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
+rss_feeds = {}  
+
+# Speichert den Aktivierungsstatus für Gruppen
+group_status = {}  
+
+# Speichert die zuletzt geposteten Artikel
+last_posted_articles = {}  
+
+# Scheduler mit UTC konfigurieren
+scheduler = AsyncIOScheduler(timezone=pytz.utc)  
+
+# Hole die bereits existierende Event-Loop
+loop = asyncio.get_event_loop()
+
+# Verbinde den Scheduler mit der bestehenden Event-Loop
+scheduler = AsyncIOScheduler(event_loop=loop)
+scheduler.start()
+
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
@@ -301,18 +317,16 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
 async def main():
-    # Bot-Instanz erstellen
-    application = Application.builder().token(BOT_TOKEN).build()
+    # Erstelle die Application
+    application = Application.builder().token("YOUR_TOKEN").build()
 
-    # Scheduler konfigurieren
+    # Erstelle den Scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(fetch_rss_feed, 'interval', minutes=2, args=[application])
+    scheduler.add_job(fetch_rss_feed, 'interval', minutes=1)  # Beispiel-Job
     scheduler.start()
 
-    # Bot starten
+    # Führe die Telegram-Bot-Application aus
     await application.run_polling()
 
 if __name__ == "__main__":
-    # Direkten Eventloop starten
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    asyncio.run(main())
