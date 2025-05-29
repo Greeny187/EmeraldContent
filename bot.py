@@ -1,7 +1,8 @@
 import logging
 import feedparser
-from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
 import asyncio
+import pytz
+from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
