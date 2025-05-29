@@ -1,6 +1,7 @@
 import logging
 import feedparser
 import pytz  # Für Zeitzonen
+import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -293,21 +294,24 @@ def main() -> None:
     application.add_handler(CommandHandler("listrss", list_rss_feeds))
     application.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
-  # Scheduler starten
-    scheduler.add_job(
-        fetch_rss_feed,
-        trigger=IntervalTrigger(minutes=2, timezone=pytz.utc),  # Zeitzone explizit setzen
-        args=[application],
-    )
+async def main():
+
+    # Bot-Instanz erstellen
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    # Scheduler konfigurieren
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(fetch_rss_feed, 'interval', minutes=2, args=[application])
     scheduler.start()
+
+    # Bot starten
+    await application.run_polling()
 
     # Registrierung der Nachricht-Handler
     application.add_handler(MessageHandler(filters.TEXT, message_filter))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
     application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
-    # Start des Bots
-    application.run_polling()
-
 if __name__ == "__main__":
-    main()
+    # Eventloop korrekt starten
+    asyncio.run(main())
