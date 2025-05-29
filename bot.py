@@ -1,6 +1,6 @@
 import logging
 import feedparser
-import pytz  # Für Zeitzonen
+from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -19,7 +19,7 @@ BOT_TOKEN = "7656472273:AAHSmPqRPNbJABP4iy0IVqVFWMp48YOIm8E"
 rss_feeds = {}  # Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
 group_status = {}  # Speichert den Aktivierungsstatus für Gruppen
 last_posted_articles = {}  # Speichert die zuletzt geposteten Artikel
-scheduler = AsyncIOScheduler(timezone=pytz.utc)
+scheduler = AsyncIOScheduler(timezone=utc)  # Scheduler mit UTC konfigurieren
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
