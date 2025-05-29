@@ -5,6 +5,7 @@ import pytz
 from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.job import Job
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackContext, MessageHandler, CallbackQueryHandler, filters
@@ -31,7 +32,8 @@ last_posted_articles = {}
 scheduler = AsyncIOScheduler(timezone=pytz.utc)  
 
 # Hole die bereits existierende Event-Loop
-loop = asyncio.get_running_loop()
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 # Verbinde den Scheduler mit der bestehenden Event-Loop
 scheduler = AsyncIOScheduler(event_loop=loop)
@@ -317,11 +319,15 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
 async def main():
-    
+
     # Initialisiere den Scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(fetch_rss_feed, 'interval', minutes=1)
+    scheduler.add_job(fetch_rss_feed, 'interval', minutes=2)
     scheduler.start()
+
+    # Verhindere, dass der Event-Loop sofort schließt
+    while True:
+        await asyncio.sleep(1)
 
     # Telegram Bot-Setup
     application = Application.builder().token(BOT_TOKEN).build()
