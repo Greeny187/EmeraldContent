@@ -294,8 +294,12 @@ def main() -> None:
     application.add_handler(CommandHandler("listrss", list_rss_feeds))
     application.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
-async def main():
+  # Registrierung der Nachricht-Handler
+    application.add_handler(MessageHandler(filters.TEXT, message_filter))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
+async def main():
     # Bot-Instanz erstellen
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -307,11 +311,7 @@ async def main():
     # Bot starten
     await application.run_polling()
 
-    # Registrierung der Nachricht-Handler
-    application.add_handler(MessageHandler(filters.TEXT, message_filter))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
-    application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
-
 if __name__ == "__main__":
-    # Eventloop korrekt starten
-    asyncio.run(main())
+    # Direkten Eventloop starten
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
