@@ -16,12 +16,29 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn zu den Heroku Config Vars hinzu.")
+WEBHOOK_URL = f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{BOT_TOKEN}"
 HEROKU_APP_NAME = os.getenv("HEROKU_APP_NAME")
 PORT = int(os.environ.get("PORT", 8443))
 
-    # Startet den Bot
+# Webhook
+
+app = Application.builder().token(BOT_TOKEN).build()
+app.run_webhook(
+    listen="0.0.0.0",
+    port=int(os.getenv("PORT", 8443)),
+    url_path=BOT_TOKEN,
+    webhook_url=WEBHOOK_URL,
+)
+
+# Errorhandler
+
+async def error_handler(update, context):
+    print(f"Update {update} caused error {context.error}")
+
+app.add_error_handler(error_handler)
+
+# Startet den Bot
+
 application = Application.builder().token(BOT_TOKEN).build()
 application.run_polling()
 
