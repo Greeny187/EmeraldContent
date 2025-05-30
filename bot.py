@@ -305,17 +305,20 @@ async def set_role(update: Update, context: CallbackContext) -> None:
 # --- Main-Funktion ---
 
 # Main-Funktion
-def main():
+async def main():
     # Application erstellen
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Webhook konfigurieren
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{HEROKU_APP_NAME}.herokuapp.com/{BOT_TOKEN}",
-    )
+    if HEROKU_APP_NAME:
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=f"https://{HEROKU_APP_NAME}.herokuapp.com/{BOT_TOKEN}",
+        )
+    else:
+        await application.run_polling()
 
     # Registrierung der Kommandohandler
     application.add_handler(CommandHandler("start", start))
@@ -335,8 +338,6 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT, message_filter))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
     application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
-
-async def main():
 
     # Initialisiere den Scheduler
     scheduler = AsyncIOScheduler()
