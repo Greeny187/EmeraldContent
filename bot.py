@@ -2,6 +2,7 @@ import logging
 import feedparser
 import asyncio
 import pytz
+import os
 from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -14,8 +15,13 @@ from telegram.ext import (
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
 
-# Dein Bot-Token hier einfügen
-BOT_TOKEN = "7656472273:AAHSmPqRPNbJABP4iy0IVqVFWMp48YOIm8E"
+# Lade den Token aus den Umgebungsvariablen
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn zu den Heroku Config Vars hinzu.")
+
+application = Application.builder().token(BOT_TOKEN).build()
 
 # Globale Variablen
 
