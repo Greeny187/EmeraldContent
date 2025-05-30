@@ -339,5 +339,8 @@ async def main():
     application = Application.builder().token(BOT_TOKEN).build()
     await application.run_polling()
 
+    # Startet den Bot
+application.run_polling()
+
 if __name__ == "__main__":
     asyncio.run(main())
