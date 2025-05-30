@@ -47,7 +47,6 @@ asyncio.set_event_loop(loop)
 scheduler = AsyncIOScheduler(event_loop=loop)
 scheduler.start()
 
-
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
