@@ -15,15 +15,14 @@ from telegram.ext import (
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
 
-# Lade den Token aus den Umgebungsvariablen
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn zu den Heroku Config Vars hinzu.")
-
-application = Application.builder().token(BOT_TOKEN).build()
+HEROKU_APP_NAME = os.getenv("HEROKU_APP_NAME")
+PORT = int(os.environ.get("PORT", 8443))
 
     # Startet den Bot
+application = Application.builder().token(BOT_TOKEN).build()
 application.run_polling()
 
 # Globale Variablen
@@ -305,27 +304,37 @@ async def set_role(update: Update, context: CallbackContext) -> None:
 
 # --- Main-Funktion ---
 
-def main() -> None:
+# Main-Funktion
+def main():
+    # Application erstellen
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Webhook konfigurieren
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://{HEROKU_APP_NAME}.herokuapp.com/{BOT_TOKEN}",
+    )
+
     # Registrierung der Kommandohandler
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("startbot", start_bot))
-application.add_handler(CommandHandler("stopbot", stop_bot))
-application.add_handler(CommandHandler("ban", ban))
-application.add_handler(CommandHandler("mute", mute))
-application.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
-application.add_handler(CommandHandler("faq", faq))
-application.add_handler(CommandHandler("forward", forward_message))
-application.add_handler(CommandHandler("setrole", set_role))
-application.add_handler(CommandHandler("setrss", set_rss_feed))
-application.add_handler(CommandHandler("listrss", list_rss_feeds))
-application.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("startbot", start_bot))
+    application.add_handler(CommandHandler("stopbot", stop_bot))
+    application.add_handler(CommandHandler("ban", ban))
+    application.add_handler(CommandHandler("mute", mute))
+    application.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
+    application.add_handler(CommandHandler("faq", faq))
+    application.add_handler(CommandHandler("forward", forward_message))
+    application.add_handler(CommandHandler("setrole", set_role))
+    application.add_handler(CommandHandler("setrss", set_rss_feed))
+    application.add_handler(CommandHandler("listrss", list_rss_feeds))
+    application.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
   # Registrierung der Nachricht-Handler
-application.add_handler(MessageHandler(filters.TEXT, message_filter))
-application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
-application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
+    application.add_handler(MessageHandler(filters.TEXT, message_filter))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
 async def main():
 
