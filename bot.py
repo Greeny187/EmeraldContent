@@ -23,6 +23,9 @@ if not BOT_TOKEN:
 
 application = Application.builder().token(BOT_TOKEN).build()
 
+    # Startet den Bot
+application.run_polling()
+
 # Globale Variablen
 
 # Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
@@ -338,9 +341,6 @@ async def main():
     # Telegram Bot-Setup
     application = Application.builder().token(BOT_TOKEN).build()
     await application.run_polling()
-
-    # Startet den Bot
-    application.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
