@@ -309,23 +309,23 @@ def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Registrierung der Kommandohandler
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("startbot", start_bot))
-    application.add_handler(CommandHandler("stopbot", stop_bot))
-    application.add_handler(CommandHandler("ban", ban))
-    application.add_handler(CommandHandler("mute", mute))
-    application.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
-    application.add_handler(CommandHandler("faq", faq))
-    application.add_handler(CommandHandler("forward", forward_message))
-    application.add_handler(CommandHandler("setrole", set_role))
-    application.add_handler(CommandHandler("setrss", set_rss_feed))
-    application.add_handler(CommandHandler("listrss", list_rss_feeds))
-    application.add_handler(CommandHandler("stoprss", stop_rss_feed))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("startbot", start_bot))
+application.add_handler(CommandHandler("stopbot", stop_bot))
+application.add_handler(CommandHandler("ban", ban))
+application.add_handler(CommandHandler("mute", mute))
+application.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
+application.add_handler(CommandHandler("faq", faq))
+application.add_handler(CommandHandler("forward", forward_message))
+application.add_handler(CommandHandler("setrole", set_role))
+application.add_handler(CommandHandler("setrss", set_rss_feed))
+application.add_handler(CommandHandler("listrss", list_rss_feeds))
+application.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
   # Registrierung der Nachricht-Handler
-    application.add_handler(MessageHandler(filters.TEXT, message_filter))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
-    application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
+application.add_handler(MessageHandler(filters.TEXT, message_filter))
+application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
 async def main():
 
