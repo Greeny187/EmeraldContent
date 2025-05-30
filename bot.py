@@ -3,10 +3,6 @@ import feedparser
 import asyncio
 import pytz
 import os
-from pytz import utc  # Importiere die UTC-Zeitzone aus pytz
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.job import Job
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackContext, MessageHandler, CallbackQueryHandler, filters
@@ -16,18 +12,8 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APP_NAME = os.getenv("HEROKU_APP_NAME")  # Ensure HEROKU_APP_NAME is set as an env variable
-WEBHOOK_URL = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
-PORT = int(os.environ.get("PORT", 8443))
-
-# Errorhandler
-
-async def error_handler(update, context):
-    print(f"Update {update} caused error {context.error}")
-
-# Startet den Bot
-
-application = Application.builder().token(BOT_TOKEN).build()
+if not BOT_TOKEN:
+    raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn zu den Heroku Config Vars hinzu.")
 
 # Globale Variablen
 
@@ -39,20 +25,6 @@ group_status = {}
 
 # Speichert die zuletzt geposteten Artikel
 last_posted_articles = {}  
-
-# Scheduler mit UTC konfigurieren
-scheduler = AsyncIOScheduler(timezone=pytz.utc)  
-
-# Hole die bereits existierende Event-Loop
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-# Verbinde den Scheduler mit der bestehenden Event-Loop
-scheduler = AsyncIOScheduler(event_loop=loop)
-scheduler.start()
-if not scheduler.running:
-    scheduler.start()
-    
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
@@ -154,7 +126,6 @@ async def clean_delete_accounts(update: Update, context: CallbackContext) -> Non
 
 # Globale Variablen für die RSS-Funktion
 rss_feeds = {}  # Struktur: {chat_id: {topic_id: [rss_urls]}}
-scheduler = AsyncIOScheduler(timezone=pytz.utc)
 
 # Funktion zum Abrufen von RSS-Feeds
 async def fetch_rss_feed(context=None):
@@ -310,50 +281,34 @@ async def set_role(update: Update, context: CallbackContext) -> None:
 
 # --- Main-Funktion ---
 
-# Main-Funktion
-async def main():
+def main():
     # Application erstellen
-    application = Application.builder().token(BOT_TOKEN).build()
-
-# Run the bot with Webhook
-    application.run_webhook(
-    listen="0.0.0.0",
-    port=int(os.getenv("PORT", 8443)),
-    url_path=BOT_TOKEN,
-    webhook_url=WEBHOOK_URL
-)
+    app = Application.builder().token(BOT_TOKEN).build()
 
     # Registrierung der Kommandohandler
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("startbot", start_bot))
-    application.add_handler(CommandHandler("stopbot", stop_bot))
-    application.add_handler(CommandHandler("ban", ban))
-    application.add_handler(CommandHandler("mute", mute))
-    application.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
-    application.add_handler(CommandHandler("faq", faq))
-    application.add_handler(CommandHandler("forward", forward_message))
-    application.add_handler(CommandHandler("setrole", set_role))
-    application.add_handler(CommandHandler("setrss", set_rss_feed))
-    application.add_handler(CommandHandler("listrss", list_rss_feeds))
-    application.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("startbot", start_bot))
+    app.add_handler(CommandHandler("stopbot", stop_bot))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("mute", mute))
+    app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
+    app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(CommandHandler("forward", forward_message))
+    app.add_handler(CommandHandler("setrole", set_role))
+    app.add_handler(CommandHandler("setrss", set_rss_feed))
+    app.add_handler(CommandHandler("listrss", list_rss_feeds))
+    app.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
   # Registrierung der Nachricht-Handler
-    application.add_handler(MessageHandler(filters.TEXT, message_filter))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
-    application.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
+    app.add_handler(MessageHandler(filters.TEXT, message_filter))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    app.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
 
-    # Initialisiere den Scheduler
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(fetch_rss_feed, 'interval', minutes=2)
-    scheduler.start()
-
-    # Verhindere, dass der Event-Loop sofort schließt
-    while True:
-        await asyncio.sleep(1)
+    # RSS-Job über job_queue alle 2 Minuten ausführen
+    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
 
     # Telegram Bot-Setup
-    application = Application.builder().token(BOT_TOKEN).build()
-    await application.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
