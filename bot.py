@@ -25,12 +25,9 @@ PORT = int(os.environ.get("PORT", 8443))
 async def error_handler(update, context):
     print(f"Update {update} caused error {context.error}")
 
-application.add_error_handler(error_handler)
-
 # Startet den Bot
 
 application = Application.builder().token(BOT_TOKEN).build()
-application.run_polling()
 
 # Globale Variablen
 
