@@ -16,26 +16,16 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{BOT_TOKEN}"
-HEROKU_APP_NAME = os.getenv("HEROKU_APP_NAME")
+APP_NAME = os.getenv("HEROKU_APP_NAME")  # Ensure HEROKU_APP_NAME is set as an env variable
+WEBHOOK_URL = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
 PORT = int(os.environ.get("PORT", 8443))
-
-# Webhook
-
-app = Application.builder().token(BOT_TOKEN).build()
-app.run_webhook(
-    listen="0.0.0.0",
-    port=int(os.getenv("PORT", 8443)),
-    url_path=BOT_TOKEN,
-    webhook_url=WEBHOOK_URL,
-)
 
 # Errorhandler
 
 async def error_handler(update, context):
     print(f"Update {update} caused error {context.error}")
 
-app.add_error_handler(error_handler)
+application.add_error_handler(error_handler)
 
 # Startet den Bot
 
@@ -63,6 +53,9 @@ asyncio.set_event_loop(loop)
 # Verbinde den Scheduler mit der bestehenden Event-Loop
 scheduler = AsyncIOScheduler(event_loop=loop)
 scheduler.start()
+if not scheduler.running:
+    scheduler.start()
+    
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
@@ -325,16 +318,13 @@ async def main():
     # Application erstellen
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Webhook konfigurieren
-    if HEROKU_APP_NAME:
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"https://{HEROKU_APP_NAME}.herokuapp.com/{BOT_TOKEN}",
-        )
-    else:
-        await application.run_polling()
+# Run the bot with Webhook
+    application.run_webhook(
+    listen="0.0.0.0",
+    port=int(os.getenv("PORT", 8443)),
+    url_path=BOT_TOKEN,
+    webhook_url=WEBHOOK_URL
+)
 
     # Registrierung der Kommandohandler
     application.add_handler(CommandHandler("start", start))
