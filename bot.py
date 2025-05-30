@@ -340,7 +340,7 @@ async def main():
     await application.run_polling()
 
     # Startet den Bot
-application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
