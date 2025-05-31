@@ -338,7 +338,8 @@ async def clean_delete_accounts(update: Update, context: CallbackContext) -> Non
 # ----------------------------------------------------------------------------------------------------------------------
 # 11) RSS‐Funktionen (wenn du RSS noch brauchst, unverändert)
 # ----------------------------------------------------------------------------------------------------------------------
-async def fetch_rss_feed(context: CallbackContext) -> None:
+async def fetch_rss_feed(context: CallbackContext):
+    logging.info("Fetching RSS feed...")
     """
     Überprüft gespeicherte RSS-Feeds und postet neue Artikel.
     """
@@ -540,7 +541,10 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
 
     # 7) RSS‐Jobqueue (alle 2 Minuten)
-    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
+    app.job_queue.start()
+
+    # Add repeating RSS feed job
+    app.job_queue.run_repeating(fetch_rss_feed, interval=500, first=3)
 
     # 8) Bot starten (Polling)
     app.run_polling()
