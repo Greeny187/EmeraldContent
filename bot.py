@@ -17,6 +17,11 @@ if not BOT_TOKEN:
 
 # Globale Variablen
 
+# ========== Globale Speicher für pro-Group-Strings ==========
+welcome_texts = {}  # chat_id → willkommen-Nachricht
+rules_texts   = {}  # chat_id → regelsatz
+faq_texts     = {}  # chat_id → faq-Text
+
 # Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
 rss_feeds = {}  
 
@@ -25,6 +30,24 @@ group_status = {}
 
 # Speichert die zuletzt geposteten Artikel
 last_posted_articles = {}  
+
+# Abfrage Admin-/Inhaberrechte
+
+async def is_admin(update: Update, context: CallbackContext) -> bool:
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    try:
+        chat_member = await context.bot.get_chat_member(chat_id, user_id)
+        # Hier prüfen wir explizit auf "administrator" ODER "creator"
+        if chat_member.status in ["administrator", "creator"]:
+            return True
+    except Exception as e:
+        logging.error(f"Fehler beim Überprüfen der Adminrechte: {e}")
+    return False
+
+# Kommando-Handler für den Startbefehl
+async def start(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text("Hallo! Ich bin dein Gruppenverwaltungs-Bot.")
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
@@ -44,28 +67,89 @@ async def stop_bot(update: Update, context: CallbackContext) -> None:
     group_status[chat_id] = False
     await update.message.reply_text("Der Bot wurde für diese Gruppe deaktiviert.")
 
-# Funktion zum Prüfen von Adminrechten
-async def is_admin(update: Update, context: CallbackContext) -> bool:
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    try:
-        chat_member = await context.bot.get_chat_member(chat_id, user_id)
-        if chat_member.status in ["administrator", "creator"]:
-            return True
-    except Exception as e:
-        logging.error(f"Fehler beim Überprüfen der Adminrechte: {e}")
-    return False
-
 # --- Bot-Funktionen ---
 
-# Begrüßungsnachricht für neue Mitglieder
-async def welcome(update: Update, context: CallbackContext) -> None:
-    new_member = update.message.new_chat_members[0]  # Neuestes Mitglied
-    await update.message.reply_text(f"Willkommen, {new_member.full_name}! \ud83c\udf89 Bitte lese die Regeln: /rules")
+# -----------------------------------
+# setwelcome: Legt die Welcome-Nachricht fest
+async def set_welcome(update: Update, context: CallbackContext) -> None:
+    if not await is_admin(update, context):
+        await update.message.reply_text("Nur Administratoren dürfen den Willkommens-Text setzen.")
+        return
 
-# Kommando-Handler für den Startbefehl
-async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("Hallo! Ich bin dein Gruppenverwaltungs-Bot.")
+    chat_id = update.effective_chat.id
+    if len(context.args) == 0:
+        await update.message.reply_text("Bitte gib den Begrüßungstext an. Beispiel:\n/setwelcome Willkommen in unserer Gruppe, {user}!")
+        return
+
+    # Alles nach dem Befehl (/setwelcome) zusammenfügen
+    text = " ".join(context.args)
+    welcome_texts[chat_id] = text
+    await update.message.reply_text("Begrüßungstext gespeichert.")
+
+# -----------------------------------
+# setrules: Legt den Rules-Text fest
+async def set_rules(update: Update, context: CallbackContext) -> None:
+    if not await is_admin(update, context):
+        await update.message.reply_text("Nur Administratoren dürfen den Rules-Text setzen.")
+        return
+
+    chat_id = update.effective_chat.id
+    if len(context.args) == 0:
+        await update.message.reply_text("Bitte gib den Regeln-Text an. Beispiel:\n/setrules 1. Kein Spam 2. Höflicher Umgang ...")
+        return
+
+    text = " ".join(context.args)
+    rules_texts[chat_id] = text
+    await update.message.reply_text("Regeln gespeichert.")
+
+# -----------------------------------
+# setfaq: Legt den FAQ-Text fest
+async def set_faq(update: Update, context: CallbackContext) -> None:
+    if not await is_admin(update, context):
+        await update.message.reply_text("Nur Administratoren dürfen den FAQ-Text setzen.")
+        return
+
+    chat_id = update.effective_chat.id
+    if len(context.args) == 0:
+        await update.message.reply_text("Bitte gib den FAQ-Text an. Beispiel:\n/setfaq Wie werde ich Mitglied? → Klicke auf Einladungslink ...")
+        return
+
+    text = " ".join(context.args)
+    faq_texts[chat_id] = text
+    await update.message.reply_text("FAQ-Text gespeichert.")
+
+# -----------------------------------
+
+async def welcome(update: Update, context: CallbackContext) -> None:
+    new_member = update.message.new_chat_members[0]
+    chat_id = update.effective_chat.id
+
+    # Standard-Fallback, falls noch kein Text gesetzt wurde
+    default_text = f"Willkommen, {new_member.full_name}! 🎉"
+    text_template = welcome_texts.get(chat_id, default_text)
+
+    # Ersetze Platzhalter {user} mit dem Namen des neuen Mitglieds
+    message = text_template.replace("{user}", new_member.full_name)
+    await update.message.reply_text(message)
+
+# /rules: Gibt die für diese Gruppe gespeicherten Regeln zurück
+async def rules(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    text = rules_texts.get(chat_id)
+    if not text:
+        await update.message.reply_text("Für diese Gruppe wurden noch keine Regeln hinterlegt. Bitte benutze /setrules, um sie festzulegen.")
+    else:
+        await update.message.reply_text(text)
+
+# -----------------------------------
+# /faq: Gibt die gespeicherten FAQs zurück
+async def faq(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    text = faq_texts.get(chat_id)
+    if not text:
+        await update.message.reply_text("Für diese Gruppe wurden noch keine FAQs hinterlegt. Bitte benutze /setfaq, um sie festzulegen.")
+    else:
+        await update.message.reply_text(text)
 
 # Funktion zum Bannen eines Benutzers
 async def ban(update: Update, context: CallbackContext) -> None:
@@ -227,16 +311,6 @@ async def list_rss_feeds(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(response, parse_mode="HTML")
 
-# Funktion FAQ
-async def faq(update: Update, context: CallbackContext) -> None:
-    faq_text = """
-    H\u00e4ufig gestellte Fragen:
-    1. Wie werde ich Mitglied? -> Klicke auf den Einladungslink.
-    2. Wo finde ich die Regeln? -> Benutze den Befehl /rules.
-    3. Wie kann ich den Admin kontaktieren? -> Schreibe uns eine Nachricht.
-    """
-    await update.message.reply_text(faq_text)
-
 # Filter für Spam und Links
 async def message_filter(update: Update, context: CallbackContext) -> None:
     # Beispiel für Filter von Links
@@ -293,16 +367,23 @@ def main():
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
     app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(CommandHandler("rules",rules))
     app.add_handler(CommandHandler("forward", forward_message))
     app.add_handler(CommandHandler("setrole", set_role))
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    app.add_handler(CommandHandler("setwelcome", set_welcome))
+    app.add_handler(CommandHandler("setrules", set_rules))
+    app.add_handler(CommandHandler("setfaq", set_faq))
 
   # Registrierung der Nachricht-Handler
     app.add_handler(MessageHandler(filters.TEXT, message_filter))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
     app.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
+    app.add_handler(CommandHandler("rules", rules))
+    app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 
     # RSS-Job über job_queue alle 2 Minuten ausführen
     app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
