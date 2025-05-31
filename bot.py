@@ -338,60 +338,60 @@ async def clean_delete_accounts(update: Update, context: CallbackContext) -> Non
 # ----------------------------------------------------------------------------------------------------------------------
 # 11) RSS‐Funktionen (wenn du RSS noch brauchst, unverändert)
 # ----------------------------------------------------------------------------------------------------------------------
-async def fetch_rss_feed(context: CallbackContext):
-    logging.info("Fetching RSS feed...")
+# ----------------------------------------------------------------------------------------------------------------------
+# RSS-Funktionen: Fetch Feed, Add Feed, Stop Feed, List Feeds
+# ----------------------------------------------------------------------------------------------------------------------
+
+async def fetch_rss_feed(context: CallbackContext) -> None:
     """
     Überprüft gespeicherte RSS-Feeds und postet neue Artikel.
     """
+    logger.info("Starte Abruf der RSS-Feeds ...")
     for chat_id, feeds in rss_feeds.items():
         if not group_status.get(chat_id, False):
-            # Wenn der RSS-Feed deaktiviert ist, überspringen
+            logger.info(f"RSS für Gruppe {chat_id} ist deaktiviert.")
             continue
 
         for feed_data in feeds:
             rss_url = feed_data["url"]
-            topic_id = feed_data.get("topic_id")  # Optionaler Thread
+            topic_id = feed_data.get("topic_id")  # Optional: Thread für Nachrichten
             try:
-                logger.info(f"Rufe RSS-Feed ab: {rss_url}")
+                logger.info(f"Abrufen des RSS-Feeds: {rss_url}")
                 feed = feedparser.parse(rss_url)
-                
-                # Check auf Fehler und leere Feeds
-                if feed.bozo or not feed.entries:
-                    logger.warning(f"RSS-Feed nicht lesbar oder leer: {rss_url}")
+
+                if feed.bozo:
+                    logger.warning(f"Ungültiger Feed {rss_url}: {feed.bozo_exception}")
                     continue
 
-                response = ""
+                if not feed.entries:
+                    logger.info(f"Keine neuen Artikel für {rss_url}.")
+                    continue
+
                 new_articles = []
-                for article in feed.entries[:3]:  # Nur die letzten 3 Artikel
-                    # Prüfen, ob der Artikel-Link schon gepostet wurde
+                for article in feed.entries[:3]:
                     if article.link in last_posted_articles.get(chat_id, []):
                         continue
-                    
-                    # Neue Artikel sammeln
                     new_articles.append(article)
                     last_posted_articles.setdefault(chat_id, []).append(article.link)
-
-                    # Optional: Begrenzen der Liste auf die letzten 10 Artikel
                     last_posted_articles[chat_id] = last_posted_articles[chat_id][-10:]
 
-                # Nur posten, wenn es neue Artikel gibt
                 if new_articles:
-                    for article in new_articles:
-                        response += f"📰 <b>{article.title}</b>\n{article.link}\n\n"
-
-                    # Nachricht im Chat senden
+                    response = "\n\n".join(
+                        [f"📰 <b>{a.title}</b>\n{a.link}" for a in new_articles]
+                    )
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"📢 <b>Neue Artikel aus dem RSS-Feed:</b>\n\n{response}",
+                        text=f"📢 <b>Neue Artikel:</b>\n\n{response}",
                         parse_mode="HTML",
                         message_thread_id=topic_id,
                     )
                     logger.info(f"Neue Artikel in Gruppe {chat_id} gepostet.")
-                else:
-                    logger.info(f"Keine neuen Artikel für {rss_url} in Gruppe {chat_id}.")
+            except Exception as e:
+                logger.error(f"Fehler beim Abrufen des Feeds {rss_url} für {chat_id}: {e}")
 
-            except Exception as error:
-                logger.error(f"Fehler beim Abrufen von {rss_url} für Gruppe {chat_id}: {error}")
+async def start_rss_updates(app: Application) -> None:
+    logger.info("Starte die RSS-Feed-Updates.")
+    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
 
 async def set_rss_feed(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
@@ -541,7 +541,9 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
 
     # 7) RSS‐Jobqueue (alle 2 Minuten)
+    # RSS-Jobs initialisieren
     app.job_queue.start()
+    app.create_task(start_rss_updates(app))
 
     # Add repeating RSS feed job
     app.job_queue.run_repeating(fetch_rss_feed, interval=500, first=3)
