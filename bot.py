@@ -460,8 +460,6 @@ def main():
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
-    app.add_handler(CommandHandler("faq", faq))
-    app.add_handler(CommandHandler("rules",rules))
     app.add_handler(CommandHandler("forward", forward_message))
     app.add_handler(CommandHandler("setrole", set_role))
     app.add_handler(CommandHandler("setrss", set_rss_feed))
