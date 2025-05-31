@@ -377,11 +377,6 @@ async def fetch_rss_feed(context: CallbackContext) -> None:
             except Exception as e:
                 logger.error(f"Fehler beim Abrufen des Feeds {feed_url}: {e}")
 
-# Startet die Job-Queue und den RSS-Job
-async def start_rss(app: Application) -> None:
-    logger.info("Starte RSS-Feed-Jobs.")
-    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
-
 async def set_rss_feed(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
         await update.message.reply_text("❌ Nur Administratoren dürfen diesen Befehl verwenden.")
@@ -530,8 +525,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
 
     # 7) RSS-Jobs aktivieren
-    app.job_queue.start()  # Startet die Job-Queue
-    app.create_task(start_rss(app))  # Startet die RSS-Funktion
+    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
 
     # 8) Bot starten (Polling)
     app.run_polling()
