@@ -86,25 +86,40 @@ async def set_welcome(update: Update, context: CallbackContext) -> None:
 
     chat_id = update.effective_chat.id
 
-    # Wurde ein Bild mitgesendet?
+    # 1) Wenn ein Foto geschickt wurde:
     if update.message.photo:
+        # größtes Photo ([-1]) nehmen
         file_id = update.message.photo[-1].file_id
-        caption = update.message.caption if update.message.caption else None
-        welcome_data[chat_id] = {"photo": file_id, "text": caption}
-        await update.message.reply_text("✅ Willkommen-Bild (mit optionalem Text) gespeichert.")
-    else:
-        # Nur Text-Variante
-        if len(context.args) == 0:
-            await update.message.reply_text(
-                "Bitte gib den Begrüßungstext an (oder sende ein Bild mit Caption). Beispiel:\n"
-                "/setwelcome Willkommen, {user}!"
-            )
-            return
-        text = " ".join(context.args)
-        welcome_data[chat_id] = {"photo": None, "text": text}
-        await update.message.reply_text("✅ Willkommen-Text gespeichert.")
 
-# ----- /setrules -----
+        # Caption-Text aus update.message.caption holen
+        caption = update.message.caption or ""
+        caption = caption.strip()  # ggf. Leerzeichen entfernen
+
+        # Speichere: {"photo": file_id, "text": caption (oder None)}
+        welcome_data[chat_id] = {
+            "photo": file_id,
+            "text": caption if caption else None
+        }
+        await update.message.reply_text("✅ Willkommen-Bild (mit optionalem Text) gespeichert.")
+        return
+
+    # 2) Kein Foto, also nur reiner Text
+    # context.args enthält dann die Argumente hinter dem Befehl
+    if len(context.args) == 0:
+        await update.message.reply_text(
+            "Bitte gib den Begrüßungstext an oder sende ein Foto mit Caption.\n"
+            "Beispiel (Text-Variante):\n"
+            "/setwelcome Willkommen, {user}!"
+        )
+        return
+
+    # Text aus context.args zusammensetzen
+    text = " ".join(context.args).strip()
+    welcome_data[chat_id] = {"photo": None, "text": text}
+    await update.message.reply_text("✅ Willkommen-Text gespeichert.")
+
+
+# ------------------------- /setrules -------------------------
 async def set_rules(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
         await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den Rules-Text setzen.")
@@ -114,21 +129,27 @@ async def set_rules(update: Update, context: CallbackContext) -> None:
 
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        caption = update.message.caption if update.message.caption else None
-        rules_data[chat_id] = {"photo": file_id, "text": caption}
-        await update.message.reply_text("✅ Regeln-Bild (mit optionalem Text) gespeichert.")
-    else:
-        if len(context.args) == 0:
-            await update.message.reply_text(
-                "Bitte gib den Regeln-Text an (oder sende ein Bild mit Caption). Beispiel:\n"
-                "/setrules 1. Kein Spam 2. Höflicher Umgang …"
-            )
-            return
-        text = " ".join(context.args)
-        rules_data[chat_id] = {"photo": None, "text": text}
-        await update.message.reply_text("✅ Regeln-Text gespeichert.")
+        caption = update.message.caption or ""
+        caption = caption.strip()
 
-# ----- /setfaq -----
+        rules_data[chat_id] = {"photo": file_id, "text": caption if caption else None}
+        await update.message.reply_text("✅ Rules-Bild (mit optionalem Text) gespeichert.")
+        return
+
+    if len(context.args) == 0:
+        await update.message.reply_text(
+            "Bitte gib den Regeln-Text an oder sende ein Foto mit Caption.\n"
+            "Beispiel (Text-Variante):\n"
+            "/setrules 1. Kein Spam  2. Höflicher Umgang …"
+        )
+        return
+
+    text = " ".join(context.args).strip()
+    rules_data[chat_id] = {"photo": None, "text": text}
+    await update.message.reply_text("✅ Regeln-Text gespeichert.")
+
+
+# ------------------------- /setfaq -------------------------
 async def set_faq(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
         await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den FAQ-Text setzen.")
@@ -138,19 +159,24 @@ async def set_faq(update: Update, context: CallbackContext) -> None:
 
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        caption = update.message.caption if update.message.caption else None
-        faq_data[chat_id] = {"photo": file_id, "text": caption}
+        caption = update.message.caption or ""
+        caption = caption.strip()
+
+        faq_data[chat_id] = {"photo": file_id, "text": caption if caption else None}
         await update.message.reply_text("✅ FAQ-Bild (mit optionalem Text) gespeichert.")
-    else:
-        if len(context.args) == 0:
-            await update.message.reply_text(
-                "Bitte gib den FAQ-Text an (oder sende ein Bild mit Caption). Beispiel:\n"
-                "/setfaq Wie werde ich Mitglied? → Klicke auf Einladungslink …"
-            )
-            return
-        text = " ".join(context.args)
-        faq_data[chat_id] = {"photo": None, "text": text}
-        await update.message.reply_text("✅ FAQ-Text gespeichert.")
+        return
+
+    if len(context.args) == 0:
+        await update.message.reply_text(
+            "Bitte gib den FAQ-Text an oder sende ein Foto mit Caption.\n"
+            "Beispiel (Text-Variante):\n"
+            "/setfaq Wie werde ich Mitglied? → Klicke auf Einladungslink …"
+        )
+        return
+
+    text = " ".join(context.args).strip()
+    faq_data[chat_id] = {"photo": None, "text": text}
+    await update.message.reply_text("✅ FAQ-Text gespeichert.")
 
 # ----- Ausgabe: Begrüßung, Regeln, FAQ -----
 async def welcome_handler(update: Update, context: CallbackContext) -> None:
@@ -159,17 +185,20 @@ async def welcome_handler(update: Update, context: CallbackContext) -> None:
     data = welcome_data.get(chat_id)
 
     if data:
-        # Falls Bild gesetzt
+        # Fall 1: Ein Bild wurde hinterlegt
         if data.get("photo"):
             caption = (data["text"] or "").replace("{user}", new_member.full_name)
             await update.message.reply_photo(photo=data["photo"], caption=caption)
+        # Fall 2: Nur Text
         else:
             text = data.get("text", "").replace("{user}", new_member.full_name)
             await update.message.reply_text(text)
     else:
+        # Default-Text, wenn noch kein set_welcome für diese Gruppe gesetzt ist
         default_text = f"Willkommen, {new_member.full_name}! 🎉"
         await update.message.reply_text(default_text)
 
+# ----- /rules (manuelle Anzeige) -----
 async def rules_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = rules_data.get(chat_id)
@@ -182,6 +211,7 @@ async def rules_handler(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text(data.get("text", ""))
 
+# ----- /faq (manuelle Anzeige) -----
 async def faq_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = faq_data.get(chat_id)
