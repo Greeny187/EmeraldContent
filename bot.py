@@ -339,36 +339,58 @@ async def clean_delete_accounts(update: Update, context: CallbackContext) -> Non
 # 11) RSS‐Funktionen (wenn du RSS noch brauchst, unverändert)
 # ----------------------------------------------------------------------------------------------------------------------
 async def fetch_rss_feed(context: CallbackContext) -> None:
+    """
+    Überprüft gespeicherte RSS-Feeds und postet neue Artikel.
+    """
     for chat_id, feeds in rss_feeds.items():
         if not group_status.get(chat_id, False):
+            # Wenn der RSS-Feed deaktiviert ist, überspringen
             continue
 
         for feed_data in feeds:
             rss_url = feed_data["url"]
-            topic_id = feed_data.get("topic_id")
+            topic_id = feed_data.get("topic_id")  # Optionaler Thread
             try:
                 logger.info(f"Rufe RSS-Feed ab: {rss_url}")
                 feed = feedparser.parse(rss_url)
+                
+                # Check auf Fehler und leere Feeds
                 if feed.bozo or not feed.entries:
+                    logger.warning(f"RSS-Feed nicht lesbar oder leer: {rss_url}")
                     continue
 
                 response = ""
-                for article in feed.entries[:3]:
+                new_articles = []
+                for article in feed.entries[:3]:  # Nur die letzten 3 Artikel
+                    # Prüfen, ob der Artikel-Link schon gepostet wurde
                     if article.link in last_posted_articles.get(chat_id, []):
                         continue
-                    response += f"📌 <b>{article.title}</b>\n{article.link}\n\n"
+                    
+                    # Neue Artikel sammeln
+                    new_articles.append(article)
                     last_posted_articles.setdefault(chat_id, []).append(article.link)
 
-                if response.strip():
+                    # Optional: Begrenzen der Liste auf die letzten 10 Artikel
+                    last_posted_articles[chat_id] = last_posted_articles[chat_id][-10:]
+
+                # Nur posten, wenn es neue Artikel gibt
+                if new_articles:
+                    for article in new_articles:
+                        response += f"📰 <b>{article.title}</b>\n{article.link}\n\n"
+
+                    # Nachricht im Chat senden
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"📰 <b>Neue Artikel aus dem RSS-Feed:</b>\n\n{response}",
+                        text=f"📢 <b>Neue Artikel aus dem RSS-Feed:</b>\n\n{response}",
                         parse_mode="HTML",
                         message_thread_id=topic_id,
                     )
-                    logger.info(f"Artikel in Gruppe {chat_id} gepostet.")
+                    logger.info(f"Neue Artikel in Gruppe {chat_id} gepostet.")
+                else:
+                    logger.info(f"Keine neuen Artikel für {rss_url} in Gruppe {chat_id}.")
+
             except Exception as error:
-                logger.error(f"Fehler beim RSS-Abrufen für Chat {chat_id}: {error}")
+                logger.error(f"Fehler beim Abrufen von {rss_url} für Gruppe {chat_id}: {error}")
 
 async def set_rss_feed(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
