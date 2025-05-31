@@ -10,7 +10,6 @@ from telegram.ext import (
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
-logging.info(f"User {user_id} hat in Chat {chat_id} den Status {chat_member.status}")
 
 #Token import
 
