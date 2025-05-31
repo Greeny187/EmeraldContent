@@ -78,26 +78,24 @@ async def stop_bot(update: Update, context: CallbackContext) -> None:
 
 # --- Bot-Funktionen ---
 
-# setwelcome: Legt die Welcome-Nachricht fest
-
+# ----- /setwelcome -----
 async def set_welcome(update: Update, context: CallbackContext) -> None:
-    # Nur Admins (oder der Creator) dürfen den Text/Bild setzen
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen den Welcome-Text setzen.")
+        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den Welcome-Text setzen.")
         return
 
     chat_id = update.effective_chat.id
 
-    # Prüfen, ob der User ein Photo mitsendet (update.message.photo ist List[PhotoSize])
+    # Wurde ein Bild mitsendet?
     if update.message.photo:
-        # Nimm das größte Photo (letztes Element) und speichere dessen file_id
+        # größtes (letztes) Photo auswählen
         file_id = update.message.photo[-1].file_id
-        # Wenn der User zusätzlich einen Caption‐Text angegeben hat, enthalten context.args den Caption‐Text (ohne das /setwelcome‐Kommando).
+        # Caption-Text aus context.args (falls vorhanden)
         text = " ".join(context.args) if context.args else None
         welcome_data[chat_id] = {"photo": file_id, "text": text}
         await update.message.reply_text("✅ Willkommen-Bild (mit optionalem Text) gespeichert.")
     else:
-        # Nur Text
+        # Nur Text-Variante
         if len(context.args) == 0:
             await update.message.reply_text(
                 "Bitte gib den Begrüßungstext an (oder sende ein Bild mit Caption). Beispiel:\n"
@@ -108,11 +106,10 @@ async def set_welcome(update: Update, context: CallbackContext) -> None:
         welcome_data[chat_id] = {"photo": None, "text": text}
         await update.message.reply_text("✅ Willkommen-Text gespeichert.")
 
-# setrules: Legt den Rules-Text fest
-
+# ----- /setrules -----
 async def set_rules(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen den Rules-Text setzen.")
+        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den Rules-Text setzen.")
         return
 
     chat_id = update.effective_chat.id
@@ -133,11 +130,10 @@ async def set_rules(update: Update, context: CallbackContext) -> None:
         rules_data[chat_id] = {"photo": None, "text": text}
         await update.message.reply_text("✅ Regeln-Text gespeichert.")
 
-# setfaq: Legt den FAQ-Text fest
-
+# ----- /setfaq -----
 async def set_faq(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen den FAQ-Text setzen.")
+        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den FAQ-Text setzen.")
         return
 
     chat_id = update.effective_chat.id
@@ -158,92 +154,47 @@ async def set_faq(update: Update, context: CallbackContext) -> None:
         faq_data[chat_id] = {"photo": None, "text": text}
         await update.message.reply_text("✅ FAQ-Text gespeichert.")
 
-# -----------------------------------
-
-# Ausgabe der Willkommensnachricht, Rules und FAQ
-
-async def welcome(update: Update, context: CallbackContext) -> None:
+# ----- Ausgabe: Begrüßung, Regeln, FAQ -----
+async def welcome_handler(update: Update, context: CallbackContext) -> None:
     new_member = update.message.new_chat_members[0]
     chat_id = update.effective_chat.id
-
     data = welcome_data.get(chat_id)
+
     if data:
+        # Falls Bild gesetzt
         if data.get("photo"):
-            # Sende gespeichertes Bild + Caption (ersetze Platzhalter {user} im Text)
             caption = (data["text"] or "").replace("{user}", new_member.full_name)
             await update.message.reply_photo(photo=data["photo"], caption=caption)
         else:
             text = data.get("text", "").replace("{user}", new_member.full_name)
             await update.message.reply_text(text)
     else:
-        # Kein gespeichertes Welcome → Standard‐Fallback
         default_text = f"Willkommen, {new_member.full_name}! 🎉"
         await update.message.reply_text(default_text)
 
-async def welcome_manual(update: Update, context: CallbackContext) -> None:
-    chat_id = update.effective_chat.id
-    data = welcome_data.get(chat_id)
-
-    if not data:
-        await update.message.reply_text(
-            "Für diese Gruppe wurde noch kein Welcome-Text festgelegt. Bitte benutze /setwelcome."
-        )
-        return
-
-    if data.get("photo"):
-        await update.message.reply_photo(
-            photo=data["photo"],
-            caption=(data["text"] or "")
-        )
-    else:
-        text = data.get("text") or ""
-        await update.message.reply_text(text)
-
-# /rules: Gibt die für diese Gruppe gespeicherten Regeln zurück
-
-async def rules(update: Update, context: CallbackContext) -> None:
+async def rules_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = rules_data.get(chat_id)
-
     if not data:
-        await update.message.reply_text(
-            "Für diese Gruppe wurden noch keine Regeln hinterlegt. Bitte benutze /setrules."
-        )
+        await update.message.reply_text("Für diese Gruppe wurden noch keine Regeln hinterlegt. Bitte benutze /setrules.")
         return
 
-    # Wenn ein Bild‐file_id gespeichert ist
     if data.get("photo"):
-        # text kann None sein
-        await update.message.reply_photo(
-            photo=data["photo"],
-            caption=(data["text"] or ""),  # wenn kein Text, übergib leere Caption
-        )
+        await update.message.reply_photo(photo=data["photo"], caption=(data["text"] or ""))
     else:
-        # reiner Text
-        text = data.get("text") or ""
-        await update.message.reply_text(text)
+        await update.message.reply_text(data.get("text", ""))
 
-# -----------------------------------
-# /faq: Gibt die gespeicherten FAQs zurück
-
-async def faq(update: Update, context: CallbackContext) -> None:
+async def faq_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = faq_data.get(chat_id)
-
     if not data:
-        await update.message.reply_text(
-            "Für diese Gruppe wurden noch keine FAQs hinterlegt. Bitte benutze /setfaq."
-        )
+        await update.message.reply_text("Für diese Gruppe wurden noch keine FAQs hinterlegt. Bitte benutze /setfaq.")
         return
 
     if data.get("photo"):
-        await update.message.reply_photo(
-            photo=data["photo"],
-            caption=(data["text"] or "")
-        )
+        await update.message.reply_photo(photo=data["photo"], caption=(data["text"] or ""))
     else:
-        text = data.get("text") or ""
-        await update.message.reply_text(text)
+        await update.message.reply_text(data.get("text", ""))
 
 # Funktion zum Bannen eines Benutzers
 async def ban(update: Update, context: CallbackContext) -> None:
@@ -455,27 +406,26 @@ def main():
 
     # Registrierung der Kommandohandler
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("startbot", start_bot))
-    app.add_handler(CommandHandler("stopbot", stop_bot))
-    app.add_handler(CommandHandler("ban", ban))
-    app.add_handler(CommandHandler("mute", mute))
-    app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
-    app.add_handler(CommandHandler("forward", forward_message))
-    app.add_handler(CommandHandler("setrole", set_role))
-    app.add_handler(CommandHandler("setrss", set_rss_feed))
-    app.add_handler(CommandHandler("listrss", list_rss_feeds))
-    app.add_handler(CommandHandler("stoprss", stop_rss_feed))
     app.add_handler(CommandHandler("setwelcome", set_welcome))
     app.add_handler(CommandHandler("setrules", set_rules))
     app.add_handler(CommandHandler("setfaq", set_faq))
+    app.add_handler(CommandHandler("welcome", welcome_handler))  # falls manuell abrufen möchte
+    app.add_handler(CommandHandler("rules", rules_handler))
+    app.add_handler(CommandHandler("faq", faq_handler))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("mute", mute))
+    app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
+    app.add_handler(CommandHandler("setrss", set_rss_feed))
+    app.add_handler(CommandHandler("listrss", list_rss_feeds))
+    app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    app.add_handler(CommandHandler("forward", forward_message))
+    app.add_handler(CommandHandler("setrole", set_role))
 
   # Registrierung der Nachricht-Handler
-    app.add_handler(MessageHandler(filters.TEXT, message_filter))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_handler))
     app.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
-    app.add_handler(CommandHandler("rules", rules))
-    app.add_handler(CommandHandler("faq", faq))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
 
     # RSS-Job über job_queue alle 2 Minuten ausführen
     app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
