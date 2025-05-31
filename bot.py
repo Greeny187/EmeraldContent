@@ -86,13 +86,11 @@ async def set_welcome(update: Update, context: CallbackContext) -> None:
 
     chat_id = update.effective_chat.id
 
-    # Wurde ein Bild mitsendet?
+    # Wurde ein Bild mitgesendet?
     if update.message.photo:
-        # größtes (letztes) Photo auswählen
         file_id = update.message.photo[-1].file_id
-        # Caption-Text aus context.args (falls vorhanden)
-        text = " ".join(context.args) if context.args else None
-        welcome_data[chat_id] = {"photo": file_id, "text": text}
+        caption = update.message.caption if update.message.caption else None
+        welcome_data[chat_id] = {"photo": file_id, "text": caption}
         await update.message.reply_text("✅ Willkommen-Bild (mit optionalem Text) gespeichert.")
     else:
         # Nur Text-Variante
@@ -116,9 +114,9 @@ async def set_rules(update: Update, context: CallbackContext) -> None:
 
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        text = " ".join(context.args) if context.args else None
-        rules_data[chat_id] = {"photo": file_id, "text": text}
-        await update.message.reply_text("✅ Rules-Bild (mit optionalem Text) gespeichert.")
+        caption = update.message.caption if update.message.caption else None
+        rules_data[chat_id] = {"photo": file_id, "text": caption}
+        await update.message.reply_text("✅ Regeln-Bild (mit optionalem Text) gespeichert.")
     else:
         if len(context.args) == 0:
             await update.message.reply_text(
@@ -140,8 +138,8 @@ async def set_faq(update: Update, context: CallbackContext) -> None:
 
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        text = " ".join(context.args) if context.args else None
-        faq_data[chat_id] = {"photo": file_id, "text": text}
+        caption = update.message.caption if update.message.caption else None
+        faq_data[chat_id] = {"photo": file_id, "text": caption}
         await update.message.reply_text("✅ FAQ-Bild (mit optionalem Text) gespeichert.")
     else:
         if len(context.args) == 0:
