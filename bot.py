@@ -1,204 +1,271 @@
 import logging
-import feedparser
-import asyncio
-import pytz
 import os
+import asyncio
+import feedparser
+import pytz
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackContext, MessageHandler, CallbackQueryHandler, filters
+    Application,
+    CommandHandler,
+    CallbackContext,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
 )
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# ----------------------------------------------------------------------------------------------------------------------
+# LOGGING konfigurieren
+# ----------------------------------------------------------------------------------------------------------------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-#Token import
-
+# ----------------------------------------------------------------------------------------------------------------------
+# BOT_TOKEN und andere Umgebungsvariablen
+# ----------------------------------------------------------------------------------------------------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn zu den Heroku Config Vars hinzu.")
+    raise ValueError("Der BOT_TOKEN ist nicht gesetzt. Bitte füge ihn in die Heroku Config Vars ein.")
 
-# Globale Variablen
+# ----------------------------------------------------------------------------------------------------------------------
+# Globale Dictionaries zum Speichern von Bild+Text je Gruppe (chat_id)
+# ----------------------------------------------------------------------------------------------------------------------
+# Jedes Dictionary speichert pro chat_id:
+#   {"photo": file_id oder None, "text": str oder None}
+welcome_data = {}
+rules_data   = {}
+faq_data     = {}
 
-# ========== Globale Speicher für pro-Group-Strings ==========
-welcome_data = {}   # chat_id → {"text": "...", "photo": file_id_oder_None}
-rules_data   = {}   # chat_id → {"text": "...", "photo": file_id_oder_None}
-faq_data     = {}   # chat_id → {"text": "...", "photo": file_id_oder_None}
+# ----------------------------------------------------------------------------------------------------------------------
+# RSS‐Beispiele (bleibt unverändert, wenn du RSS noch brauchst)
+# ----------------------------------------------------------------------------------------------------------------------
+rss_feeds = {}            # chat_id → [ { "url": str, "topic_id": int } ]
+group_status = {}         # chat_id → bool (an/aus)
+last_posted_articles = {} # chat_id → [link1, link2, ...]
 
-# Struktur: {chat_id: {topic_id: [rss_urls]}} # Speichert die RSS-URLs und Themen-IDs für Gruppen
-rss_feeds = {}  
-
-# Speichert den Aktivierungsstatus für Gruppen
-group_status = {}  
-
-# Speichert die zuletzt geposteten Artikel
-last_posted_articles = {}  
-
-# Abfrage Admin-/Inhaberrechte
-
+# ----------------------------------------------------------------------------------------------------------------------
+# Hilfsfunktion: Prüfen, ob der Request‐Sender Inhaber oder Admin ist
+# - Wenn Gruppen‐Inhaber anonym postet, steht `update.message.sender_chat.id == chat_id`.
+# - Sonst prüfen wir den Status via get_chat_member.
+# ----------------------------------------------------------------------------------------------------------------------
 async def is_admin(update: Update, context: CallbackContext) -> bool:
     chat_id = update.effective_chat.id
 
-    # 1) Anonymer Admin-Modus ("sender_chat") direkt akzeptieren
-    if update.message and getattr(update.message, "sender_chat", None) is not None:
-        if update.message.sender_chat.id == chat_id:
-            return True
+    # 1) Anonymer Owner (sender_chat = Gruppe selbst) → sofort erlauben
+    if (
+        update.message
+        and getattr(update.message, "sender_chat", None) is not None
+        and update.message.sender_chat.id == chat_id
+    ):
+        return True
 
-    # 2) Normale Benutzer-ID prüfen
+    # 2) Normale Admin‐Prüfung (Benutzer‐ID)
     user_id = update.effective_user.id
     try:
-        chat_member = await context.bot.get_chat_member(chat_id, user_id)
-        if chat_member.status in ["administrator", "creator"]:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ["creator", "administrator"]:
             return True
     except Exception as e:
-        logging.error(f"Fehler beim Überprüfen der Adminrechte: {e}")
+        logger.error(f"Fehler beim Admin‐Check: {e}")
 
     return False
 
-# Kommando-Handler für den Startbefehl
+# ----------------------------------------------------------------------------------------------------------------------
+# /start → Kurzinfo, welche Befehle der Bot hat
+# ----------------------------------------------------------------------------------------------------------------------
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("Hallo! Ich bin dein Gruppenverwaltungs-Bot. Verwende /setwelcome, /setrules, /setfaq um Inhalte festzulegen.")
+    await update.message.reply_text(
+        "👋 Hallo! Ich bin dein Gruppen‐Manager-Bot.\n\n"
+        "Verfügbare Befehle:\n"
+        "  /setwelcome   – Begrüßung (Bild + Text oder nur Text) festlegen\n"
+        "  /welcome      – Begrüßung anzeigen (manuell oder beim Betreten)\n"
+        "  /setrules     – Regeln (Bild + Text oder nur Text) festlegen\n"
+        "  /rules        – Regeln anzeigen\n"
+        "  /setfaq       – FAQ (Bild + Text oder nur Text) festlegen\n"
+        "  /faq          – FAQ anzeigen\n"
+        "  /ban          – Benutzer bannen (Antwort auf deren Nachricht)\n"
+        "  /mute         – Benutzer stummschalten (Antwort)\n"
+        "  /cleandeleteaccounts – Gelöschte Konten entfernen\n"
+        "  /setrss       – RSS‐Feed setzen (Admin)\n"
+        "  /listrss      – RSS‐Feeds auflisten\n"
+        "  /stoprss      – RSS‐Feed stoppen\n\n"
+        "📌 Die /set… Befehle dürfen nur Admins bzw. der anonym gepostete Inhaber ausführen."
+    )
 
-# Aktivieren des Bots
-async def start_bot(update: Update, context: CallbackContext) -> None:
-    if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen den Bot starten.")
-        return
-    chat_id = update.effective_chat.id
-    group_status[chat_id] = True
-    await update.message.reply_text("Der Bot wurde für diese Gruppe aktiviert.")
-
-# Deaktivieren des Bots
-async def stop_bot(update: Update, context: CallbackContext) -> None:
-    if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen den Bot stoppen.")
-        return
-    chat_id = update.effective_chat.id
-    group_status[chat_id] = False
-    await update.message.reply_text("Der Bot wurde für diese Gruppe deaktiviert.")
-
-# --- Bot-Funktionen ---
-
-# ----- /setwelcome -----
+# ----------------------------------------------------------------------------------------------------------------------
+# 1) /setwelcome – Begrüßung festlegen (Foto mit Caption oder reiner Text)
+# ----------------------------------------------------------------------------------------------------------------------
 async def set_welcome(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den Welcome-Text setzen.")
+        await update.message.reply_text("❌ Nur Administratoren (oder Inhaber) dürfen den Begrüßungstext setzen.")
         return
 
     chat_id = update.effective_chat.id
 
-    # 1) Wenn ein Foto geschickt wurde:
+    # --- Variante A: Foto wurde geschickt ---
     if update.message.photo:
-        # größtes Photo ([-1]) nehmen
+        # größtes Foto aus dem Array nehmen
         file_id = update.message.photo[-1].file_id
 
-        # Caption-Text aus update.message.caption holen
-        caption = update.message.caption or ""
-        caption = caption.strip()  # ggf. Leerzeichen entfernen
+        # komplette Caption (z. B. "/setwelcome Willkommen, {user}!")
+        full_caption = update.message.caption or ""
+        full_caption = full_caption.strip()
 
-        # Speichere: {"photo": file_id, "text": caption (oder None)}
-        welcome_data[chat_id] = {
-            "photo": file_id,
-            "text": caption if caption else None
-        }
-        await update.message.reply_text("✅ Willkommen-Bild (mit optionalem Text) gespeichert.")
+        # Erster Token ist der Befehl selbst: z. B. "/setwelcome" oder "/setwelcome@BotName"
+        tokens = full_caption.split(maxsplit=1)
+        if len(tokens) > 1:
+            # alles hinter dem ersten Token ist der eigentliche Begrüßungstext
+            text = tokens[1].strip()
+        else:
+            text = None
+
+        welcome_data[chat_id] = {"photo": file_id, "text": text}
+        await update.message.reply_text("✅ Willkommen‐Bild (+Text) gespeichert.")
         return
 
-    # 2) Kein Foto, also nur reiner Text
-    # context.args enthält dann die Argumente hinter dem Befehl
+    # --- Variante B: Nur reiner Text hinter "/setwelcome" ---
     if len(context.args) == 0:
         await update.message.reply_text(
-            "Bitte gib den Begrüßungstext an oder sende ein Foto mit Caption.\n"
-            "Beispiel (Text-Variante):\n"
-            "/setwelcome Willkommen, {user}!"
+            "Bitte gib den Begrüßungstext an oder sende ein Foto mit Caption.\n\n"
+            "Beispiel (nur Text):\n"
+            "  /setwelcome Willkommen, {user}!"
         )
         return
 
     # Text aus context.args zusammensetzen
     text = " ".join(context.args).strip()
     welcome_data[chat_id] = {"photo": None, "text": text}
-    await update.message.reply_text("✅ Willkommen-Text gespeichert.")
+    await update.message.reply_text("✅ Willkommen‐Text gespeichert.")
 
 
-# ------------------------- /setrules -------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+# 2) /setrules – Regeln festlegen (Foto mit Caption oder reiner Text)
+# ----------------------------------------------------------------------------------------------------------------------
 async def set_rules(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den Rules-Text setzen.")
+        await update.message.reply_text("❌ Nur Administratoren (oder Inhaber) dürfen den Rules‐Text setzen.")
         return
 
     chat_id = update.effective_chat.id
 
+    # Variante A: Foto + Caption
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        caption = update.message.caption or ""
-        caption = caption.strip()
+        full_caption = update.message.caption or ""
+        full_caption = full_caption.strip()
 
-        rules_data[chat_id] = {"photo": file_id, "text": caption if caption else None}
-        await update.message.reply_text("✅ Rules-Bild (mit optionalem Text) gespeichert.")
+        tokens = full_caption.split(maxsplit=1)
+        if len(tokens) > 1:
+            text = tokens[1].strip()
+        else:
+            text = None
+
+        rules_data[chat_id] = {"photo": file_id, "text": text}
+        await update.message.reply_text("✅ Rules‐Bild (+Text) gespeichert.")
         return
 
+    # Variante B: reiner Text
     if len(context.args) == 0:
         await update.message.reply_text(
-            "Bitte gib den Regeln-Text an oder sende ein Foto mit Caption.\n"
-            "Beispiel (Text-Variante):\n"
-            "/setrules 1. Kein Spam  2. Höflicher Umgang …"
+            "Bitte gib den Regeln‐Text an oder sende ein Foto mit Caption.\n\n"
+            "Beispiel (nur Text):\n"
+            "  /setrules 1. Kein Spam  2. Höflicher Umgang …"
         )
         return
 
     text = " ".join(context.args).strip()
     rules_data[chat_id] = {"photo": None, "text": text}
-    await update.message.reply_text("✅ Regeln-Text gespeichert.")
+    await update.message.reply_text("✅ Regeln‐Text gespeichert.")
 
 
-# ------------------------- /setfaq -------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+# 3) /setfaq – FAQ festlegen (Foto mit Caption oder reiner Text)
+# ----------------------------------------------------------------------------------------------------------------------
 async def set_faq(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren (oder Inhaber) dürfen den FAQ-Text setzen.")
+        await update.message.reply_text("❌ Nur Administratoren (oder Inhaber) dürfen den FAQ‐Text setzen.")
         return
 
     chat_id = update.effective_chat.id
 
+    # Variante A: Foto + Caption
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        caption = update.message.caption or ""
-        caption = caption.strip()
+        full_caption = update.message.caption or ""
+        full_caption = full_caption.strip()
 
-        faq_data[chat_id] = {"photo": file_id, "text": caption if caption else None}
-        await update.message.reply_text("✅ FAQ-Bild (mit optionalem Text) gespeichert.")
+        tokens = full_caption.split(maxsplit=1)
+        if len(tokens) > 1:
+            text = tokens[1].strip()
+        else:
+            text = None
+
+        faq_data[chat_id] = {"photo": file_id, "text": text}
+        await update.message.reply_text("✅ FAQ‐Bild (+Text) gespeichert.")
         return
 
+    # Variante B: Nur Text
     if len(context.args) == 0:
         await update.message.reply_text(
-            "Bitte gib den FAQ-Text an oder sende ein Foto mit Caption.\n"
-            "Beispiel (Text-Variante):\n"
-            "/setfaq Wie werde ich Mitglied? → Klicke auf Einladungslink …"
+            "Bitte gib den FAQ‐Text an oder sende ein Foto mit Caption.\n\n"
+            "Beispiel (nur Text):\n"
+            "  /setfaq Wie werde ich Mitglied? → Klicke auf Einladungslink …"
         )
         return
 
     text = " ".join(context.args).strip()
     faq_data[chat_id] = {"photo": None, "text": text}
-    await update.message.reply_text("✅ FAQ-Text gespeichert.")
+    await update.message.reply_text("✅ FAQ‐Text gespeichert.")
 
-# ----- Ausgabe: Begrüßung, Regeln, FAQ -----
-async def welcome_handler(update: Update, context: CallbackContext) -> None:
-    new_member = update.message.new_chat_members[0]
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 4) Manuelle Anzeige: /welcome (zeigt gespeicherte Begrüßung an)
+# ----------------------------------------------------------------------------------------------------------------------
+async def show_welcome(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
+    user_name = update.effective_user.full_name
     data = welcome_data.get(chat_id)
 
     if data:
-        # Fall 1: Ein Bild wurde hinterlegt
+        # wenn ein Foto hinterlegt ist:
         if data.get("photo"):
-            caption = (data["text"] or "").replace("{user}", new_member.full_name)
+            # text hinter dem Foto – Platzhalter {user} ersetzen
+            caption = (data.get("text") or "").replace("{user}", user_name)
             await update.message.reply_photo(photo=data["photo"], caption=caption)
-        # Fall 2: Nur Text
         else:
-            text = data.get("text", "").replace("{user}", new_member.full_name)
+            text = (data.get("text") or "").replace("{user}", user_name)
             await update.message.reply_text(text)
     else:
-        # Default-Text, wenn noch kein set_welcome für diese Gruppe gesetzt ist
-        default_text = f"Willkommen, {new_member.full_name}! 🎉"
-        await update.message.reply_text(default_text)
+        # Standard‐Begrüßung, falls nichts gespeichert
+        await update.message.reply_text(f"Willkommen, {user_name}! 🎉")
 
-# ----- /rules (manuelle Anzeige) -----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 5) Automatisch, wenn ein neues Mitglied beitritt
+# ----------------------------------------------------------------------------------------------------------------------
+async def welcome_new_member(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    data = welcome_data.get(chat_id)
+
+    # Eintrag in update.message.new_chat_members ist eine Liste: begrüße jeden neuen User
+    for new_user in update.message.new_chat_members:
+        if data:
+            if data.get("photo"):
+                caption = (data.get("text") or "").replace("{user}", new_user.full_name)
+                await update.message.reply_photo(photo=data["photo"], caption=caption)
+            else:
+                text = (data.get("text") or "").replace("{user}", new_user.full_name)
+                await update.message.reply_text(text)
+        else:
+            # Default‐Begrüßung
+            await update.message.reply_text(f"Willkommen, {new_user.full_name}! 🎉")
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 6) /rules (manuelle Anzeige gespeicherter Regeln)
+# ----------------------------------------------------------------------------------------------------------------------
 async def rules_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = rules_data.get(chat_id)
@@ -211,7 +278,10 @@ async def rules_handler(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text(data.get("text", ""))
 
-# ----- /faq (manuelle Anzeige) -----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 7) /faq (manuelle Anzeige gespeicherter FAQs)
+# ----------------------------------------------------------------------------------------------------------------------
 async def faq_handler(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
     data = faq_data.get(chat_id)
@@ -224,100 +294,86 @@ async def faq_handler(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text(data.get("text", ""))
 
-# Funktion zum Bannen eines Benutzers
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 8) /ban – Einfaches Bannen per Reply
+# ----------------------------------------------------------------------------------------------------------------------
 async def ban(update: Update, context: CallbackContext) -> None:
-    if update.message.reply_to_message:  # Der Bot muss eine Antwort auf eine Nachricht haben
+    if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
-        await update.message.chat.ban_member(user_id)  # Bann eines Benutzers
+        await update.message.chat.ban_member(user_id)
         await update.message.reply_text(f"{update.message.reply_to_message.from_user.full_name} wurde gebannt.")
     else:
         await update.message.reply_text("Bitte antworte auf die Nachricht des Benutzers, den du bannen möchtest.")
 
-# Funktion zum Stummschalten eines Benutzers
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 9) /mute – Einfaches Stummschalten per Reply
+# ----------------------------------------------------------------------------------------------------------------------
 async def mute(update: Update, context: CallbackContext) -> None:
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
-        await update.message.chat.mute_member(user_id)  # Stummschalten eines Benutzers
+        await update.message.chat.mute_member(user_id)
         await update.message.reply_text(f"{update.message.reply_to_message.from_user.full_name} wurde stummgeschaltet.")
     else:
         await update.message.reply_text("Bitte antworte auf die Nachricht des Benutzers, den du stummschalten möchtest.")
 
-# Funktion Entfernen gelöschter Accounts
 
+# ----------------------------------------------------------------------------------------------------------------------
+# 10) /cleandeleteaccounts – Entfernt gelöschte Accounts aus Admin‐Liste
+# ----------------------------------------------------------------------------------------------------------------------
 async def clean_delete_accounts(update: Update, context: CallbackContext) -> None:
     chat = update.effective_chat
 
     try:
-        # Überprüfen, ob der Bot Admin-Rechte hat
         bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
         if not bot_member.status in ["administrator", "creator"]:
-            await update.message.reply_text(
-                "Ich benötige Administratorrechte, um gelöschte Konten zu entfernen."
-            )
+            await update.message.reply_text("❌ Ich benötige Admin-Rechte, um gelöschte Konten zu entfernen.")
             return
 
-        # Mitgliederliste manuell iterieren (Telegram-API hat keinen direkten Zugriff auf alle Mitglieder)
         deleted_accounts = []
-        members = await chat.get_members()  # Beispielhaft: Du brauchst eine Methode zur Iteration der Mitglieder
-
-        for member in members:
-            user = member.user
-
-            # Prüfen, ob das Konto als gelöscht markiert ist
+        admins = await context.bot.get_chat_administrators(chat.id)
+        for admin in admins:
+            user = admin.user
             if user.first_name in ["Deleted Account", "Gelöschtes Konto"] or user.username is None:
                 if user.id == context.bot.id:
-                    continue  # Bot selbst nicht entfernen
-
-                # Benutzer bannen
+                    continue
                 await context.bot.ban_chat_member(chat.id, user.id)
                 deleted_accounts.append(user.id)
 
-        # Rückmeldung an den Benutzer
         if deleted_accounts:
             await update.message.reply_text(f"Gelöschte Konten entfernt: {len(deleted_accounts)}")
         else:
             await update.message.reply_text("Keine gelöschten Konten gefunden.")
     except Exception as error:
-        logging.error(f"Fehler beim Bereinigen gelöschter Konten: {error}")
+        logger.error(f"Fehler beim Bereinigen gelöschter Konten: {error}")
         await update.message.reply_text(f"Ein Fehler ist aufgetreten: {error}")
 
-# Globale Variablen für die RSS-Funktion
-rss_feeds = {}  # Struktur: {chat_id: {topic_id: [rss_urls]}}
 
-# Funktion zum Abrufen von RSS-Feeds
-async def fetch_rss_feed(context=None):
-    for chat_id, feeds in rss_feeds.items():  # Iteriere über Gruppen und deren Feeds
-        if not group_status.get(chat_id, False):  # Gruppe aktiv?
-            logging.info(f"Bot ist für Gruppe {chat_id} deaktiviert.")
+# ----------------------------------------------------------------------------------------------------------------------
+# 11) RSS‐Funktionen (unverändert von früher, sofern benötigt)
+# ----------------------------------------------------------------------------------------------------------------------
+async def fetch_rss_feed(context: CallbackContext) -> None:
+    for chat_id, feeds in rss_feeds.items():
+        if not group_status.get(chat_id, False):
             continue
 
-        for feed_data in feeds:  # Iteriere über Feeds in der Gruppe
+        for feed_data in feeds:
             rss_url = feed_data["url"]
             topic_id = feed_data.get("topic_id")
-
             try:
-                logging.info(f"Rufe RSS-Feed ab: {rss_url}")
+                logger.info(f"Rufe RSS-Feed ab: {rss_url}")
                 feed = feedparser.parse(rss_url)
-
-                if feed.bozo:
-                    logging.warning(f"Ungültiger RSS-Feed für Chat {chat_id}: {rss_url}")
+                if feed.bozo or not feed.entries:
                     continue
 
-                if not feed.entries:
-                    logging.warning(f"Keine Artikel im RSS-Feed für {chat_id} gefunden.")
-                    continue
-
-                # Nur neue Artikel posten
                 response = ""
-                for article in feed.entries[:3]:  # Letzte 3 Artikel
+                for article in feed.entries[:3]:
                     if article.link in last_posted_articles.get(chat_id, []):
-                        logging.info(f"Artikel bereits gepostet: {article.link}")
                         continue
-
                     response += f"📌 <b>{article.title}</b>\n{article.link}\n\n"
                     last_posted_articles.setdefault(chat_id, []).append(article.link)
 
-                # Sende die Artikel, wenn neue vorhanden sind
                 if response.strip():
                     await context.bot.send_message(
                         chat_id=chat_id,
@@ -325,53 +381,47 @@ async def fetch_rss_feed(context=None):
                         parse_mode="HTML",
                         message_thread_id=topic_id,
                     )
-                    logging.info(f"Artikel erfolgreich in Gruppe {chat_id} gepostet.")
+                    logger.info(f"Artikel in Gruppe {chat_id} gepostet.")
             except Exception as error:
-                logging.error(f"Fehler beim Abrufen des RSS-Feeds für Chat {chat_id}: {error}")
+                logger.error(f"Fehler beim RSS-Abrufen für Chat {chat_id}: {error}")
 
-# RSS-Feed setzen
+
 async def set_rss_feed(update: Update, context: CallbackContext) -> None:
     if not await is_admin(update, context):
-        await update.message.reply_text("Nur Administratoren dürfen diesen Befehl verwenden.")
+        await update.message.reply_text("❌ Nur Administratoren dürfen diesen Befehl verwenden.")
         return
 
     chat_id = update.effective_chat.id
     topic_id = update.message.message_thread_id
 
     if len(context.args) == 0:
-        await update.message.reply_text("Bitte gib die URL eines RSS-Feeds an. Beispiel: /setrss <URL>")
+        await update.message.reply_text("Bitte gib die URL eines RSS-Feeds an. Beispiel:\n  /setrss <URL>")
         return
 
     rss_url = context.args[0]
-
-    # Füge die Gruppe hinzu, falls sie noch nicht existiert
     if chat_id not in rss_feeds:
         rss_feeds[chat_id] = []
 
-    # Überprüfe, ob die URL bereits existiert
     for feed in rss_feeds[chat_id]:
         if feed["url"] == rss_url:
             await update.message.reply_text("Dieser RSS-Feed wurde bereits hinzugefügt.")
             return
 
-    # Feed hinzufügen, da er noch nicht existiert
     rss_feeds[chat_id].append({"url": rss_url, "topic_id": topic_id})
-    await update.message.reply_text(f"RSS-Feed erfolgreich hinzugefügt: {rss_url}.")
+    await update.message.reply_text(f"✅ RSS-Feed erfolgreich hinzugefügt: {rss_url}.")
 
-# Befehl zum Stoppen des RSS-Feeds
+
 async def stop_rss_feed(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
-
     if chat_id in rss_feeds:
         del rss_feeds[chat_id]
-        await update.message.reply_text("RSS-Feed erfolgreich gestoppt.")
+        await update.message.reply_text("✅ RSS-Feed erfolgreich gestoppt.")
     else:
         await update.message.reply_text("Es wurde kein RSS-Feed für diese Gruppe konfiguriert.")
 
-# RSS-Feeds auflisten
+
 async def list_rss_feeds(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
-
     if chat_id not in rss_feeds or not rss_feeds[chat_id]:
         await update.message.reply_text("Es wurden keine RSS-Feeds für diese Gruppe konfiguriert.")
         return
@@ -381,87 +431,102 @@ async def list_rss_feeds(update: Update, context: CallbackContext) -> None:
         response += f"{idx}. URL: {feed_data['url']}\n"
         if feed_data.get("topic_id"):
             response += f"   Thema-ID: {feed_data['topic_id']}\n"
-
     await update.message.reply_text(response, parse_mode="HTML")
 
-# Filter für Spam und Links
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 12) Spam/Link-Filter (einfaches Beispiel, Wunsch anpassen)
+# ----------------------------------------------------------------------------------------------------------------------
 async def message_filter(update: Update, context: CallbackContext) -> None:
-    # Beispiel für Filter von Links
     if 'http' in update.message.text:
-        await update.message.delete()  # Lösche die Nachricht
-        await update.message.reply_text("Links sind nicht erlaubt!")
-    # Beispiel für einen Wortfilter
+        await update.message.delete()
+        await update.message.reply_text("❌ Links sind nicht erlaubt!")
+        return
+
     forbidden_words = ['badword1', 'badword2']
     if any(word in update.message.text.lower() for word in forbidden_words):
-        await update.message.delete()  # Lösche die Nachricht
-        await update.message.reply_text("Unzul\u00e4ssige W\u00f6rter sind nicht erlaubt!")
+        await update.message.delete()
+        await update.message.reply_text("❌ Unzulässige Wörter sind nicht erlaubt!")
+        return
 
-# Funktion zur Erzeugung eines Captchas
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 13) Captcha (wie gehabt)
+# ----------------------------------------------------------------------------------------------------------------------
 async def captcha(update: Update, context: CallbackContext) -> None:
-    # Eine einfache Aufgabe für das Captcha
-    keyboard = [
-        [InlineKeyboardButton("Ich bin kein Roboter", callback_data='captcha_passed')]
-    ]
+    keyboard = [[InlineKeyboardButton("Ich bin kein Roboter", callback_data='captcha_passed')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Bitte bestätige, dass du kein Roboter bist.", reply_markup=reply_markup)
 
-# Funktion zur Handhabung der Captcha-Bestätigung
 async def captcha_passed(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="Captcha erfolgreich! Willkommen!")
 
-# Weiterleitungsbefehl
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 14) Forward und set_role (unverändert)
+# ----------------------------------------------------------------------------------------------------------------------
 async def forward_message(update: Update, context: CallbackContext) -> None:
-    # Ersetze 'ZIEL_GRUPPE_ID' mit der tatsächlichen Zielgruppen-ID
+    # Ziel‐Gruppen‐ID anpassen:
     target_chat_id = 'ZIEL_GRUPPE_ID'
     await update.message.forward(chat_id=target_chat_id)
 
-# Rollenvergabe an Mitglieder
 async def set_role(update: Update, context: CallbackContext) -> None:
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
-        role = context.args[0] if context.args else "Mitglied"  # Standardrolle: Mitglied
-        # Beispielhafte Rolle vergeben (Benutzer anpassen)
-        await update.message.chat.promote_member(user_id, can_change_info=True, can_post_messages=True)  # Beispielrolle
+        role = context.args[0] if context.args else "Mitglied"
+        await update.message.chat.promote_member(user_id, can_change_info=True, can_post_messages=True)
         await update.message.reply_text(f"Rolle {role} wurde zugewiesen!")
+    else:
+        await update.message.reply_text("Bitte antworte auf die Nachricht des Benutzers, dem du eine Rolle geben möchtest.")
 
-# --- Main-Funktion ---
 
-def main():
-    # Application erstellen
+# ----------------------------------------------------------------------------------------------------------------------
+# 15) “main” – Handler registrieren und Polling starten
+# ----------------------------------------------------------------------------------------------------------------------
+def main() -> None:
+    # 1) Application erstellen
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Registrierung der Kommandohandler
+    # 2) CommandHandler registrieren:
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("startbot", start_bot))
-    app.add_handler(CommandHandler("stopbot", stop_bot))
+
     app.add_handler(CommandHandler("setwelcome", set_welcome))
     app.add_handler(CommandHandler("setrules", set_rules))
     app.add_handler(CommandHandler("setfaq", set_faq))
-    app.add_handler(CommandHandler("welcome", welcome_handler))  # falls manuell abrufen möchte
+
+    app.add_handler(CommandHandler("welcome", show_welcome))
     app.add_handler(CommandHandler("rules", rules_handler))
     app.add_handler(CommandHandler("faq", faq_handler))
+
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
+
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+
     app.add_handler(CommandHandler("forward", forward_message))
     app.add_handler(CommandHandler("setrole", set_role))
 
-  # Registrierung der Nachricht-Handler
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_handler))
-    app.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    # 3) MessageHandler für NEW_CHAT_MEMBERS (automatische Begrüßung)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
 
-    # RSS-Job über job_queue alle 2 Minuten ausführen
+    # 4) MessageHandler für Captcha
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
+    app.add_handler(CallbackQueryHandler(captcha_passed, pattern='^captcha_passed$'))
+
+    # 5) MessageHandler für Spam/Link‐Filter
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
+
+    # 6) RSS‐Jobqueue (alle 2 Minuten):
     app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
 
-    # Telegram Bot-Setup
+    # 7) Bot starten (Polling)
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
