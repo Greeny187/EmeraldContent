@@ -37,19 +37,26 @@ last_posted_articles = {}
 
 async def is_admin(update: Update, context: CallbackContext) -> bool:
     chat_id = update.effective_chat.id
+
+    # 1) Anonymer Admin-Modus ("sender_chat") direkt akzeptieren
+    if update.message and getattr(update.message, "sender_chat", None) is not None:
+        if update.message.sender_chat.id == chat_id:
+            return True
+
+    # 2) Normale Benutzer-ID prüfen
     user_id = update.effective_user.id
     try:
         chat_member = await context.bot.get_chat_member(chat_id, user_id)
-        # Hier prüfen wir explizit auf "administrator" ODER "creator"
         if chat_member.status in ["administrator", "creator"]:
             return True
     except Exception as e:
         logging.error(f"Fehler beim Überprüfen der Adminrechte: {e}")
+
     return False
 
 # Kommando-Handler für den Startbefehl
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("Hallo! Ich bin dein Gruppenverwaltungs-Bot.")
+    await update.message.reply_text("Hallo! Ich bin dein Gruppenverwaltungs-Bot. Verwende /setwelcome, /setrules, /setfaq um Inhalte festzulegen.")
 
 # Aktivieren des Bots
 async def start_bot(update: Update, context: CallbackContext) -> None:
