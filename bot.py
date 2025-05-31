@@ -434,6 +434,8 @@ def main():
 
     # Registrierung der Kommandohandler
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("startbot", start_bot))
+    app.add_handler(CommandHandler("stopbot", stop_bot))
     app.add_handler(CommandHandler("setwelcome", set_welcome))
     app.add_handler(CommandHandler("setrules", set_rules))
     app.add_handler(CommandHandler("setfaq", set_faq))
