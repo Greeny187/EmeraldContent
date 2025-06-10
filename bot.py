@@ -86,6 +86,13 @@ with conn.cursor() as cur:
             PRIMARY KEY (chat_id, link)
         );
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS farewell (
+            chat_id   BIGINT PRIMARY KEY,
+            photo_id  TEXT,
+            text      TEXT
+        );
+    """)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Hilfsfunktion: Prüfen, ob der Request‐Sender Inhaber oder Admin ist
@@ -129,7 +136,6 @@ async def start(update: Update, context: CallbackContext) -> None:
         "  /faq          – FAQ anzeigen\n"
         "  /ban          – Benutzer bannen (Antwort auf deren Nachricht)\n"
         "  /mute         – Benutzer stummschalten (Antwort)\n"
-        "  /cleandeleteaccounts – Gelöschte Konten entfernen\n"
         "  /setrss       – RSS‐Feed setzen (Admin)\n"
         "  /listrss      – RSS‐Feeds auflisten\n"
         "  /stoprss      – RSS‐Feed stoppen\n\n"
@@ -229,6 +235,53 @@ async def set_rules(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("✅ Regeln‐Text gespeichert.")
 
 # ----------------------------------------------------------------------------------------------------------------------
+# 2.2) /setfarewell – Abschied festlegen (Foto mit Caption oder reiner Text)
+# ----------------------------------------------------------------------------------------------------------------------
+
+async def set_farewell(update: Update, context: CallbackContext) -> None:
+    if not await is_admin(update, context):
+        await update.message.reply_text("❌ Nur Administratoren dürfen die Abschiedsnachricht setzen.")
+        return
+
+    chat_id = update.effective_chat.id
+
+    # Variante A: Foto + Caption
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        full_caption = (update.message.caption or "").strip()
+        tokens = full_caption.split(maxsplit=1)
+        text = tokens[1].strip() if len(tokens) > 1 else None
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO farewell (chat_id, photo_id, text)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (chat_id) DO UPDATE
+                SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;
+            """, (chat_id, file_id, text))
+        await update.message.reply_text("✅ Abschieds‐Bild (+Text) gespeichert.")
+        return
+
+    # Variante B: Nur Text
+    if len(context.args) == 0:
+        await update.message.reply_text(
+            "Bitte gib den Abschiedstext an oder sende ein Foto mit Caption.\n\n"
+            "Beispiel (nur Text):\n"
+            "  /setfarewell Auf Wiedersehen, {user}!"
+        )
+        return
+
+    text = " ".join(context.args).strip()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO farewell (chat_id, photo_id, text)
+            VALUES (%s, NULL, %s)
+            ON CONFLICT (chat_id) DO UPDATE
+            SET photo_id = NULL, text = EXCLUDED.text;
+        """, (chat_id, text))
+    await update.message.reply_text("✅ Abschieds‐Text gespeichert.")
+
+# ----------------------------------------------------------------------------------------------------------------------
 # 3) /setfaq – FAQ festlegen (Foto mit Caption oder reiner Text)
 # ----------------------------------------------------------------------------------------------------------------------
 async def set_faq(update: Update, context: CallbackContext) -> None:
@@ -297,6 +350,28 @@ async def show_welcome(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"Willkommen, {user_name}! 🎉")
 
 # ----------------------------------------------------------------------------------------------------------------------
+# 4.1) /farewell (manuelle Anzeige gespeicherte Begrüßung)
+# ----------------------------------------------------------------------------------------------------------------------
+
+async def show_farewell(update: Update, context: CallbackContext) -> None:
+    chat_id   = update.effective_chat.id
+    user_name = update.effective_user.full_name
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT photo_id, text FROM farewell WHERE chat_id = %s;", (chat_id,))
+        row = cur.fetchone()
+
+    if row:
+        photo_id, text = row
+        formatted = (text or "").replace("{user}", user_name)
+        if photo_id:
+            await update.message.reply_photo(photo=photo_id, caption=formatted)
+        else:
+            await update.message.reply_text(formatted)
+    else:
+        await update.message.reply_text(f"Auf Wiedersehen, {user_name}! 👋")
+
+# ----------------------------------------------------------------------------------------------------------------------
 # 5) Automatisch, wenn ein neues Mitglied beitritt
 # ----------------------------------------------------------------------------------------------------------------------
 async def welcome_new_member(update: Update, context: CallbackContext) -> None:
@@ -317,6 +392,28 @@ async def welcome_new_member(update: Update, context: CallbackContext) -> None:
                 await update.message.reply_text(formatted)
         else:
             await update.message.reply_text(f"Willkommen, {new_user.full_name}! 🎉")
+
+# ----------------------------------------------------------------------------------------------------------------------
+# 5.2) Automatisch, wenn ein neues Mitglied austritt
+# ----------------------------------------------------------------------------------------------------------------------
+
+async def farewell_member(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    left    = update.message.left_chat_member
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT photo_id, text FROM farewell WHERE chat_id = %s;", (chat_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return  # keine Abschiedsnachricht definiert
+
+    photo_id, text = row
+    formatted = (text or "").replace("{user}", left.full_name)
+    if photo_id:
+        await update.message.reply_photo(photo=photo_id, caption=formatted)
+    else:
+        await update.message.reply_text(formatted)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # 6) /rules (manuelle Anzeige gespeicherter Regeln)
@@ -379,36 +476,6 @@ async def mute(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"{update.message.reply_to_message.from_user.full_name} wurde stummgeschaltet.")
     else:
         await update.message.reply_text("Bitte antworte auf die Nachricht des Benutzers, den du stummschalten möchtest.")
-
-# ----------------------------------------------------------------------------------------------------------------------
-# 10) /cleandeleteaccounts – Entfernt gelöschte Accounts aus Admin‐Liste
-# ----------------------------------------------------------------------------------------------------------------------
-async def clean_delete_accounts(update: Update, context: CallbackContext) -> None:
-    chat = update.effective_chat
-
-    try:
-        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
-        if bot_member.status not in ["administrator", "creator"]:
-            await update.message.reply_text("❌ Ich benötige Admin-Rechte, um gelöschte Konten zu entfernen.")
-            return
-
-        deleted_accounts = []
-        admins = await context.bot.get_chat_administrators(chat.id)
-        for admin in admins:
-            user = admin.user
-            if user.first_name in ["Deleted Account", "Gelöschtes Konto"] or user.username is None:
-                if user.id == context.bot.id:
-                    continue
-                await context.bot.ban_chat_member(chat.id, user.id)
-                deleted_accounts.append(user.id)
-
-        if deleted_accounts:
-            await update.message.reply_text(f"Gelöschte Konten entfernt: {len(deleted_accounts)}")
-        else:
-            await update.message.reply_text("Keine gelöschten Konten gefunden.")
-    except Exception as error:
-        logger.error(f"Fehler beim Bereinigen gelöschter Konten: {error}")
-        await update.message.reply_text(f"Ein Fehler ist aufgetreten: {error}")
 
 # ----------------------------------------------------------------------------------------------------------------------
 # 11) RSS‐Funktionen
@@ -578,14 +645,15 @@ def main() -> None:
     app.add_handler(CommandHandler("setwelcome", set_welcome))
     app.add_handler(CommandHandler("setrules", set_rules))
     app.add_handler(CommandHandler("setfaq", set_faq))
+    app.add_handler(CommandHandler("setfarewell", set_farewell))
 
     app.add_handler(CommandHandler("welcome", show_welcome))
     app.add_handler(CommandHandler("rules", rules_handler))
     app.add_handler(CommandHandler("faq", faq_handler))
+    app.add_handler(CommandHandler("farewell", show_farewell))
 
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("mute", mute))
-    app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts))
 
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
@@ -595,24 +663,15 @@ def main() -> None:
     app.add_handler(CommandHandler("setrole", set_role))
 
     # 3) Photo‐Variante für /set… als MessageHandler
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO & filters.CaptionRegex(r"^/setwelcome(@\w+)?"), set_welcome
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO & filters.CaptionRegex(r"^/setrules(@\w+)?"), set_rules
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO & filters.CaptionRegex(r"^/setfaq(@\w+)?"), set_faq
-        )
-    )
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r"^/setwelcome(@\w+)?"), set_welcome))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r"^/setrules(@\w+)?"), set_rules))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r"^/setfaq(@\w+)?"), set_faq))
 
     # 4) MessageHandler für NEW_CHAT_MEMBERS (automatische Begrüßung)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+
+    # 4) MessageHandler für NEW_CHAT_MEMBERS (automatische Begrüßung)
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
 
     # 5) MessageHandler für Captcha
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha))
@@ -622,7 +681,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter))
 
     # 7) RSS‐Jobqueue alle 2 Minuten
-    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=10)
+    app.job_queue.run_repeating(fetch_rss_feed, interval=120, first=3)
 
     # 8) Bot starten (Polling)
     app.run_polling()
