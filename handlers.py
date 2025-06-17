@@ -273,11 +273,11 @@ async def dashboard_command(update, context):
     total_groups = len(get_registered_groups())
     total_rss = len(get_rss_feeds())
     total_users = sum(len(list_members(cid)) for cid, _ in get_registered_groups())
-    uptime = datetime.datetime.now() - context.application_data.get('start_time', datetime.datetime.now())
+    uptime = datetime.datetime.now() - context.bot_data.get('start_time', datetime.datetime.now())
 
     msg = (
         f"🤖 *Bot Dashboard*\n"
-        f"\n• Startzeit: `{context.application_data.get('start_time')}`"
+        f"\n• Startzeit: `{context.bot_data.get('start_time')}`"
         f"\n• Uptime: `{str(uptime).split('.')[0]}`"
         f"\n• Gruppen: `{total_groups}`"
         f"\n• RSS-Feeds: `{total_rss}`"
