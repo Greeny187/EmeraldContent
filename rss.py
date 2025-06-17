@@ -1,7 +1,7 @@
 import feedparser
 import logging
 from telegram import Update
-from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters
+from telegram.ext import CommandHandler, ContextTypes, MessageHandler, filters
 from database import (
     add_rss_feed,
     list_rss_feeds as db_list_rss_feeds,
@@ -13,7 +13,7 @@ from database import (
 
 logger = logging.getLogger(__name__)
 
-async def set_rss_feed(update: Update, context: CallbackContext):
+async def set_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     logger.info(f"set_rss_feed called: chat_id={chat.id}, type={chat.type}, thread_id={update.message.message_thread_id}, args={context.args}")
     if chat.type not in ("group", "supergroup"):
@@ -28,7 +28,7 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
     await update.message.reply_text(f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}")
 
-async def list_rss_feeds(update: Update, context: CallbackContext):
+async def list_rss_feeds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     feeds = db_list_rss_feeds(chat_id)
     if not feeds:
@@ -37,7 +37,7 @@ async def list_rss_feeds(update: Update, context: CallbackContext):
         msg = "Aktive RSS-Feeds:\n" + "\n".join(f"- {url} (Topic {tid})" for url, tid in feeds)
         await update.message.reply_text(msg)
 
-async def stop_rss_feed(update: Update, context: CallbackContext):
+async def stop_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if context.args:
         url = context.args[0]
@@ -47,7 +47,7 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
         db_remove_rss_feed(chat_id)
         await update.message.reply_text("Alle RSS-Feeds entfernt.")
 
-async def fetch_rss_feed(context: CallbackContext):
+async def fetch_rss_feed(context: ContextTypes.DEFAULT_TYPE):
 # Alle eingetragenen Feeds abfragen
     feeds = get_rss_feeds()
     for chat_id, url, topic_id in feeds:
@@ -90,6 +90,7 @@ async def fetch_rss_feed(context: CallbackContext):
 def register_rss(app):
     logger.info("→ register_rss() aufgerufen")  # @username-Zugriff entfernt
     app.add_handler(CommandHandler("setrss", set_rss_feed))
+    app.add_handler(MessageHandler(filters.Command("setrss"), set_rss_feed), group=1)
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
