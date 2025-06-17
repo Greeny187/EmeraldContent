@@ -1,8 +1,10 @@
 import os
 import psycopg2
+from psycopg2 import sql
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple
+import logging
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -125,96 +127,44 @@ def init_db():
 
 
 def migrate_db():
-    # Hier definierst du migrate_db, bevor du sie aufrufst
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    cur  = conn.cursor()
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS groups (
-                chat_id BIGINT PRIMARY KEY,
-                title TEXT NOT NULL,
-                welcome_topic_id BIGINT DEFAULT 0
-            );
+    logging.basicConfig(level=logging.INFO)
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    try:
+        logging.info("Starte Migration: Gruppen, Einstellungen, Mitglieder…")
+
+        # Bestehende Tabellen erweitern (Migrations)
+        cur.execute("""
+            ALTER TABLE groups
+            ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;
         """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS group_settings (
-            chat_id BIGINT PRIMARY KEY,
-            daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE
-            );
+        cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+        """)
+        cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
+        """)
+        # neu: members-Tabelle um joined_at erweitern
+        logging.info("→ Füge members.joined_at hinzu, falls noch nicht vorhanden")
+        cur.execute("""
+            ALTER TABLE members
+            ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
         """)
 
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS welcome (
-                chat_id BIGINT PRIMARY KEY,
-                photo_id TEXT,
-                text TEXT
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS rules (
-                chat_id BIGINT PRIMARY KEY,
-                photo_id TEXT,
-                text TEXT
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS farewell (
-                chat_id BIGINT PRIMARY KEY,
-                photo_id TEXT,
-                text TEXT
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS rss_feeds (
-                chat_id BIGINT,
-                url TEXT,
-                topic_id BIGINT,
-                PRIMARY KEY (chat_id, url)
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS last_posts (
-                chat_id BIGINT,
-                link TEXT,
-                PRIMARY KEY (chat_id, link)
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_topics (
-                chat_id BIGINT,
-                user_id BIGINT,
-                topic_id BIGINT,
-                PRIMARY KEY (chat_id, user_id)
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS members (
-                chat_id BIGINT,
-                user_id BIGINT,
-                joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (chat_id, user_id)
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS daily_stats (
-                chat_id   BIGINT,
-                stat_date DATE,
-                user_id   BIGINT,
-                messages  INT DEFAULT 0,
-                PRIMARY KEY(chat_id, stat_date, user_id)
-            );
-        """)
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS mood_meter (
-                chat_id    BIGINT,
-                message_id INT,
-                user_id    BIGINT,
-                mood       TEXT,
-                PRIMARY KEY(chat_id, message_id, user_id)
-            );
-    """)    
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
+        logging.info("Migration erfolgreich abgeschlossen.")
+    except Exception as e:
+        logging.error("Migration fehlgeschlagen: %s", e)
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+if __name__ == "__main__":
+    migrate_db()
 
 # Gruppenverwaltung
 def register_group(chat_id: int, title: str, welcome_topic_id: int = 0):
