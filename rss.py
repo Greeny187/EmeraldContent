@@ -88,8 +88,9 @@ async def fetch_rss_feed(context: CallbackContext):
                 logger.error(f"Failed to record posted link for chat {chat_id}: {e}")
 
 def register_rss(app):
-
-    app.add_handler(CommandHandler("setrss", set_rss_feed))
+    logger.info(f"→ register_rss: Bot.username={app.bot.username}")
+    pattern = rf'^/setrss(?:@{app.bot.username})?\b'
+    app.add_handler(MessageHandler(filters.Regex(pattern), set_rss_feed), group=1)
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
