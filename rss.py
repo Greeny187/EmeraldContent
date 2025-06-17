@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def set_rss_feed(update: Update, context: CallbackContext):
     chat = update.effective_chat
+    logger.info(f"set_rss_feed called: chat_id={chat.id}, type={chat.type}, thread_id={update.message.message_thread_id}, args={context.args}")
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
         return
