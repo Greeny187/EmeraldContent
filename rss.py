@@ -1,7 +1,7 @@
 import feedparser
 import logging
 from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import CommandHandler, CallbackContext
 from database import (
     add_rss_feed,
     list_rss_feeds as db_list_rss_feeds,
@@ -13,28 +13,23 @@ from database import (
 
 logger = logging.getLogger(__name__)
 
-async def set_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_rss_feed(update: Update, context: CallbackContext):
     chat = update.effective_chat
-    logger.info(f"set_rss_feed called: chat_id={chat.id}, type={chat.type}, thread_id={update.message.message_thread_id}, args={context.args}")
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
         return
-    topic_id = update.message.message_thread_id or None
-    # 1) Versuche, die URL aus context.args zu holen
-    if context.args:
-        url = context.args[0]
-    else:
-    # 2) Fallback: aus rohem Text parsen (falls Fallback-MessageHandler greift)
-        text = update.message.text or ""
-        parts = text.strip().split(maxsplit=1)
-        if len(parts) < 2:
-            return await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
-    url = parts[1].strip()
+    topic_id = update.message.message_thread_id
+    if not topic_id:
+        await update.message.reply_text("Bitte führe den Befehl in einem Thema im Gruppenchat aus.")
+        return
+    if not context.args:
+        await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
+        return
+    url = context.args[0]
     add_rss_feed(chat.id, url, topic_id)
-    dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
-    await update.message.reply_text(f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}")
+    await update.message.reply_text(f"RSS-Feed hinzugefügt für Thema {topic_id}:\n{url}")
 
-async def list_rss_feeds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_rss_feeds(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     feeds = db_list_rss_feeds(chat_id)
     if not feeds:
@@ -43,7 +38,7 @@ async def list_rss_feeds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "Aktive RSS-Feeds:\n" + "\n".join(f"- {url} (Topic {tid})" for url, tid in feeds)
         await update.message.reply_text(msg)
 
-async def stop_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_rss_feed(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     if context.args:
         url = context.args[0]
@@ -53,49 +48,27 @@ async def stop_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_remove_rss_feed(chat_id)
         await update.message.reply_text("Alle RSS-Feeds entfernt.")
 
-async def fetch_rss_feed(context: ContextTypes.DEFAULT_TYPE):
-# Alle eingetragenen Feeds abfragen
-    feeds = get_rss_feeds()
-    for chat_id, url, topic_id in feeds:
-        try:
-            # Bereits gepostete Links holen
-            posted = get_posted_links(chat_id)
-            #Feed laden und nach Datum sortieren
-            feed = feedparser.parse(url)
-            entries = sorted(
-                feed.entries,
-                key=lambda e: getattr(e, "published_parsed", 0) or 0
-            )
-        except Exception as e:
-            logger.error(f"RSS load error for {url} in chat {chat_id}: {e}")
-            continue
-
+async def fetch_rss_feed(context: CallbackContext):
+    for chat_id, url, topic_id in get_rss_feeds():
+        posted = get_posted_links(chat_id)
+        feed = feedparser.parse(url)
+        entries = sorted(feed.entries, key=lambda e: getattr(e, "published_parsed", 0) or 0)
         for entry in entries:
-            link = entry.link
-            if link in posted:
+            if entry.link in posted:
                 continue
-
-            # Nachricht im Forenthema oder Hauptchat
-            send_kwargs = {"chat_id": chat_id, "text": f"📰 *{entry.title}*\n{link}", "parse_mode": "Markdown"}
-            if topic_id:
-                send_kwargs["message_thread_id"] = topic_id
-
             try:
-                await context.bot.send_message(**send_kwargs)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=topic_id,
+                    text=f"📰 *{entry.title}*\n{entry.link}",
+                    parse_mode="Markdown"
+                )
             except Exception as e:
-                logger.error(f"Failed to send RSS entry to chat {chat_id}: {e}")
-                # Weiter zum nächsten Eintrag, chat_id bleibt gültig
-                continue
-
-            # Nur wenn erfolgreich gesendet, als gepostet markieren
-            try:
-                add_posted_link(chat_id, link)
-            except Exception as e:
-                logger.error(f"Failed to record posted link for chat {chat_id}: {e}")
+                logger.error(f"Failed to send RSS entry: {e}")
+            add_posted_link(chat_id, entry.link)
 
 def register_rss(app):
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
-
-    app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=3)
+    app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)
