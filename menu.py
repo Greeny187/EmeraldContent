@@ -94,6 +94,7 @@ async def menu_callback(update, context):
         if func == "rss":
             kb = [
                 [InlineKeyboardButton("Auflisten", callback_data=f"{chat_id}_rss_list")],
+                [InlineKeyboardButton("Feed hinzufügen", callback_data=f"{chat_id}_rss_setrss")],
                 [InlineKeyboardButton("Stoppen",   callback_data=f"{chat_id}_rss_stop")],
                 [InlineKeyboardButton("⬅ Hauptmenü", callback_data=f"group_{chat_id}")],
             ]
@@ -180,6 +181,17 @@ async def menu_callback(update, context):
             else:
                 await query.edit_message_text(prompt, reply_markup=back_func)
             return
+
+        # RSS «Feed hinzufügen» aus Menü
+        if func == "rss" and action == "setrss":
+            from telegram import ForceReply
+            # Kennzeichnen, dass wir auf die URL warten
+            context.user_data["awaiting_rss_url"] = True
+            context.user_data["rss_group_id"] = int(chat_id)
+            return await query.message.reply_text(
+                "➡ Bitte sende jetzt die RSS-URL für diese Gruppe:",
+                reply_markup=ForceReply(selective=True)
+            )
 
         # RSS List
         if func == "rss" and action == "list":

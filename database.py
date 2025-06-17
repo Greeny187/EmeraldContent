@@ -326,6 +326,26 @@ def delete_farewell(chat_id: int):
         cur.execute("DELETE FROM farewell WHERE chat_id = %s;", (chat_id,))
 
 # RSS-Feeds
+
+def set_rss_topic(chat_id: int, topic_id: int):
+    with conn.cursor() as cur:
+        # Falls group_settings-Zeile fehlt, daily_stats_enabled auf TRUE lassen
+        cur.execute("""
+            INSERT INTO group_settings (chat_id, daily_stats_enabled, rss_topic_id)
+            VALUES (%s, TRUE, %s)
+            ON CONFLICT (chat_id) DO UPDATE
+                SET rss_topic_id = EXCLUDED.rss_topic_id;
+        """, (chat_id, topic_id))
+
+def get_rss_topic(chat_id: int) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT rss_topic_id FROM group_settings WHERE chat_id = %s;",
+            (chat_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
 def add_rss_feed(chat_id: int, url: str, topic_id: int):
     with conn.cursor() as cur:
         cur.execute("""

@@ -4,7 +4,7 @@ from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, remove_member, list_members, inc_message_count,
-save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question)
+save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -233,6 +233,30 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
             logger.error(f"Error cleaning user {user_id} in chat {chat_id}: {e}")
     return len(removed)
 
+async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+
+    # Nur in Gruppen/Supergruppen zulassen
+    if chat.type not in ("group", "supergroup"):
+        return await msg.reply_text("❌ `/settopicrss` nur in Gruppen möglich.")
+
+    # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
+    topic_id = msg.message_thread_id or None
+    # 2) Oder, falls als Reply in einem Thema
+    if not topic_id and msg.reply_to_message:
+        topic_id = msg.reply_to_message.message_thread_id
+
+    if not topic_id:
+        return await msg.reply_text(
+            "⚠️ Bitte führe `/settopicrss` in dem gewünschten Forum-Thema aus "
+            "oder antworte auf eine Nachricht darin."
+        )
+
+    # In DB speichern
+    set_rss_topic(chat.id, topic_id)
+    await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
+
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
@@ -240,6 +264,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))
+    app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     

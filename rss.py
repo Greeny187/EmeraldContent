@@ -1,14 +1,15 @@
 import feedparser
 import logging
 from telegram import Update
-from telegram.ext import CommandHandler, CallbackContext
+from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters
 from database import (
     add_rss_feed,
     list_rss_feeds as db_list_rss_feeds,
     remove_rss_feed as db_remove_rss_feed,
     get_rss_feeds,
     get_posted_links,
-    add_posted_link
+    add_posted_link,
+    get_rss_topic,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
         return
-    topic_id = update.message.message_thread_id
+    topic_id = update.message.message_thread_id or get_rss_topic(chat.id) or None
     if not topic_id:
         await update.message.reply_text("Bitte führe den Befehl in einem Thema im Gruppenchat aus.")
         return
@@ -67,8 +68,23 @@ async def fetch_rss_feed(context: CallbackContext):
                 logger.error(f"Failed to send RSS entry: {e}")
             add_posted_link(chat_id, entry.link)
 
+async def rss_url_reply(update, context):
+    if not context.user_data.get("awaiting_rss_url"):
+        return
+    url = update.message.text.strip()
+    chat_id = context.user_data.pop("rss_group_id")
+    context.user_data.pop("awaiting_rss_url", None)
+    # rufe deinen bestehenden set_rss_feed auf – simuliert durch context.args
+    # wir packen die URL in args, damit set_rss_feed sie direkt nutzt
+    update.message.text = f"/setrss {url}"
+    context.args = [url]
+    await set_rss_feed(update, context)
+
 def register_rss(app):
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)
+
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)
