@@ -93,9 +93,4 @@ def register_rss(app):
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
-    pattern = rf'^/setrss(?:@{app.bot.username})?\b'
-    app.add_handler(
-        MessageHandler(filters.Regex(pattern), set_rss_feed), 
-        group=1  # Gruppe hinter den CommandHandlern
-    )
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=3)
