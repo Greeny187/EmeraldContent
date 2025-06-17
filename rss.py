@@ -94,23 +94,8 @@ async def fetch_rss_feed(context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to record posted link for chat {chat_id}: {e}")
 
 def register_rss(app):
-    logger.info("→ register_rss() aufgerufen")  # @username-Zugriff entfernt
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
 
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=3)
-
-    app.add_handler(CommandHandler(
-        "setrss", set_rss_feed,
-        block=False,
-        pass_args=False
-    ))
-    # Fallback: fängt alle /setrss auch ohne @BotName in Gruppen
-    app.add_handler(
-        MessageHandler(
-            filters.Command("setrss"),
-            set_rss_feed
-        ),
-        group=1
-    )
