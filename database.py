@@ -21,20 +21,6 @@ conn.autocommit = True
 
 def init_db():
     with conn.cursor() as cur:
-        # Bestehende Tabellen erweitern (Migrations)
-        cur.execute("""
-            ALTER TABLE groups
-            ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;
-        """)
-        cur.execute("""
-            ALTER TABLE group_settings
-            ADD COLUMN IF NOT EXISTS daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE;
-        """)
-        cur.execute("""
-            ALTER TABLE group_settings
-            ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
-        """)
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS groups (
                 chat_id BIGINT PRIMARY KEY,
@@ -116,6 +102,20 @@ def init_db():
                 mood       TEXT,
                 PRIMARY KEY(chat_id, message_id, user_id)
             );
+        """)
+        
+        # Bestehende Tabellen erweitern (Migrations)
+        cur.execute("""
+            ALTER TABLE groups
+            ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;
+        """)
+        cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+        """)
+        cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
         """)
 
 # Gruppenverwaltung
