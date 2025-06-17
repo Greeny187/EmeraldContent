@@ -118,18 +118,16 @@ def init_db():
             ALTER TABLE group_settings
             ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
         """)
+        cur.execute("""
+            ALTER TABLE members
+            ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+        """)
+
 
 def migrate_db():
     # Hier definierst du migrate_db, bevor du sie aufrufst
     conn = psycopg2.connect(DATABASE_URL, sslmode="require")
     cur  = conn.cursor()
-    cur.execute("""
-            CREATE TABLE IF NOT EXISTS groups (
-                chat_id BIGINT PRIMARY KEY,
-                title TEXT NOT NULL,
-                welcome_topic_id BIGINT DEFAULT 0
-            );
-        """)
     cur.execute("""
             CREATE TABLE IF NOT EXISTS groups (
                 chat_id BIGINT PRIMARY KEY,
@@ -192,6 +190,7 @@ def migrate_db():
             CREATE TABLE IF NOT EXISTS members (
                 chat_id BIGINT,
                 user_id BIGINT,
+                joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chat_id, user_id)
             );
         """)
@@ -240,8 +239,8 @@ def unregister_group(chat_id: int):
 def add_member(chat_id: int, user_id: int):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO members (chat_id, user_id)
-            VALUES (%s, %s)
+            INSERT INTO members (chat_id, user_id, joined_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT DO NOTHING;
         """, (chat_id, user_id))
 
