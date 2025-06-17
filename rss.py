@@ -24,7 +24,8 @@ async def set_rss_feed(update: Update, context: CallbackContext):
         return
     url = context.args[0]
     add_rss_feed(chat.id, url, topic_id)
-    await update.message.reply_text(f"RSS-Feed hinzugefügt für Thema {topic_id}:\n{url}")
+    dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
+    await update.message.reply_text(f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}")
 
 async def list_rss_feeds(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
