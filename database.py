@@ -103,7 +103,7 @@ def init_db():
                 PRIMARY KEY(chat_id, message_id, user_id)
             );
         """)
-        
+
         # Bestehende Tabellen erweitern (Migrations)
         cur.execute("""
             ALTER TABLE groups
@@ -117,6 +117,103 @@ def init_db():
             ALTER TABLE group_settings
             ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
         """)
+
+def migrate_db():
+    # Hier definierst du migrate_db, bevor du sie aufrufst
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    cur  = conn.cursor()
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                chat_id BIGINT PRIMARY KEY,
+                title TEXT NOT NULL,
+                welcome_topic_id BIGINT DEFAULT 0
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                chat_id BIGINT PRIMARY KEY,
+                title TEXT NOT NULL,
+                welcome_topic_id BIGINT DEFAULT 0
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_settings (
+            chat_id BIGINT PRIMARY KEY,
+            daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE
+            );
+        """)
+
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS welcome (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS rules (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS farewell (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS rss_feeds (
+                chat_id BIGINT,
+                url TEXT,
+                topic_id BIGINT,
+                PRIMARY KEY (chat_id, url)
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS last_posts (
+                chat_id BIGINT,
+                link TEXT,
+                PRIMARY KEY (chat_id, link)
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_topics (
+                chat_id BIGINT,
+                user_id BIGINT,
+                PRIMARY KEY (chat_id, user_id)
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                chat_id BIGINT,
+                user_id BIGINT,
+                PRIMARY KEY (chat_id, user_id)
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_stats (
+                chat_id   BIGINT,
+                stat_date DATE,
+                user_id   BIGINT,
+                messages  INT DEFAULT 0,
+                PRIMARY KEY(chat_id, stat_date, user_id)
+            );
+        """)
+    cur.execute("""
+            CREATE TABLE IF NOT EXISTS mood_meter (
+                chat_id    BIGINT,
+                message_id INT,
+                user_id    BIGINT,
+                mood       TEXT,
+                PRIMARY KEY(chat_id, message_id, user_id)
+            );
+    """)    
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # Gruppenverwaltung
 def register_group(chat_id: int, title: str, welcome_topic_id: int = 0):
@@ -360,3 +457,9 @@ def set_daily_stats(chat_id: int, enabled: bool):
             ON CONFLICT (chat_id) DO UPDATE
               SET daily_stats_enabled = EXCLUDED.daily_stats_enabled;
         """, (chat_id, enabled))
+
+
+if __name__ == "__main__":
+    init_db()
+    migrate_db()
+    print("✅ Migration abgeschlossen.")
