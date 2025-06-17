@@ -18,10 +18,7 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
         return
-    topic_id = update.message.message_thread_id
-    if not topic_id:
-        await update.message.reply_text("Bitte führe den Befehl in einem Thema im Gruppenchat aus.")
-        return
+    topic_id = update.message.message_thread_id or None
     if not context.args:
         await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
         return
@@ -56,18 +53,28 @@ async def fetch_rss_feed(context: CallbackContext):
         for entry in entries:
             if entry.link in posted:
                 continue
-            try:
+        try:
+            # Wenn topic_id gesetzt: im Forenthema posten
+            if topic_id:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=topic_id,
                     text=f"📰 *{entry.title}*\n{entry.link}",
                     parse_mode="Markdown"
                 )
-            except Exception as e:
-                logger.error(f"Failed to send RSS entry: {e}")
-            add_posted_link(chat_id, entry.link)
+            else:
+            # Sonst normal in den Hauptchat
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📰 *{entry.title}*\n{entry.link}",
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.error(f"Failed to send RSS entry: {e}")
+    add_posted_link(chat_id, entry.link)
 
 def register_rss(app):
+
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
