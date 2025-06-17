@@ -20,7 +20,6 @@ conn = psycopg2.connect(
     sslmode="require",
 )
 conn.autocommit = True
-autocommit = True
 
 def init_db():
     with conn.cursor() as cur:
