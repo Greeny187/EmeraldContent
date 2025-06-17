@@ -47,32 +47,44 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
         await update.message.reply_text("Alle RSS-Feeds entfernt.")
 
 async def fetch_rss_feed(context: CallbackContext):
-    for chat_id, url, topic_id in get_rss_feeds():
-        posted = get_posted_links(chat_id)
-        feed = feedparser.parse(url)
-        entries = sorted(feed.entries, key=lambda e: getattr(e, "published_parsed", 0) or 0)
-        for entry in entries:
-            if entry.link in posted:
-                continue
+# Alle eingetragenen Feeds abfragen
+    feeds = get_rss_feeds()
+    for chat_id, url, topic_id in feeds:
         try:
-            # Wenn topic_id gesetzt: im Forenthema posten
-            if topic_id:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=topic_id,
-                    text=f"📰 *{entry.title}*\n{entry.link}",
-                    parse_mode="Markdown"
-                )
-            else:
-            # Sonst normal in den Hauptchat
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"📰 *{entry.title}*\n{entry.link}",
-                    parse_mode="Markdown"
-                )
+            # Bereits gepostete Links holen
+            posted = get_posted_links(chat_id)
+            #Feed laden und nach Datum sortieren
+            feed = feedparser.parse(url)
+            entries = sorted(
+                feed.entries,
+                key=lambda e: getattr(e, "published_parsed", 0) or 0
+            )
         except Exception as e:
-            logger.error(f"Failed to send RSS entry: {e}")
-    add_posted_link(chat_id, entry.link)
+            logger.error(f"RSS load error for {url} in chat {chat_id}: {e}")
+            continue
+
+        for entry in entries:
+            link = entry.link
+            if link in posted:
+                continue
+
+            # Nachricht im Forenthema oder Hauptchat
+            send_kwargs = {"chat_id": chat_id, "text": f"📰 *{entry.title}*\n{link}", "parse_mode": "Markdown"}
+            if topic_id:
+                send_kwargs["message_thread_id"] = topic_id
+
+            try:
+                await context.bot.send_message(**send_kwargs)
+            except Exception as e:
+                logger.error(f"Failed to send RSS entry to chat {chat_id}: {e}")
+                # Weiter zum nächsten Eintrag, chat_id bleibt gültig
+                continue
+
+            # Nur wenn erfolgreich gesendet, als gepostet markieren
+            try:
+                add_posted_link(chat_id, link)
+            except Exception as e:
+                logger.error(f"Failed to record posted link for chat {chat_id}: {e}")
 
 def register_rss(app):
 
