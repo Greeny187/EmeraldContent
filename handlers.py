@@ -8,7 +8,7 @@ save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_ques
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
-
+from rss import set_rss_feed, stop_rss_feed, fetch_rss_feed, list_rss_feeds
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,3 +251,8 @@ def register_handlers(app):
     app.add_handler(help_handler)
 
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
+
+    app.add_handler(CommandHandler("setrss", set_rss_feed))
+    app.add_handler(CommandHandler("listrss", list_rss_feeds))
+    app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=3)
