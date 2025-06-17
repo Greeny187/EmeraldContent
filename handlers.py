@@ -1,15 +1,21 @@
+import os
+import datetime
 import re
 import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, remove_member, list_members, inc_message_count,
-save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic)
+save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic, get_rss_feeds)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
 
 logger = logging.getLogger(__name__)
+
+async def error_handler(update, context):
+    """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
+    logger.error("Uncaught exception", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -257,6 +263,29 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_rss_topic(chat.id, topic_id)
     await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
 
+async def dashboard_command(update, context):
+    user_id = update.effective_user.id
+    dev_id = os.getenv("DEVELOPER_CHAT_ID")
+    if str(user_id) != str(dev_id):
+        return await update.message.reply_text("❌ Zugriff verweigert.")
+
+    # Metriken sammeln
+    total_groups = len(get_registered_groups())
+    total_rss = len(get_rss_feeds())
+    total_users = sum(len(list_members(cid)) for cid, _ in get_registered_groups())
+    uptime = datetime.datetime.now() - context.application_data.get('start_time', datetime.datetime.now())
+
+    msg = (
+        f"🤖 *Bot Dashboard*\n"
+        f"\n• Startzeit: `{context.application_data.get('start_time')}`"
+        f"\n• Uptime: `{str(uptime).split('.')[0]}`"
+        f"\n• Gruppen: `{total_groups}`"
+        f"\n• RSS-Feeds: `{total_rss}`"
+        f"\n• Gesamt-Mitglieder: `{total_users}`"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
@@ -267,7 +296,8 @@ def register_handlers(app):
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
-    
+    app.add_handler(CommandHandler("dashboard", dashboard_command))
+
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
