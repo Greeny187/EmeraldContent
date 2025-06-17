@@ -32,11 +32,11 @@ def init_db():
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS group_settings (
-            chat_id BIGINT PRIMARY KEY,
-            daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE
-            );
+                chat_id BIGINT PRIMARY KEY,
+                daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                rss_topic_id BIGINT NOT NULL DEFAULT 0,
+                mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
         """)
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS welcome (
                 chat_id BIGINT PRIMARY KEY,
@@ -121,6 +121,10 @@ def init_db():
             ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
         """)
         cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS rss_topic_id BIGINT NOT NULL DEFAULT 0;
+        """)
+        cur.execute("""
             ALTER TABLE members
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
         """)
@@ -135,6 +139,91 @@ def migrate_db():
 
         # Bestehende Tabellen erweitern (Migrations)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS groups (
+                chat_id BIGINT PRIMARY KEY,
+                title TEXT NOT NULL,
+                welcome_topic_id BIGINT DEFAULT 0
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_settings (
+                chat_id BIGINT PRIMARY KEY,
+                daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                rss_topic_id BIGINT NOT NULL DEFAULT 0,
+                mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS welcome (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rules (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS farewell (
+                chat_id BIGINT PRIMARY KEY,
+                photo_id TEXT,
+                text TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rss_feeds (
+                chat_id BIGINT,
+                url TEXT,
+                topic_id BIGINT,
+                PRIMARY KEY (chat_id, url)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS last_posts (
+                chat_id BIGINT,
+                link TEXT,
+                PRIMARY KEY (chat_id, link)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_topics (
+                chat_id BIGINT,
+                user_id BIGINT,
+                topic_id BIGINT,
+                PRIMARY KEY (chat_id, user_id)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS members (
+                chat_id BIGINT,
+                user_id BIGINT,
+                PRIMARY KEY (chat_id, user_id)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS daily_stats (
+                chat_id   BIGINT,
+                stat_date DATE,
+                user_id   BIGINT,
+                messages  INT DEFAULT 0,
+                PRIMARY KEY(chat_id, stat_date, user_id)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mood_meter (
+                chat_id    BIGINT,
+                message_id INT,
+                user_id    BIGINT,
+                mood       TEXT,
+                PRIMARY KEY(chat_id, message_id, user_id)
+            );
+        """)
+
+        # Bestehende Tabellen erweitern (Migrations)
+        cur.execute("""
             ALTER TABLE groups
             ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;
         """)
@@ -146,8 +235,10 @@ def migrate_db():
             ALTER TABLE group_settings
             ADD COLUMN IF NOT EXISTS mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?';
         """)
-        # neu: members-Tabelle um joined_at erweitern
-        logging.info("→ Füge members.joined_at hinzu, falls noch nicht vorhanden")
+        cur.execute("""
+            ALTER TABLE group_settings
+            ADD COLUMN IF NOT EXISTS rss_topic_id BIGINT NOT NULL DEFAULT 0;
+        """)
         cur.execute("""
             ALTER TABLE members
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
