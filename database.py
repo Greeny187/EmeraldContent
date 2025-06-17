@@ -184,6 +184,7 @@ def migrate_db():
             CREATE TABLE IF NOT EXISTS user_topics (
                 chat_id BIGINT,
                 user_id BIGINT,
+                topic_id BIGINT,
                 PRIMARY KEY (chat_id, user_id)
             );
         """)
