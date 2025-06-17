@@ -6,7 +6,7 @@ from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, remove_member, list_members, inc_message_count,
-save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic, get_rss_feeds)
+save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic, get_rss_feeds, count_members)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -272,7 +272,7 @@ async def dashboard_command(update, context):
     # Metriken sammeln
     total_groups = len(get_registered_groups())
     total_rss = len(get_rss_feeds())
-    total_users = sum(len(list_members(cid)) for cid, _ in get_registered_groups())
+    total_users  = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
     uptime = datetime.datetime.now() - context.bot_data.get('start_time', datetime.datetime.now())
 
     msg = (

@@ -39,6 +39,8 @@ def main():
     # JobQueue-Tasks
     register_jobs(app)
 
+    app.bot_data['start_time'] = start_time
+
     app.run_polling()
 
 if __name__ == "__main__":

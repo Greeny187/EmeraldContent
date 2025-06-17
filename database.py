@@ -290,10 +290,23 @@ def remove_member(chat_id: int, user_id: int):
     with conn.cursor() as cur:
         cur.execute("DELETE FROM members WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
-def list_members(chat_id: int) -> list[int]:
+def list_members(chat_id: int) -> List[int]:
+    #Gibt alle user_id aus der members-Tabelle für diese Gruppe zurück.
     with conn.cursor() as cur:
-        cur.execute("SELECT user_id FROM members WHERE chat_id = %s;", (chat_id,))
+        cur.execute(
+            "SELECT user_id FROM members WHERE chat_id = %s;",
+            (chat_id,)
+        )
         return [row[0] for row in cur.fetchall()]
+
+def count_members(chat_id: int) -> int:
+    #Gibt die Anzahl Mitglieder in dieser Gruppe zurück.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM members WHERE chat_id = %s;",
+            (chat_id,)
+        )
+        return cur.fetchone()[0] or 0
 
 def inc_message_count(chat_id: int, user_id: int, stat_date: date):
     with conn.cursor() as cur:
