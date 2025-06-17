@@ -20,6 +20,7 @@ conn = psycopg2.connect(
     sslmode="require",
 )
 conn.autocommit = True
+autocommit = True
 
 def init_db():
     with conn.cursor() as cur:
@@ -151,6 +152,7 @@ def migrate_db():
                 daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 rss_topic_id BIGINT NOT NULL DEFAULT 0,
                 mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
+            );
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS welcome (
