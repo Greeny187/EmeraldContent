@@ -20,10 +20,16 @@ async def set_rss_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
         return
     topic_id = update.message.message_thread_id or None
-    if not context.args:
-        await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
-        return
-    url = context.args[0]
+    # 1) Versuche, die URL aus context.args zu holen
+    if context.args:
+        url = context.args[0]
+    else:
+    # 2) Fallback: aus rohem Text parsen (falls Fallback-MessageHandler greift)
+        text = update.message.text or ""
+        parts = text.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            return await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
+    url = parts[1].strip()
     add_rss_feed(chat.id, url, topic_id)
     dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
     await update.message.reply_text(f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}")
