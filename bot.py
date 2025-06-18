@@ -1,6 +1,6 @@
 import os
 import datetime
-from telegram.ext import Application
+from telegram.ext import ApplicationBuilder
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
@@ -22,8 +22,11 @@ def main():
     start_time = datetime.datetime.now()
     
     #Botstart
-    app = Application.builder().token(BOT_TOKEN).build()
-    
+    app = ApplicationBuilder() \
+    .token(BOT_TOKEN) \
+    .allowed_updates(["chat_member", "my_chat_member", "message", "callback_query"]) \
+    .build()
+
     # Globaler Error-Handler
     app.add_error_handler(error_handler)
 
