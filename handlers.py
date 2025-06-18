@@ -167,7 +167,22 @@ async def set_topic(update, context):
             if ent.type == MessageEntity.TEXT_MENTION:
                 target = ent.user
                 break
-    if not target:
+    
+    # 2) Fallback für plain @username
+    if not target and msg.entities:
+        for ent in msg.entities:
+            if ent.type == MessageEntity.MENTION:
+                # Username-Substring aus msg.text holen
+                username = msg.text[ent.offset : ent.offset + ent.length]
+                username = username.lstrip('@').lower()
+
+                # Admin-Liste holen und matchen
+                admins = await context.bot.get_chat_administrators(chat.id)
+                for adm in admins:
+                    if adm.user.username and adm.user.username.lower() == username:
+                        target = adm.user
+                        break
+                break
 
         # WARN: Entities inspect – nur echte User-Objekte auslesen
         entity_info = []
@@ -178,10 +193,11 @@ async def set_topic(update, context):
                 uid = ent.user.id
             entity_info.append((ent.type, uid))
         logger.warning(
-            "❌ set_topic konnte keinen target auflösen: args=%s, entities=%s, reply_to_message=%s",
+            "❌ set_topic: kein target – args=%s, entities=%s, reply=%s",
             context.args,
-            entity_info,
-            msg.reply_to_message.from_user.id if msg.reply_to_message and msg.reply_to_message.from_user else None
+            [(ent.type, getattr(ent, "user", None) and ent.user.id) for ent in (msg.entities or [])],
+            bool(msg.reply_to_message)
+        
         )
         
         await msg.reply_text(
