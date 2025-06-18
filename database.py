@@ -279,12 +279,16 @@ def unregister_group(chat_id: int):
 # Mitgliederverwaltung
 
 def add_member(chat_id: int, user_id: int):
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO members (chat_id, user_id, joined_at)
-            VALUES (%s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT DO NOTHING;
-        """, (chat_id, user_id))
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO members (chat_id, user_id, joined_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT DO NOTHING;
+            """, (chat_id, user_id))
+        logging.info(f"✅ add_member: user {user_id} zu chat {chat_id} hinzugefügt")
+    except Exception as e:
+        logging.error(f"❌ Fehler in add_member: {e}", exc_info=True)
 
 def remove_member(chat_id: int, user_id: int):
     with conn.cursor() as cur:
