@@ -38,7 +38,7 @@ def main():
 
     app.bot_data['start_time'] = start_time
 
-    app.run_polling()
+    app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
 
 if __name__ == "__main__":
     main()
