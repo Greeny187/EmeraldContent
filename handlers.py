@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
-get_rss_feeds, count_members, get_farewell, get_welcome, get_connection)
+get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -94,26 +94,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"Löschen fehlgeschlagen: {e}")
                 return
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Speichert jede eingehende Nachricht in der Tabelle messages.
-    """
-    message = update.effective_message
-    chat_id = message.chat_id
-    user = message.from_user
-    timestamp = message.date.isoformat()
-
-    try:
-        conn = get_connection()
-        conn.execute(
-            "INSERT OR IGNORE INTO messages (chat_id, user_id, timestamp) VALUES (?, ?, ?)",
-            (chat_id, user.id, timestamp)
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Fehler beim Speichern der Nachricht: {e}")
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Nur aktiv, wenn zuvor im Menü „Bearbeiten“ gedrückt wurde
@@ -392,7 +372,6 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
     app.add_handler(help_handler)
 
