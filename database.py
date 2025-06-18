@@ -315,10 +315,10 @@ def count_members(chat_id: int) -> int:
 def inc_message_count(chat_id: int, user_id: int, stat_date: date):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO daily_stats (chat_id, stat_date, user_id, messages)
+            INSERT INTO daily_stats AS ds (chat_id, stat_date, user_id, messages)
             VALUES (%s, %s, %s, 1)
             ON CONFLICT (chat_id, stat_date, user_id)
-            DO UPDATE SET messages = messages + 1;
+            DO UPDATE SET messages = ds.messages + 1;
         """, (chat_id, stat_date, user_id))
 
 def get_group_stats(chat_id: int, stat_date: date) -> List[Tuple[int, int]]:
