@@ -163,12 +163,14 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = None
     # 1) Reply-Fallback: vorrangig Replied-User (forward_from oder from_user)
     if msg.reply_to_message:
-        target = msg.reply_to_message.forward_from or msg.reply_to_message.from_user
+        # sicher auf forward_from prüfen
+        original_author = getattr(msg.reply_to_message, 'forward_from', None)
+        target = original_author or msg.reply_to_message.from_user
 
     # 2) Text-Mention (aus Menü) – liefert ent.user direkt
     if not target and msg.entities:
         for ent in msg.entities:
-            if ent.type == MessageEntity.TEXT_MENTION and ent.user:
+            if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, 'user', None):
                 target = ent.user
                 break
 
@@ -188,7 +190,9 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not target:
         # WARN: Entities inspect – nur echte User-Objekte auslesen
         entity_info = [
-            (ent.type, ent.user.id) for ent in (msg.entities or []) if getattr(ent, "user", None)
+            (ent.type, ent.user.id)
+            for ent in (msg.entities or [])
+            if getattr(ent, 'user', None)
         ]
         logger.warning(
             "❌ set_topic: kein target – args=%s, entities=%s, reply=%s",
