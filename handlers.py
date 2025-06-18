@@ -149,6 +149,16 @@ async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def set_topic(update, context):
     chat = update.effective_chat
     msg = update.effective_message
+    
+    #DEBUG: eingehende Parameter loggen
+    logger.debug(
+        "🔍 set_topic called by %s in chat %s: args=%s, entities=%s, has_reply=%s",
+        msg.from_user.id,
+        chat.id,
+        context.args,
+        [ent.type for ent in (msg.entities or [])],
+        bool(msg.reply_to_message)
+    )
 
     # Nur Text-Mention-Fall: User muss per Menü-@ ausgewählt werden
     target = None
@@ -158,11 +168,21 @@ async def set_topic(update, context):
                 target = ent.user
                 break
     if not target:
-        return await msg.reply_text(
-            "⚠️ Bitte verwende eine Text-Mention (aus dem Vorschlagsmenü), um den User auszuwählen. "
-            "Gib dafür `/settopic` ein, tippe '@' und wähle dann den gewünschten User aus.",
-            parse_mode="Markdown"
+
+        #––– WARN: kein User aufgelöst
+        logger.warning(
+            "❌ set_topic konnte keinen target auflösen: args=%s, entities=%s, reply_to_message=%s",
+            context.args,
+            [(ent.type, ent.user.id if hasattr(ent, "user") else None) for ent in (msg.entities or [])],
+            msg.reply_to_message and msg.reply_to_message.from_user.id
+            )
+        
+        await msg.reply_text(
+                "⚠️ Bitte verwende eine Text-Mention (aus dem Vorschlagsmenü), um den User auszuwählen. "
+                "Gib dafür `/settopic` ein, tippe '@' und wähle dann den gewünschten User aus.",
+                parse_mode="Markdown"
         )
+        return
 
     # 5) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id)
