@@ -150,15 +150,19 @@ async def set_topic(update, context):
     chat = update.effective_chat
     msg = update.effective_message
 
-    # Nur Username-Argument zulassen:
-    if not context.args or not context.args[0].startswith('@'):
-        return await msg.reply_text("⚠️ Bitte gib einen Benutzernamen an, z.B. `/settopic @username`.", parse_mode="Markdown")
-    username = context.args[0][1:]
-    try:
-        member = await context.bot.get_chat_member(chat.id, username[1:])
-        target = member.user
-    except Exception: 
-        return await msg.reply_text(f"⚠️ Benutzer `@{username}` nicht gefunden.", parse_mode="Markdown")
+    # Nur Text-Mention-Fall: User muss per Menü-@ ausgewählt werden
+    target = None
+    if msg.entities:
+        for ent in msg.entities:
+            if ent.type == MessageEntity.TEXT_MENTION:
+                target = ent.user
+                break
+    if not target:
+        return await msg.reply_text(
+            "⚠️ Bitte verwende eine Text-Mention (aus dem Vorschlagsmenü), um den User auszuwählen. "
+            "Gib dafür `/settopic` ein, tippe '@' und wähle dann den gewünschten User aus.",
+            parse_mode="Markdown"
+        )
 
     # 5) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id)
