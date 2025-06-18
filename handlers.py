@@ -182,9 +182,12 @@ async def set_topic(update, context):
 
     # 5) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id)
-    name = f"@{target.username}" if target.username else target.first_name
+    # Benutzer-Objekt frisch vom Server holen (nicht aus msg.reply_to_message)
+    member = await context.bot.get_chat_member(chat.id, target.id)
+    user   = member.user
+    name   = f"@{user.username}" if user.username else user.first_name
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
-
+    
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args or not context.args[0].startswith('@'):
         await update.message.reply_text("⚠️ Beispiel: /removetopic @alex")
