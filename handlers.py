@@ -169,13 +169,20 @@ async def set_topic(update, context):
                 break
     if not target:
 
-        #––– WARN: kein User aufgelöst
+        # WARN: Entities inspect – nur echte User-Objekte auslesen
+        entity_info = []
+        for ent in (msg.entities or []):
+            uid = None
+            # ent.user existiert *und* ist nicht None
+            if getattr(ent, "user", None) is not None:
+                uid = ent.user.id
+            entity_info.append((ent.type, uid))
         logger.warning(
             "❌ set_topic konnte keinen target auflösen: args=%s, entities=%s, reply_to_message=%s",
             context.args,
-            [(ent.type, ent.user.id if hasattr(ent, "user") else None) for ent in (msg.entities or [])],
-            msg.reply_to_message and msg.reply_to_message.from_user.id
-            )
+            entity_info,
+            msg.reply_to_message.from_user.id if msg.reply_to_message and msg.reply_to_message.from_user else None
+        )
         
         await msg.reply_text(
                 "⚠️ Bitte verwende eine Text-Mention (aus dem Vorschlagsmenü), um den User auszuwählen. "
