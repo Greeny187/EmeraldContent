@@ -150,42 +150,20 @@ async def set_topic(update, context):
     chat = update.effective_chat
     msg = update.effective_message
 
-    # 1) Reply-Fall: wenn auf eine Nachricht geantwortet wird, nehmen wir den Absender
-    target = None
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        target = msg.reply_to_message.from_user
-
-    # 2) Text-Mention-Fall: wenn aus der Liste ausgewählt
-    if not target and msg.entities:
-        for ent in msg.entities:
-            if ent.type == MessageEntity.TEXT_MENTION:
-                target = ent.user
-                break
-
-    # 3) Optional: Username-Argument (z.B. /settopic @username) auflösen
-    if not target and context.args:
-        username = context.args[0]
-        if username.startswith('@'):
-            try:
-                member = await context.bot.get_chat_member(chat.id, username[1:])
-                target = member.user
-            except:
-                target = None
-
-    # 4) Kein Ziel gefunden → Fehlermeldung
-    if not target:
-        await msg.reply_text(
-            "⚠️ Bitte füge den User als Text-Mention ein (aus der Liste auswählen), "
-            "oder antworte auf seine Nachricht."
-        )
-        return
+    # Nur Username-Argument zulassen:
+    if not context.args or not context.args[0].startswith('@'):
+        return await msg.reply_text("⚠️ Bitte gib einen Benutzernamen an, z.B. `/settopic @username`.", parse_mode="Markdown")
+    username = context.args[0][1:]
+    try:
+        member = await context.bot.get_chat_member(chat.id, username[1:])
+        target = member.user
+    except Exception: 
+        return await msg.reply_text(f"⚠️ Benutzer `@{username}` nicht gefunden.", parse_mode="Markdown")
 
     # 5) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id)
-    # Benutzer-Objekt frisch vom Server holen (nicht aus msg.reply_to_message)
-    member = await context.bot.get_chat_member(chat.id, target.id)
-    user   = member.user
-    name   = f"@{user.username}" if user.username else user.first_name
+    # Anzeige-Name
+    name = f"@{target.username}" if target.username else target.first_name
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
