@@ -146,11 +146,11 @@ async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Mood-Frage gesetzt auf:\n» {new_q}«"
     )
 
-async def set_topic(update, context):
+async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     msg = update.effective_message
-    
-    #DEBUG: eingehende Parameter loggen
+
+    # DEBUG: eingehende Parameter loggen
     logger.debug(
         "🔍 set_topic called by %s in chat %s: args=%s, entities=%s, has_reply=%s",
         msg.from_user.id,
@@ -160,23 +160,23 @@ async def set_topic(update, context):
         bool(msg.reply_to_message)
     )
 
-    # Nur Text-Mention-Fall: User muss per Menü-@ ausgewählt werden
     target = None
-    if msg.entities:
+    # 1) Reply-Fallback: vorrangig Replied-User (forward_from oder from_user)
+    if msg.reply_to_message:
+        target = msg.reply_to_message.forward_from or msg.reply_to_message.from_user
+
+    # 2) Text-Mention (aus Menü) – liefert ent.user direkt
+    if not target and msg.entities:
         for ent in msg.entities:
-            if ent.type == MessageEntity.TEXT_MENTION:
+            if ent.type == MessageEntity.TEXT_MENTION and ent.user:
                 target = ent.user
                 break
-    
-    # 2) Fallback für plain @username
+
+    # 3) Plain @username (nur Admins)
     if not target and msg.entities:
         for ent in msg.entities:
             if ent.type == MessageEntity.MENTION:
-                # Username-Substring aus msg.text holen
-                username = msg.text[ent.offset : ent.offset + ent.length]
-                username = username.lstrip('@').lower()
-
-                # Admin-Liste holen und matchen
+                username = msg.text[ent.offset:ent.offset + ent.length].lstrip('@').lower()
                 admins = await context.bot.get_chat_administrators(chat.id)
                 for adm in admins:
                     if adm.user.username and adm.user.username.lower() == username:
@@ -184,32 +184,26 @@ async def set_topic(update, context):
                         break
                 break
 
+    # 4) Wenn immer noch kein Ziel – Fehlermeldung
+    if not target:
         # WARN: Entities inspect – nur echte User-Objekte auslesen
-        entity_info = []
-        for ent in (msg.entities or []):
-            uid = None
-            # ent.user existiert *und* ist nicht None
-            if getattr(ent, "user", None) is not None:
-                uid = ent.user.id
-            entity_info.append((ent.type, uid))
+        entity_info = [
+            (ent.type, ent.user.id) for ent in (msg.entities or []) if getattr(ent, "user", None)
+        ]
         logger.warning(
             "❌ set_topic: kein target – args=%s, entities=%s, reply=%s",
             context.args,
-            [(ent.type, getattr(ent, "user", None) and ent.user.id) for ent in (msg.entities or [])],
+            entity_info,
             bool(msg.reply_to_message)
-        
         )
-        
-        await msg.reply_text(
-                "⚠️ Bitte verwende eine Text-Mention (aus dem Vorschlagsmenü), um den User auszuwählen. "
-                "Gib dafür `/settopic` ein, tippe '@' und wähle dann den gewünschten User aus.",
-                parse_mode="Markdown"
+        return await msg.reply_text(
+            "⚠️ Ich konnte keinen User finden. "
+            "Bitte antworte auf eine Nachricht desjenigen oder verwende eine Text-Mention aus dem Menü.",
+            parse_mode="Markdown"
         )
-        return
 
     # 5) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id)
-    # Anzeige-Name
     name = f"@{target.username}" if target.username else target.first_name
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
     
