@@ -53,6 +53,12 @@ async def message_logger(update, context):
     msg = update.effective_message
     if msg.chat.type in ("group", "supergroup") and msg.from_user:
         inc_message_count(msg.chat.id, msg.from_user.id, date.today())
+        # neu: stelle sicher, dass jeder Schreiber in die members-Tabelle kommt
+        try:
+            add_member(msg.chat.id, msg.from_user.id)
+            logger.debug(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
+        except Exception as e:
+            logger.error(f"Fehler add_member in message_logger: {e}", exc_info=True)
     return await text_handler(update, context)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -310,6 +316,21 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_rss_topic(chat.id, topic_id)
     await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
 
+async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    dev = os.getenv("DEVELOPER_CHAT_ID")
+    if str(update.effective_user.id) != dev:
+        return await update.message.reply_text("❌ Nur Entwickler darf das tun.")
+    total = 0
+    for chat_id, _ in get_registered_groups():
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            for adm in admins:
+                add_member(chat_id, adm.user.id)
+                total += 1
+        except Exception as e:
+            logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
+    await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
+
 async def dashboard_command(update, context):
     user_id = update.effective_user.id
     dev_id = os.getenv("DEVELOPER_CHAT_ID")
@@ -344,6 +365,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
+    app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger))
