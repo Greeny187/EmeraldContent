@@ -239,12 +239,12 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
   
-        try:
-            add_member(chat_id, user.id)
-            logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
-        except Exception as e:
-            logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
-        return
+    try:
+        add_member(chat_id, user.id)
+        logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
+    except Exception as e:
+        logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
+    return
 
     # 2) Abschied verschicken
     if status in ("left", "kicked"):
