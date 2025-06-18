@@ -353,3 +353,4 @@ def register_handlers(app):
     app.add_handler(help_handler)
 
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
