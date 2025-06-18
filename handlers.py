@@ -6,7 +6,7 @@ from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, remove_member, list_members, inc_message_count,
-save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic, get_rss_feeds, count_members)
+save_mood, get_mood_counts, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_rss_topic, get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -216,10 +216,50 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = cm.new_chat_member.status
     chat_id = update.effective_chat.id
 
+    # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
+        rec = get_welcome(chat_id)
+        if rec:
+            photo_id, text = rec
+            # Nutzer direkt ansprechen:
+            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_id,
+                    caption=text,
+                    parse_mode="HTML"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="HTML"
+                )
         add_member(chat_id, user.id)
-    elif status in ("left", "kicked"):
+        return
+
+    # 2) Abschied verschicken
+    if status in ("left", "kicked"):
+        rec = get_farewell(chat_id)
+        if rec:
+            photo_id, text = rec
+            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_id,
+                    caption=text,
+                    parse_mode="HTML"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="HTML"
+                )
         remove_member(chat_id, user.id)
+        return
 
 async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
     """
