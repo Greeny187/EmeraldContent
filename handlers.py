@@ -212,9 +212,11 @@ async def show_rules_cmd(update, context):
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cm = update.chat_member
+    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
     user = cm.new_chat_member.user
     status = cm.new_chat_member.status
-    chat_id = update.effective_chat.id
+    cm = update.chat_member or update.my_chat_member
+    chat_id = cm.chat.id
 
     # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
@@ -236,7 +238,12 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=text,
                     parse_mode="HTML"
                 )
-        add_member(chat_id, user.id)
+  
+        try:
+            add_member(chat_id, user.id)
+            logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
+        except Exception as e:
+            logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
         return
 
     # 2) Abschied verschicken
