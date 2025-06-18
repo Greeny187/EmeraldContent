@@ -11,16 +11,13 @@ from jobs import register_jobs
 
 # Anfang
 setup_logging()
+init_db()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN ist nicht gesetzt.")
 
 def main():
-    init_db()
-
-    # Logging konfigurieren
-    setup_logging()
-
+    
     # Startzeit merken
     start_time = datetime.datetime.now()
     
