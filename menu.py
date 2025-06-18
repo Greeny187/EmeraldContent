@@ -154,13 +154,17 @@ async def menu_callback(update, context):
             else:
                 pid, txt = rec
                 if pid:
-                    await query.edit_message_media(InputMediaPhoto(pid, caption=txt or ""), reply_markup=back_func)
+                    # Foto + Text
+                    await query.edit_message_media(
+                        InputMediaPhoto(pid, caption=txt or ""),
+                        reply_markup=back_func
+                    )
                 else:
-                    if query.message.photo or query.message.caption:
-                        await query.edit_message_caption(txt or "(kein Text)", reply_markup=back_func)
-                    else:
-                        await query.edit_message_text(txt or "(kein Text)", reply_markup=back_func)
-            return
+                    # reiner Text – immer edit_message_text, damit ggf. vorhandenes Media gelöscht wird
+                    await query.edit_message_text(
+                        txt or "(kein Text)",
+                        reply_markup=back_func
+                    )
 
         # Delete
         if action == "delete" and func in del_map:
