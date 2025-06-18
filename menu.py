@@ -165,6 +165,7 @@ async def menu_callback(update, context):
                         txt or "(kein Text)",
                         reply_markup=back_func
                     )
+            return
 
         # Delete
         if action == "delete" and func in del_map:
