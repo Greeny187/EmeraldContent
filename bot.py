@@ -19,6 +19,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN ist nicht gesetzt.")
 
+async def log_update(update, context):
+    logging.info(f"Update angekommen: {update}")
+
 def main():
     
     # Startzeit merken
@@ -27,8 +30,7 @@ def main():
     #Botstart
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
-    app.add_handler(MessageHandler(filters.ALL,lambda update, ctx: logging.info(f"Update angekommen: {update}")),
-    group=-1)
+    app.add_handler(MessageHandler(filters.ALL, log_update),group=-1)
 
     # Globaler Error-Handler
     app.add_error_handler(error_handler)
