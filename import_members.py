@@ -19,7 +19,7 @@ async def main():
     client = TelegramClient('bot', api_id, api_hash)
 
     # 2) Start awaiten – jetzt ist client eine laufende Instanz
-    await client.start(bot_token=bot_token)
+    await client.start(bot_token=BOT_TOKEN)
 
     # 3) FullChat abfragen
     full = await client(GetFullChatRequest(chat_id=TARGET))
