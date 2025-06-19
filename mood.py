@@ -9,7 +9,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Startet das Stimmungsbarometer im Gruppenchat mit der aktuellen Frage aus DB."""
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup"):
-        return await update.message.reply_text("❌ Dieser Befehl ist nur in Gruppen nutzbar.")
+        return await context.bot.send_message(chat_id=chat.id, text="❌ Dieser Befehl ist nur in Gruppen nutzbar.")
 
     # Frage aus Datenbank laden
     question = get_mood_question(chat.id)
@@ -41,21 +41,17 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_mood(chat_id, msg_id, user_id, mood)
     counts = get_mood_counts(chat_id, msg_id)
 
+    # Kurzes Feedback (Notification wegklicken)
+    await query.answer(text="Deine Stimme wurde erfasst", show_alert=False)
 
-    # Feedback kurz anzeigen (optional, verhindert das „Ladesymbol“ ewig)
-    await query.answer(text="✅ Deine Stimme wurde gespeichert", show_alert=True)
-
-    # Buttons jetzt mit Zählerständen aktualisieren
+    # Neue Buttons mit aktuellen Counts
     new_kb = InlineKeyboardMarkup([[
         InlineKeyboardButton(f"👍 {counts.get('👍',0)}", callback_data="mood_like"),
         InlineKeyboardButton(f"👎 {counts.get('👎',0)}", callback_data="mood_dislike"),
         InlineKeyboardButton(f"🤔 {counts.get('🤔',0)}", callback_data="mood_think"),
     ]])
-    # Frage weiter oben einmalig anzeigen, hier reicht das Editieren der Markup
-    await query.edit_message_text(
-        text=question,
-        reply_markup=new_kb
-    )
+    # Frage erneut mit aktualisierten Buttons anzeigen
+    await query.edit_message_text(text=question, reply_markup=new_kb)
 
 # Registrierungs-Funktion
 
