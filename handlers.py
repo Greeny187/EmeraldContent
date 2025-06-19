@@ -51,6 +51,7 @@ async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
 
 async def message_logger(update, context):
+    logger.info(f"💬 message_logger aufgerufen in Chat {update.effective_chat.id}")
     msg = update.effective_message
     if msg.chat.type in ("group", "supergroup") and msg.from_user:
         inc_message_count(msg.chat.id, msg.from_user.id, date.today())
@@ -394,9 +395,9 @@ def register_handlers(app):
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply),group=0)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
 
     app.add_handler(help_handler)

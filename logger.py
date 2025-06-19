@@ -24,6 +24,11 @@ def setup_logging():
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
     logging.basicConfig(format=fmt, level=getattr(logging, log_level, logging.INFO))
+    logging.basicConfig(
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        level=logging.DEBUG,  # vorher vielleicht INFO
+    )
+
 
     # File-Handler
     fh = logging.FileHandler("bot.log", encoding="utf-8")
