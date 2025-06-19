@@ -2,7 +2,7 @@ import asyncio
 import os
 import argparse
 from telethon import TelegramClient
-from telethon.tl.types import InputPeerChannel
+from database import add_member
 
 # Ersetze diese Werte mit deinen API-Credentials
 api_id = 29370987
@@ -24,9 +24,8 @@ async def list_chats():
 async def import_members(group_identifier: str):
     client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
     try:
-        # Wenn der Identifier eine reine Zahl ist, versuche InputPeerChannel mit Access Hash aus Dialog-Liste
-        if group_identifier.isdigit() or (group_identifier.startswith('-') and group_identifier[1:].isdigit()):
-            # Hole alle Dialoge, suche matching ID und nimm dessen Access Hash
+        # Wenn der Identifier eine reine Zahl ist, suche über Dialoge
+        if group_identifier.lstrip('-').isdigit():
             target = None
             async for dialog in client.iter_dialogs():
                 if dialog.entity.id == int(group_identifier):
@@ -46,14 +45,16 @@ async def import_members(group_identifier: str):
     print(f"\nImportiere Mitglieder von: {entity.title or entity.username} ({group_identifier})\n")
     count = 0
     async for user in client.iter_participants(entity):
-        print(user.id, user.username or "-", user.first_name or "-", user.last_name or "-")
+        # Speichere in der Datenbank
+        add_member(entity.id, user.id)
+        print(f"✅ {user.id:<10} {user.username or '-':<20} wurde gespeichert.")
         count += 1
 
-    print(f"\nFertig! Insgesamt {count} Mitglieder gefunden.")
+    print(f"\nFertig! Insgesamt {count} Mitglieder gespeichert.")
     await client.disconnect()
 
 async def main():
-    parser = argparse.ArgumentParser(description="Importiere Telegram-Mitglieder aus einer Gruppe/einem Channel")
+    parser = argparse.ArgumentParser(description="Importiere Telegram-Mitglieder und speichere sie in der vorhandenen Datenbank")
     parser.add_argument("--list", action="store_true", help="Liste alle verfügbaren Gruppen/Kanäle auf")
     parser.add_argument("--group", "-g", help="ID oder Username (z.B. @channel) der Gruppe")
     args = parser.parse_args()
@@ -66,7 +67,7 @@ async def main():
         print("Nutze --list, um zuerst alle Chats aufzulisten, oder gib mit --group eine ID/Username an.")
         return
 
-    confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren? [j/N] ")
+    confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren und in der DB speichern? [j/N] ")
     if confirm.lower() != 'j':
         print("Abgebrochen.")
         return
