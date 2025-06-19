@@ -19,7 +19,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("👎", callback_data="mood_dislike"),
         InlineKeyboardButton("🤔", callback_data="mood_think"),
     ]])
-    await update.message.reply_text(question, reply_markup=kb)
+    await context.bot.send_message(chat_id=chat.id, text=question, reply_markup=kb)
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verarbeitet Klicks auf die Stimmungs-Buttons und zeigt Live-Auswertung."""
@@ -41,14 +41,20 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_mood(chat_id, msg_id, user_id, mood)
     counts = get_mood_counts(chat_id, msg_id)
 
-    # Live-Update der Auswertung
-    text = (
-        f"{question}\n\n"  # Frage erneut anzeigen
-        f"👍 {counts.get('👍',0)}   "
-        f"👎 {counts.get('👎',0)}   "
-        f"🤔 {counts.get('🤔',0)}"
-    )
-    await query.edit_message_text(text, reply_markup=query.message.reply_markup)
+
+    # Feedback kurz anzeigen (optional, verhindert das „Ladesymbol“ ewig)
+    await query.answer(text="Deine Stimme wurde gespeichert", show_alert=False)
+
+    # Buttons jetzt mit Zählerständen aktualisieren
+    new_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"👍 {counts.get('👍',0)}", callback_data="mood_like"),
+        InlineKeyboardButton(f"👎 {counts.get('👎',0)}", callback_data="mood_dislike"),
+        InlineKeyboardButton(f"🤔 {counts.get('🤔',0)}", callback_data="mood_think"),
+    ]])
+    # Frage weiter oben einmalig anzeigen, hier reicht das Editieren der Markup
+    await query.edit_message_text(
+        text=question,
+        reply_markup=new_kb)
 
 # Registrierungs-Funktion
 
