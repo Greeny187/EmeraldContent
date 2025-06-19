@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from telegram import Bot
 
 class TelegramErrorHandler(logging.Handler):
@@ -11,11 +12,8 @@ class TelegramErrorHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            self.bot.send_message(
-                chat_id=self.chat_id,
-                text=f"⚠️ *Bot Error*\n{msg}",
-                parse_mode="Markdown"
-            )
+            asyncio.create_task(self.bot.send_message (chat_id=self.chat_id, text=f"⚠️ *Bot Error*\n{msg}", parse_mode="Markdown"
+            ))
         except Exception:
             pass
 
