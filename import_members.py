@@ -15,21 +15,14 @@ TARGET = -1002331923014
 TARGET = 123456789
 
 async def main():
-    # 1) Client erzeugen, aber nicht .start() ankettieren
-    client = TelegramClient('bot', api_id, api_hash)
+    # Client bauen *und* starten in einem Schritt – das await liefert dir den fertigen Client zurück
+    client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
 
-    # 2) Start awaiten – jetzt ist client eine laufende Instanz
-    await client.start(bot_token=BOT_TOKEN)
-
-    # 3) FullChat abfragen
     full = await client(GetFullChatRequest(chat_id=TARGET))
-
-    # 4) Peer bauen und Teilnehmer iterieren
     peer = InputPeerChat(chat_id=TARGET)
     async for user in client.iter_participants(peer):
         print(user.id, user.username, user.first_name)
 
-    # 5) Sauber trennen
     await client.disconnect()
 
 if __name__ == '__main__':
