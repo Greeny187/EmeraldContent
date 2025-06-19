@@ -90,7 +90,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text=(
                             f"⚠️ @{user.username or user.first_name}, "
                             "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
-                        )
+                        ),
+                        parse_mode=None  # deaktiviert das Parsen von Markdown/HTML
                     )
                 except Exception as e:
                     logger.error(f"Löschen fehlgeschlagen: {e}")
