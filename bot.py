@@ -1,6 +1,7 @@
 import os
 import datetime
-from telegram.ext import ApplicationBuilder
+import logging
+from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
@@ -25,6 +26,9 @@ def main():
     
     #Botstart
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
+    app.add_handler(MessageHandler(filters.ALL,lambda update, ctx: logging.info(f"Update angekommen: {update}")),
+    group=-1)
 
     # Globaler Error-Handler
     app.add_error_handler(error_handler)
