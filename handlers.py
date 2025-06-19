@@ -12,6 +12,7 @@ from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
 from menu import show_group_menu
+from access import get_visible_groups
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +41,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
         markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
-
-async def get_visible_groups(user_id: int, bot, all_groups):
-    visible = []
-    for chat_id, title in all_groups:
-        try:
-            # Hole Adminliste
-            admins = await bot.get_chat_administrators(chat_id)
-            is_admin = any(a.user.id == user_id for a in admins)
-            visible.append((chat_id, title)) if is_admin else None
-        except Exception as e:
-            # Gruppe nicht mehr erreichbar oder Bot nicht drin
-            continue
-    return visible
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat

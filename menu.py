@@ -14,7 +14,7 @@ from database import (
 )
 from utils import is_deleted_account, clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
-from handlers import get_visible_groups
+from access import get_visible_groups
 import logging
 
 logger = logging.getLogger(__name__)
