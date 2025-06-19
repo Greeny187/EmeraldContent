@@ -245,6 +245,8 @@ def migrate_db():
         cur.execute("""
             ALTER TABLE members
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
         """)
 
         conn.commit()
@@ -341,6 +343,28 @@ def get_new_members_count(chat_id: int, date: date) -> int:
             WHERE chat_id = %s AND DATE(joined_at) = %s;
         """, (chat_id, date))
         return cur.fetchone()[0]
+
+def mark_member_deleted(chat_id: int, user_id: int):
+    """Markiert einen Member als gelöscht, statt ihn zu entfernen."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE members
+            SET is_deleted  = TRUE,
+                deleted_at  = CURRENT_TIMESTAMP
+            WHERE chat_id = %s AND user_id = %s;
+        """, (chat_id, user_id))
+
+def list_active_members(chat_id: int) -> List[int]:
+    """Gibt nur noch aktive (nicht-gelöschte) Mitglieder zurück."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT user_id
+            FROM members
+            WHERE chat_id = %s AND is_deleted = FALSE;
+        """, (chat_id,))
+        return [row[0] for row in cur.fetchall()]
+
+# Mood
 
 def save_mood(chat_id: int, message_id: int, user_id: int, mood: str):
     logger.debug(f"Speicher Mood: chat={chat_id}, msg={message_id}, user={user_id}, mood={mood}")

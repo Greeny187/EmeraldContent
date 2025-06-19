@@ -1,32 +1,17 @@
 import logging
-from database import list_members, remove_member
+from database import list_active_members, mark_member_deleted
 
 logger = logging.getLogger(__name__)
 
 async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
-    """
-    Entfernt alle gelöschten Accounts in der DB-Liste per Ban+Unban
-    UND aus der Tabelle und liefert die Anzahl.
-    """
     removed = []
-    for user_id in list_members(chat_id):
-        try:
-            member = await bot.get_chat_member(chat_id, user_id)
-            # Erkennung
-            is_deleted = (
-                getattr(member.user, "is_deleted", False)
-                or member.user.first_name == "Deleted Account"
-                or member.status in ("left", "kicked")
-            )
-            logger.debug(f"Prüfe user={user_id}: deleted={is_deleted}")
-            if is_deleted:
-                await bot.ban_chat_member(chat_id, user_id)
-                await bot.unban_chat_member(chat_id, user_id)
-                remove_member(chat_id, user_id)
-                removed.append(user_id)
-        except Exception as e:
-            logger.error(f"Error cleaning user {user_id} in chat {chat_id}: {e}")
-    logger.info(f"clean_delete: insgesamt {len(removed)} entfernt.")
+    for user_id in list_active_members(chat_id):
+        member = await bot.get_chat_member(chat_id, user_id)
+        if is_deleted_account(member):
+            await bot.ban_chat_member(chat_id, user_id)
+            await bot.unban_chat_member(chat_id, user_id)
+            mark_member_deleted(chat_id, user_id)
+            removed.append(user_id)
     return len(removed)
 
 
