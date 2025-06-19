@@ -184,7 +184,6 @@ async def menu_callback(update, context):
 
         # RSS «Feed hinzufügen» aus Menü
         if func == "rss" and action == "setrss":
-            from telegram import ForceReply
             # Kennzeichnen, dass wir auf die URL warten
             context.user_data["awaiting_rss_url"] = True
             context.user_data["rss_group_id"] = int(chat_id)
