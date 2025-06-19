@@ -43,7 +43,7 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # Feedback kurz anzeigen (optional, verhindert das „Ladesymbol“ ewig)
-    await query.answer(text="Deine Stimme wurde gespeichert", show_alert=False)
+    await query.answer(text="✅ Deine Stimme wurde gespeichert", show_alert=True)
 
     # Buttons jetzt mit Zählerständen aktualisieren
     new_kb = InlineKeyboardMarkup([[
