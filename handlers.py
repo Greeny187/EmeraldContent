@@ -61,7 +61,7 @@ async def message_logger(update, context):
             logger.info(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
         except Exception as e:
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
-    return await text_handler(update, context)
+    await text_handler(update, context)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
