@@ -2,6 +2,7 @@ import asyncio
 import os
 import argparse
 from telethon import TelegramClient
+from telethon.tl.types import Channel, Chat
 from database import add_member
 
 # Ersetze diese Werte mit deinen API-Credentials
@@ -14,7 +15,6 @@ async def list_chats():
     print("Verfügbare Chats (Gruppen/Kanäle):")
     async for dialog in client.iter_dialogs():
         entity = dialog.entity
-        # Nur Gruppen und Kanäle
         if getattr(entity, 'megagroup', False) or getattr(entity, 'broadcast', False) or getattr(entity, 'gigagroup', False):
             title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
             username = f"@{entity.username}" if getattr(entity, 'username', None) else "-"
@@ -24,7 +24,6 @@ async def list_chats():
 async def import_members(group_identifier: str):
     client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
     try:
-        # Wenn der Identifier eine reine Zahl ist, suche über Dialoge
         if group_identifier.lstrip('-').isdigit():
             target = None
             async for dialog in client.iter_dialogs():
@@ -35,19 +34,25 @@ async def import_members(group_identifier: str):
                 raise ValueError("ID nicht in deinen Chats gefunden.")
             entity = target
         else:
-            # Username oder Link
             entity = await client.get_entity(group_identifier)
     except Exception as e:
         print(f"Fehler beim Laden der Gruppe '{group_identifier}': {e}")
         await client.disconnect()
         return
 
-    print(f"\nImportiere Mitglieder von: {entity.title or entity.username} ({group_identifier})\n")
+    # Bestimme die richtige chat_id für die DB
+    if isinstance(entity, Channel):
+        # Supergroups und Kanäle: Bot-API-Chat-ID benötigt den -100 Präfix
+        chat_id_db = int(f"-100{entity.id}")
+    else:
+        # Normale Gruppen/Chats haben ihre ID direkt
+        chat_id_db = entity.id
+
+    print(f"\nImportiere Mitglieder von: {entity.title or entity.username} (DB chat_id={chat_id_db})\n")
     count = 0
     async for user in client.iter_participants(entity):
-        # Speichere in der Datenbank
-        add_member(entity.id, user.id)
-        print(f"✅ {user.id:<10} {user.username or '-':<20} wurde gespeichert.")
+        add_member(chat_id_db, user.id)
+        print(f"✅ {user.id:<10} {user.username or '-':<20} wurde gespeichert (chat_id={chat_id_db}).")
         count += 1
 
     print(f"\nFertig! Insgesamt {count} Mitglieder gespeichert.")
@@ -76,3 +81,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
