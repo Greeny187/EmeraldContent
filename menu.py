@@ -215,41 +215,27 @@ async def menu_callback(update, context):
                 await query.edit_message_text(msg, reply_markup=back_func)
             return 
 
-        # Klick auf "Gelöschte Accounts entfernen"
+        # Klick auf "🗑 Gelöschte Accounts entfernen"
         if data.endswith("_clean_delete"):
-            chat_id = int(data.split("_",1)[0])
-            # Anzahl ermitteln
-            count = 0
-            for uid in list_members(chat_id):
-                member = await context.bot.get_chat_member(chat_id, uid)
-                if is_deleted_account(member):
-                    count += 1
+            chat_id = int(data.split("_", 1)[0])
 
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Entfernen", callback_data=f"{chat_id}_confirm_clean")],
-                [InlineKeyboardButton("❌ Abbrechen", callback_data=f"{chat_id}_cancel_clean")]
-            ])
-            await query.edit_message_text(
-                f"In Gruppe {chat_id} würden *{count}* gelöschte Accounts entfernt. Fortfahren?",
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
-            return
+            # 1) Callback sofort bestätigen, damit er nicht abläuft
+            await query.answer(text="⏳ Entferne gelöschte Accounts…")
 
-        # Bestätigung drücken
-        if data.endswith("_confirm_clean"):
-            chat_id = int(data.split("_",1)[0])
+            # 2) Cleanup ausführen und Zahl der entfernten Accounts ermitteln
             removed_count = await clean_delete_accounts_for_chat(chat_id, context.bot)
-            await query.answer(f"✅ {removed_count} Accounts entfernt.")
-            return
 
-        # Abbruch
-        if data.endswith("_cancel_clean"):
-            await query.edit_message_text("❌ Vorgang abgebrochen.")
+            # 3) Ergebnis in der Message anzeigen (und Tastatur beibehalten)
+            await query.edit_message_text(
+                text=f"✅ In Gruppe {chat_id} wurden {removed_count} gelöschte Accounts entfernt.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
+                ])
+            )
             return
     
 # /menu 
 
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
-    
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
