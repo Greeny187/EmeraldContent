@@ -11,6 +11,7 @@ get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
+from menu import show_group_menu
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +56,27 @@ async def get_visible_groups(user_id: int, bot, all_groups):
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
+    user = update.effective_user
+
     if chat.type != "private":
-        return await update.message.reply_text("Bitte im privaten Chat nutzen.")
+        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
+
     chat_id = context.user_data.get("selected_chat_id")
+
     if not chat_id:
-        return await update.message.reply_text(
-            "🚫 Keine Gruppe gewählt. `/start` → Gruppe auswählen."
-        )
-    from menu import show_group_menu  # import hier, da menu hängt utils, nicht handlers
+        # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+
+        if not visible_groups:
+            return await update.message.reply_text(
+                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+            )
+
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+        markup = InlineKeyboardMarkup(keyboard)
+        return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
     await show_group_menu(update, chat_id)
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):

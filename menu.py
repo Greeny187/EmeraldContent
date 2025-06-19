@@ -14,6 +14,7 @@ from database import (
 )
 from utils import is_deleted_account, clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
+from handlers import get_visible_groups
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,11 @@ async def show_group_menu(query_or_update, chat_id: int):
         )],
         [InlineKeyboardButton("✍️ Mood-Frage ändern", callback_data=f"{chat_id}_edit_mood_q")],
         [InlineKeyboardButton("📖 Handbuch",  callback_data="help")],
+
+        
+        [InlineKeyboardButton("🔄 Gruppe wechseln", callback_data="group_select")]
     ]
+
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"
     markup = InlineKeyboardMarkup(keyboard)
     if hasattr(query_or_update, "callback_query"):
@@ -45,6 +50,20 @@ async def menu_callback(update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    if data == "group_select":
+        all_groups = get_registered_groups()
+        user_id = update.effective_user.id
+        visible = await get_visible_groups(user_id, context.bot, all_groups)
+
+        if not visible:
+            return await query.message.reply_text("🚫 Keine Gruppen sichtbar.")
+
+        context.user_data.pop("selected_chat_id", None)  # vorherige Auswahl entfernen
+
+        kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
+        markup = InlineKeyboardMarkup(kb)
+        return await query.message.reply_text("🔧 Wähle eine andere Gruppe:", reply_markup=markup)
 
     if data.startswith("group_"):
         chat_id = int(data.split("_",1)[1])
