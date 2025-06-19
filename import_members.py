@@ -22,7 +22,11 @@ async def list_chats():
     await client.disconnect()
 
 async def import_members(group_identifier: str):
-    client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
+    from telethon.sessions import StringSession
+    client = TelegramClient(StringSession(os.getenv("SESSION_STRING")),
+    api_id, api_hash)
+    await client.start()
+    
     try:
         if group_identifier.lstrip('-').isdigit():
             target = None
