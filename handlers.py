@@ -20,21 +20,25 @@ async def error_handler(update, context):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
+    user = update.effective_user
+
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
-        return await update.message.reply_text(
-            "✅ Gruppe registriert! Geh privat auf /menu."
-        )
+        return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
+
     if chat.type == "private":
         all_groups = get_registered_groups()
-        visible_groups = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
-    
+        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+
         if not visible_groups:
-            return await update.message.reply_text("🚫 Keine Gruppen sichtbar. Der Bot muss in der Gruppe aktiv sein, und du musst Admin sein.")
-    
-    keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-    markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+            return await update.message.reply_text(
+                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+            )
+
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+        markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
 
 async def get_visible_groups(user_id: int, bot, all_groups):
     visible = []
