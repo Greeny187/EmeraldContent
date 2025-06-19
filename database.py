@@ -6,6 +6,8 @@ from datetime import date
 from typing import List, Dict, Tuple
 import logging
 
+logger = logging.getLogger(__name__)
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL ist nicht gesetzt. Bitte füge das Heroku Postgres Add-on und die Config Vars hinzu.")
@@ -341,13 +343,18 @@ def get_new_members_count(chat_id: int, date: date) -> int:
         return cur.fetchone()[0]
 
 def save_mood(chat_id: int, message_id: int, user_id: int, mood: str):
+    logger.debug(f"Speicher Mood: chat={chat_id}, msg={message_id}, user={user_id}, mood={mood}")
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO mood_meter(chat_id, message_id, user_id, mood)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (chat_id, message_id, user_id)
-            DO UPDATE SET mood = EXCLUDED.mood;
-        """, (chat_id, message_id, user_id, mood))
+        try:
+            cur.execute("""
+                INSERT INTO mood_meter(chat_id, message_id, user_id, mood)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (chat_id, message_id, user_id)
+                DO UPDATE SET mood = EXCLUDED.mood;
+            """, (chat_id, message_id, user_id, mood))
+        except Exception:
+            logger.exception("Konnte Mood nicht speichern")
+            raise
 
 def get_mood_counts(chat_id: int, message_id: int) -> Dict[str, int]:
     with conn.cursor() as cur:
