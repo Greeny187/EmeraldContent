@@ -38,20 +38,35 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Frage erneut aus DB laden
     question = get_mood_question(chat_id)
 
-    save_mood(chat_id, msg_id, user_id, mood)
-    counts = get_mood_counts(chat_id, msg_id)
+    logger.info(f"mood_callback: chat_id={chat_id}, msg_id={msg_id}, user_id={user_id}, mood={mood}")
+    try:
+        save_mood(chat_id, msg_id, user_id, mood)
+        logger.debug("save_mood erfolgreich")
+        counts = get_mood_counts(chat_id, msg_id)
+        logger.debug(f"get_mood_counts → {counts}")
+    except Exception:
+        logger.exception("Fehler beim Speichern oder Zählen der Stimmen")
+        # gib dem User ein Feedback und beende
+        return await query.answer("⚠️ Da ist etwas schiefgelaufen", show_alert=True)
 
     # Kurzes Feedback (Notification wegklicken)
     await query.answer(text="Deine Stimme wurde erfasst", show_alert=False)
 
-    # Neue Buttons mit aktuellen Counts
-    new_kb = InlineKeyboardMarkup([[
+    # Neue Buttons mit aktuellen Counts bauen
+    buttons = [
         InlineKeyboardButton(f"👍 {counts.get('👍',0)}", callback_data="mood_like"),
         InlineKeyboardButton(f"👎 {counts.get('👎',0)}", callback_data="mood_dislike"),
         InlineKeyboardButton(f"🤔 {counts.get('🤔',0)}", callback_data="mood_think"),
-    ]])
-    # Frage erneut mit aktualisierten Buttons anzeigen
-    await query.edit_message_text(text=question, reply_markup=new_kb)
+    ]
+    logger.debug(f"neue Button-Labels: {[b.text for b in buttons]}")
+    new_kb = InlineKeyboardMarkup([buttons])
+
+    # Nachricht updaten und Fehler loggen
+    try:
+        await query.edit_message_text(text=question, reply_markup=new_kb)
+        logger.info("edit_message_text erfolgreich ausgeführt")
+    except Exception:
+        logger.exception("Fehler beim Editieren der Mood-Nachricht")
 
 # Registrierungs-Funktion
 
