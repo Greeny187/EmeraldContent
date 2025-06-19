@@ -394,7 +394,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_reply))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply),group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
