@@ -26,14 +26,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Gruppe registriert! Geh privat auf /menu."
         )
     if chat.type == "private":
-        groups = get_registered_groups()
-        if not groups:
-            return await update.message.reply_text(
-                "Keine Gruppen registriert. Führe `/start` in Gruppe aus."
-            )
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid,title in groups]
-        markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+    
+        if not visible_groups:
+            return await update.message.reply_text("🚫 Keine Gruppen sichtbar. Der Bot muss in der Gruppe aktiv sein, und du musst Admin sein.")
+    
+    keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+    markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+
+async def get_visible_groups(user_id: int, bot, all_groups):
+    visible = []
+    for chat_id, title in all_groups:
+        try:
+            # Hole Adminliste
+            admins = await bot.get_chat_administrators(chat_id)
+            is_admin = any(a.user.id == user_id for a in admins)
+            visible.append((chat_id, title)) if is_admin else None
+        except Exception as e:
+            # Gruppe nicht mehr erreichbar oder Bot nicht drin
+            continue
+    return visible
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
