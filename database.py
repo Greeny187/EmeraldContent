@@ -364,6 +364,21 @@ def list_active_members(chat_id: int) -> List[int]:
         """, (chat_id,))
         return [row[0] for row in cur.fetchall()]
 
+def purge_deleted_members(chat_id: int | None = None):
+    """
+    Löscht aus der Tabelle alle Einträge mit is_deleted=TRUE.
+    Wenn chat_id angegeben, nur für diese Gruppe.
+    """
+    with conn.cursor() as cur:
+        if chat_id is None:
+            cur.execute("DELETE FROM members WHERE is_deleted = TRUE;")
+        else:
+            cur.execute(
+                "DELETE FROM members WHERE chat_id = %s AND is_deleted = TRUE;",
+                (chat_id,)
+            )
+    conn.commit()
+
 # Mood
 
 def save_mood(chat_id: int, message_id: int, user_id: int, mood: str):
