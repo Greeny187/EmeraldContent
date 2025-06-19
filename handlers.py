@@ -57,9 +57,9 @@ async def message_logger(update, context):
         # neu: stelle sicher, dass jeder Schreiber in die members-Tabelle kommt
         try:
             add_member(msg.chat.id, msg.from_user.id)
-            logger.debug(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
+            logger.info(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
         except Exception as e:
-            logger.error(f"Fehler add_member in message_logger: {e}", exc_info=True)
+            logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
     return await text_handler(update, context)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

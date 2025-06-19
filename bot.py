@@ -31,11 +31,9 @@ def main():
 
     # Handlerregistrierung
     register_handlers(app)
-    register_menu(app)
     register_rss(app)
     register_mood(app)
-
-    # JobQueue-Tasks
+    register_menu(app)
     register_jobs(app)
 
     app.bot_data['start_time'] = start_time
