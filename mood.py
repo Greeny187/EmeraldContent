@@ -54,7 +54,8 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Frage weiter oben einmalig anzeigen, hier reicht das Editieren der Markup
     await query.edit_message_text(
         text=question,
-        reply_markup=new_kb)
+        reply_markup=new_kb
+    )
 
 # Registrierungs-Funktion
 
