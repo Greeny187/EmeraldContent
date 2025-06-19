@@ -1,29 +1,53 @@
 import asyncio
-from telethon import TelegramClient
-from telethon.tl.functions.messages import GetFullChatRequest
-from telethon.tl.types import InputPeerChat
 import os
+import argparse
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 
 # Ersetze diese Werte mit deinen API-Credentials
 api_id = 29370987
 api_hash = 'd3c4c05db902fbefb7944e13c1a97afa'
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# ID oder Username der Zielgruppe
-TARGET = -1002331923014
 
-# Deine Gruppen-ID als Integer
-TARGET = 123456789
+async def import_members(group_identifier: str):
+    """
+    Liest alle Mitglieder der angegebenen Gruppe/Channel ein und gibt sie auf der Konsole aus.
+    group_identifier kann eine ID (z.B. -1001234567890) oder ein Username (@mein_channel) sein.
+    """
+    client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
+    try:
+        # TelegramClient.get_entity erkennt automatisch Chat, Supergroup oder Channel
+        entity = await client.get_entity(group_identifier)
+    except Exception as e:
+        print(f"Fehler beim Laden der Gruppe '{group_identifier}': {e}")
+        await client.disconnect()
+        return
+
+    print(f"Importiere Mitglieder von: {entity.title or entity.username} ({group_identifier})")
+    count = 0
+    async for user in client.iter_participants(entity):
+        print(user.id, user.username or "-", user.first_name or "-", user.last_name or "-")
+        count += 1
+
+    print(f"Fertig! Insgesamt {count} Mitglieder gefunden.\n")
+    await client.disconnect()
 
 async def main():
-    # Client bauen *und* starten in einem Schritt – das await liefert dir den fertigen Client zurück
-    client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
+    parser = argparse.ArgumentParser(description="Importiere Telegram-Mitglieder aus einer Gruppe/einem Channel")
+    parser.add_argument(
+        "--group", "-g",
+        required=True,
+        help="ID (z.B. -1001234567890) oder Username (z.B. @mein_channel) der Zielgruppe"
+    )
+    args = parser.parse_args()
 
-    full = await client(GetFullChatRequest(chat_id=TARGET))
-    peer = InputPeerChat(chat_id=TARGET)
-    async for user in client.iter_participants(peer):
-        print(user.id, user.username, user.first_name)
+    # Frage zur manuellen Bestätigung
+    confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren? [j/N] ")
+    if confirm.lower() != 'j':
+        print("Abgebrochen.")
+        return
 
-    await client.disconnect()
+    await import_members(args.group)
 
 if __name__ == '__main__':
     asyncio.run(main())
