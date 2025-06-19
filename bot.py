@@ -10,8 +10,10 @@ from mood import register_mood
 from jobs import register_jobs
 
 # Anfang
+
 setup_logging()
 init_db()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN ist nicht gesetzt.")

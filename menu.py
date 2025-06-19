@@ -251,5 +251,5 @@ async def menu_callback(update, context):
 # /menu 
 
 def register_menu(app):
-    app.add_handler(CallbackQueryHandler(menu_callback))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     
