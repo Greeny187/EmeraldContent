@@ -240,7 +240,7 @@ async def menu_callback(update, context):
         if data.endswith("_confirm_clean"):
             chat_id = int(data.split("_",1)[0])
             removed_count = await clean_delete_accounts_for_chat(chat_id, context.bot)
-            await query.edit_message_text(f"✅ {removed_count} Accounts entfernt.")
+            await query.answer(f"✅ {removed_count} Accounts entfernt.")
             return
 
         # Abbruch

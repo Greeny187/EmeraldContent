@@ -302,23 +302,12 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remove_member(chat_id, user.id)
         return
 
-async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
-    """
-    Entfernt alle gelöschten Accounts in der DB-Liste per Ban+Unban
-    und gibt die Anzahl der entfernten User zurück.
-    """
-    removed = []
-    for user_id in list_members(chat_id):
-        try:
-            member = await bot.get_chat_member(chat_id, user_id)
-            if is_deleted_account(member):
-                await bot.ban_chat_member(chat_id, user_id)
-                await bot.unban_chat_member(chat_id, user_id)
-                remove_member(chat_id, user_id)
-                removed.append(user_id)
-        except Exception as e:
-            logger.error(f"Error cleaning user {user_id} in chat {chat_id}: {e}")
-    return len(removed)
+async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    count   = await clean_delete_accounts_for_chat(chat_id, context.bot)
+    await update.message.reply_text(
+        f"✅ Gelöschte Accounts entfernt: {count}"
+    )
 
 async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
