@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
-from database import save_mood, get_mood_counts, get_mood_question  # hinzugefügt get_mood_question
+from database import save_mood, get_mood_counts, get_mood_question
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,13 +58,13 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton(f"👎 {counts.get('👎',0)}", callback_data="mood_dislike"),
         InlineKeyboardButton(f"🤔 {counts.get('🤔',0)}", callback_data="mood_think"),
     ]
-    logger.debug(f"neue Button-Labels: {[b.text for b in buttons]}")
+    logger.info(f"neue Button-Labels: {[b.text for b in buttons]}")
     new_kb = InlineKeyboardMarkup([buttons])
 
     # Nachricht updaten und Fehler loggen
     try:
         await query.edit_message_text(text=question, reply_markup=new_kb)
-        logger.info("edit_message_text erfolgreich ausgeführt")
+        logger.debug("edit_message_text erfolgreich ausgeführt")
     except Exception:
         logger.exception("Fehler beim Editieren der Mood-Nachricht")
 
