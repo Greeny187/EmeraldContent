@@ -40,9 +40,9 @@ async def show_group_menu(query_or_update, chat_id: int):
     markup = InlineKeyboardMarkup(keyboard)
 
     # Universelle Behandlung je nach Typ
-    if hasattr(query_or_update, "edit_message_text"):  # z. B. CallbackQuery direkt
+    if hasattr(query_or_update, "edit_message_text"):
         await query_or_update.edit_message_text(text, reply_markup=markup)
-    elif hasattr(query_or_update, "callback_query"):  # typischer Update mit callback_query
+    elif getattr(query_or_update, "callback_query", None) is not None:
         await query_or_update.callback_query.edit_message_text(text, reply_markup=markup)
     elif hasattr(query_or_update, "reply_text"):  # plain Message-Objekt
         await query_or_update.reply_text(text, reply_markup=markup)
