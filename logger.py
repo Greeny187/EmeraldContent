@@ -2,7 +2,7 @@ import logging
 import os
 import asyncio
 from telegram import Bot
-from telegram.helpers import escape_markdown, escape_html
+from telegram.helpers import escape_markdown
 
 class TelegramErrorHandler(logging.Handler):
     def __init__(self, bot_token, chat_id):
