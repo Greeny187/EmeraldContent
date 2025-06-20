@@ -5,6 +5,7 @@ import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
+from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
 get_rss_feeds, count_members, get_farewell, get_welcome)
@@ -84,6 +85,7 @@ async def message_logger(update, context):
             logger.info(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
         except Exception as e:
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
+    await text_handler(update, context)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -104,16 +106,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Nur löschen, wenn keiner der Ausnahmen greift
             if not (is_admin or is_anon_admin or is_topic_owner):
-                # Link löschen
-                await message.delete()
-                # allgemeine Warnung ohne Reply
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=(
-                    f"⚠️ @{user.username or user.first_name}, "
+            # 0) Text in eine Variable auslagern
+                warning_text = (f"⚠️ @{user.username or user.first_name}, "
                     "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
-                    )
                 )
+                try:
+                    await message.delete()
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        reply_to_message_id=message.message_id,
+                        text=warning_text,
+                        parse_mode=None
+                    )
+                except Exception as e:
+                    logger.error(f"Löschen fehlgeschlagen: {e}")
                 return
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
