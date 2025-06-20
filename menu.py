@@ -34,17 +34,22 @@ async def show_group_menu(query_or_update, chat_id: int):
         )],
         [InlineKeyboardButton("✍️ Mood-Frage ändern", callback_data=f"{chat_id}_edit_mood_q")],
         [InlineKeyboardButton("📖 Handbuch",  callback_data="help")],
-
-        
         [InlineKeyboardButton("🔄 Gruppe wechseln", callback_data="group_select")]
     ]
-
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"
     markup = InlineKeyboardMarkup(keyboard)
-    try:
+
+    # Universelle Behandlung je nach Typ
+    if hasattr(query_or_update, "edit_message_text"):  # z. B. CallbackQuery direkt
+        await query_or_update.edit_message_text(text, reply_markup=markup)
+    elif hasattr(query_or_update, "callback_query"):  # typischer Update mit callback_query
         await query_or_update.callback_query.edit_message_text(text, reply_markup=markup)
-    except AttributeError:
+    elif hasattr(query_or_update, "reply_text"):  # plain Message-Objekt
         await query_or_update.reply_text(text, reply_markup=markup)
+    elif hasattr(query_or_update, "message"):  # plain Update mit Message
+        await query_or_update.message.reply_text(text, reply_markup=markup)
+    else:
+        raise TypeError("❌ Ungültiger Objekttyp für show_group_menu()")
 
 async def menu_callback(update, context):
     query = update.callback_query
