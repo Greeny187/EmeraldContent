@@ -43,6 +43,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # show_group_menu now only needs update & context
+    await show_group_menu(update, context)
+
     chat = update.effective_chat
     user = update.effective_user
 
@@ -102,19 +105,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Nur löschen, wenn keiner der Ausnahmen greift
             if not (is_admin or is_anon_admin or is_topic_owner):
-                try:
-                    await message.delete()
-                    await context.bot.send_message(
-                        chat_id=chat.id,
-                        reply_to_message_id=message.message_id,
-                        text=(
-                            f"⚠️ @{user.username or user.first_name}, "
-                            "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
-                        ),
-                        parse_mode=None  # deaktiviert das Parsen von Markdown/HTML
+                # Link löschen
+                await message.delete()
+                # allgemeine Warnung ohne Reply
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=(
+                    f"⚠️ @{user.username or user.first_name}, "
+                    "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
                     )
-                except Exception as e:
-                    logger.error(f"Löschen fehlgeschlagen: {e}")
+                )
                 return
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
