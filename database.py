@@ -152,7 +152,7 @@ def migrate_db():
             CREATE TABLE IF NOT EXISTS group_settings (
                 chat_id BIGINT PRIMARY KEY,
                 daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                rss_topic_id BIGINT NOT NULL DEFAULT 0,
+                rss_topic_id BIGINT NOT NULL DEFAULT 0
             );
         """)
         cur.execute("""
@@ -244,6 +244,7 @@ def migrate_db():
         """)
         cur.execute("""
             ALTER TABLE user_topics
+            ADD COLUMN IF NOT EXISTS topic_id BIGINT;
             ADD COLUMN IF NOT EXISTS topic_name TEXT;
         """)
         cur.execute("""
