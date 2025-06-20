@@ -52,6 +52,7 @@ async def menu_callback(update, context):
     data = query.data
 
     if data == "group_select":
+        all_groups = get_registered_groups()
         user_id = update.effective_user.id
         visible = await get_visible_groups(user_id, context.bot, all_groups)
 

@@ -2,7 +2,7 @@ import logging
 import os
 import asyncio
 from telegram import Bot
-
+from telegram.helpers import escape_markdown, escape_html
 
 class TelegramErrorHandler(logging.Handler):
     def __init__(self, bot_token, chat_id):
@@ -10,7 +10,24 @@ class TelegramErrorHandler(logging.Handler):
         self.bot = Bot(token=bot_token)
         self.chat_id = chat_id
 
-    
+    def emit(self, record):
+        try:
+            # formatiere die Log-Nachricht
+            msg = self.format(record)
+            # escape Markdown-V2, damit keine ungeschlossenen Entities entstehen
+            safe_msg = escape_markdown(msg, version=2)
+            text = f"⚠️ *Bot Error*\n{safe_msg}"
+            # schicke asynchron an Telegram
+            asyncio.create_task(
+                self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=text,
+                    parse_mode="MarkdownV2"
+                )
+            )
+        except Exception:
+            # damit Logging-Fehler nicht abstürzen
+            self.handleError(record)
 
 
 def setup_logging():
