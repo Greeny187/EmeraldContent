@@ -67,6 +67,10 @@ async def menu_callback(update, context):
 
     if data.startswith("group_"):
         chat_id = int(data.split("_",1)[1])
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+        if chat_id not in [cid for cid, _ in visible_groups]:
+            return await query.message.reply_text("🚫 Du hast keinen Zugriff auf diese Gruppe.")
         context.user_data["selected_chat_id"] = chat_id
         return await show_group_menu(query, chat_id)
 
