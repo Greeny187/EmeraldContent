@@ -29,7 +29,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
 
     if chat.type == "private":
-        all_groups = get_registered_groups()
         visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
 
         if not visible_groups:
@@ -53,7 +52,6 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not chat_id:
         # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
-        all_groups = get_registered_groups()
         visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
 
         if not visible_groups:

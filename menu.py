@@ -12,7 +12,7 @@ from database import (
     set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
 )
-from utils import is_deleted_account, clean_delete_accounts_for_chat
+from utils import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
 import logging
@@ -52,7 +52,6 @@ async def menu_callback(update, context):
     data = query.data
 
     if data == "group_select":
-        all_groups = get_registered_groups()
         user_id = update.effective_user.id
         visible = await get_visible_groups(user_id, context.bot, all_groups)
 
