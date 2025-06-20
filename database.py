@@ -243,6 +243,10 @@ def migrate_db():
             ADD COLUMN IF NOT EXISTS rss_topic_id BIGINT NOT NULL DEFAULT 0;
         """)
         cur.execute("""
+            ALTER TABLE user_topics
+            ADD COLUMN IF NOT EXISTS topic_name TEXT;
+        """)
+        cur.execute("""
             ALTER TABLE members
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
             ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -541,14 +545,15 @@ def add_posted_link(chat_id: int, link: str):
         """, (chat_id, link))
 
 # Themenzuweisung für Linksperre-Ausnahme
-def assign_topic(chat_id: int, user_id: int, topic_id: int = 0):
+def assign_topic(chat_id: int, user_id: int, topic_id: int = 0, topic_name: str | None = None):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO user_topics (chat_id, user_id, topic_id)
-            VALUES (%s, %s, %s)
+            INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (chat_id, user_id) DO UPDATE
-            SET topic_id = EXCLUDED.topic_id;
-        """, (chat_id, user_id, topic_id))
+            SET topic_id = EXCLUDED.topic_id,
+                topic_name = EXCLUDED.topic_name;
+        """, (chat_id, user_id, topic_id, topic_name))
 
 def remove_topic(chat_id: int, user_id: int):
     with conn.cursor() as cur:

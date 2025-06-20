@@ -174,7 +174,16 @@ async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     msg = update.effective_message
+    topic_id = msg.message_thread_id
+    topic_name = None
 
+    if topic_id:
+        try:
+            topic_info = await context.bot.get_forum_topic(chat.id, topic_id)
+            topic_name = topic_info.name
+        except Exception as e:
+            logger.warning(f"⚠️ Konnte Topicname nicht laden: {e}")
+            
     # DEBUG: eingehende Parameter loggen
     logger.debug(
         "🔍 set_topic called by %s in chat %s: args=%s, entities=%s, has_reply=%s",
@@ -232,7 +241,7 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # 5) In DB speichern und Bestätigung
-    assign_topic(chat.id, target.id)
+    assign_topic(chat.id, target.id, topic_id or 0, topic_name)
     name = f"@{target.username}" if target.username else target.first_name
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
     
