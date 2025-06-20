@@ -111,13 +111,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
                 )
                 try:
-                    await message.delete()
                     await context.bot.send_message(
                         chat_id=chat.id,
                         reply_to_message_id=message.message_id,
                         text=warning_text,
                         parse_mode=None
                     )
+                    await message.delete()
                 except Exception as e:
                     logger.error(f"Löschen fehlgeschlagen: {e}")
                 return
