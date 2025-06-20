@@ -41,10 +41,10 @@ async def show_group_menu(query_or_update, chat_id: int):
 
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"
     markup = InlineKeyboardMarkup(keyboard)
-    if hasattr(query_or_update, "callback_query"):
+    try:
         await query_or_update.callback_query.edit_message_text(text, reply_markup=markup)
-    else:
-        await query_or_update.message.reply_text(text, reply_markup=markup)
+    except AttributeError:
+        await query_or_update.reply_text(text, reply_markup=markup)
 
 async def menu_callback(update, context):
     query = update.callback_query
