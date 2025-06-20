@@ -196,6 +196,7 @@ def migrate_db():
                 chat_id BIGINT,
                 user_id BIGINT,
                 topic_id BIGINT,
+                topic_name TEXT,
                 PRIMARY KEY (chat_id, user_id)
             );
         """)
@@ -245,12 +246,21 @@ def migrate_db():
         cur.execute("""
             ALTER TABLE user_topics
             ADD COLUMN IF NOT EXISTS topic_id BIGINT;
+        """)
+        cur.execute("""
+            ALTER TABLE user_topics
             ADD COLUMN IF NOT EXISTS topic_name TEXT;
         """)
         cur.execute("""
             ALTER TABLE members
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
-            ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+        """)
+        cur.execute("""
+            ALTER TABLE members
+            ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+        cur.execute("""
+            ALTER TABLE members
             ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
         """)
 
