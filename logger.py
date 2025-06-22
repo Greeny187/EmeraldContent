@@ -5,6 +5,8 @@ from telegram import Bot
 from telegram.helpers import escape_markdown
 
 class TelegramErrorHandler(logging.Handler):
+    MAX_LEN = 4096
+
     def __init__(self, bot_token, chat_id):
         super().__init__(level=logging.ERROR)
         self.bot = Bot(token=bot_token)
@@ -12,23 +14,23 @@ class TelegramErrorHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            # formatiere die Log-Nachricht
             msg = self.format(record)
-            # escape Markdown-V2, damit keine ungeschlossenen Entities entstehen
             safe_msg = escape_markdown(msg, version=2)
             text = f"⚠️ *Bot Error*\n{safe_msg}"
-            # schicke asynchron an Telegram
-            asyncio.create_task(
-                self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=text,
-                    parse_mode="MarkdownV2"
-                )
-            )
-        except Exception:
-            # damit Logging-Fehler nicht abstürzen
-            self.handleError(record)
 
+            # Nachricht ggf. in mehrere Stücke aufteilen
+            chunks = [text[i:i + self.MAX_LEN] for i in range(0, len(text), self.MAX_LEN)]
+
+            for chunk in chunks:
+                asyncio.create_task(
+                    self.bot.send_message(
+                        chat_id=self.chat_id,
+                        text=chunk,
+                        parse_mode="MarkdownV2"
+                    )
+                )
+        except Exception:
+            self.handleError(record)
 
 def setup_logging():
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
