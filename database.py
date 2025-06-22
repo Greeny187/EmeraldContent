@@ -289,6 +289,27 @@ def get_group_stats(cur, chat_id: int, stat_date: date) -> List[Tuple[int, int]]
     )
     return cur.fetchall()
 
+@_with_cursor
+def is_daily_stats_enabled(cur, chat_id: int) -> bool:
+    cur.execute(
+        "SELECT daily_stats_enabled FROM group_settings WHERE chat_id = %s",
+        (chat_id,)
+    )
+    row = cur.fetchone()
+    return row[0] if row else True  # Default = True
+
+@_with_cursor
+def set_daily_stats(cur, chat_id: int, enabled: bool):
+    cur.execute(
+        """
+        INSERT INTO group_settings(chat_id, daily_stats_enabled)
+        VALUES (%s, %s)
+        ON CONFLICT (chat_id) DO UPDATE
+        SET daily_stats_enabled = EXCLUDED.daily_stats_enabled;
+        """,
+        (chat_id, enabled)
+    )
+
 # --- Mood Meter ---
 @_with_cursor
 def save_mood(cur, chat_id: int, message_id: int, user_id: int, mood: str):
