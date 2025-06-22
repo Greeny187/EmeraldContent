@@ -1,30 +1,54 @@
 import os
 import psycopg2
-from psycopg2 import sql
+import logging
+from psycopg2 import pool
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple
 import logging
 
-logger = logging.getLogger(__name__)
+t_logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
+def _init_pool(dsn: dict, minconn: int = 1, maxconn: int = 10) -> pool.ThreadedConnectionPool:
+    try:
+        p = psycopg2.pool.ThreadedConnectionPool(minconn, maxconn, **dsn)
+        t_logger.info(f"🔌 Initialized DB pool with {minconn}-{maxconn} connections")
+        return p
+    except Exception as e:
+        t_logger.error(f"❌ Could not initialize connection pool: {e}")
+        raise
+
+# Parse database URL and configure pool
+db_url = os.getenv("DATABASE_URL")
+if not db_url:
     raise ValueError("DATABASE_URL ist nicht gesetzt. Bitte füge das Heroku Postgres Add-on und die Config Vars hinzu.")
 
-result = urlparse(DATABASE_URL)
-conn = psycopg2.connect(
-    dbname=result.path.lstrip("/"),
-    user=result.username,
-    password=result.password,
-    host=result.hostname,
-    port=result.port,
-    sslmode="require",
-)
-conn.autocommit = True
+parsed = urlparse(db_url)
+dsn = {
+    'dbname': parsed.path.lstrip('/'),
+    'user': parsed.username,
+    'password': parsed.password,
+    'host': parsed.hostname,
+    'port': parsed.port,
+    'sslmode': 'require',
+}
+# Thread-safe pool
+db_pool = _init_pool(dsn, minconn=1, maxconn=10)
 
-def init_db():
-    with conn.cursor() as cur:
+# Helper to acquire/release connections and cursors
+def _with_cursor(func):
+    def wrapper(*args, **kwargs):
+        conn = db_pool.getconn()
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                return func(cur, *args, **kwargs)
+        finally:
+            db_pool.putconn(conn)
+    return wrapper
+
+@_with_cursor
+def init_db(cur):
         cur.execute("""
             CREATE TABLE IF NOT EXISTS groups (
                 chat_id BIGINT PRIMARY KEY,
@@ -132,11 +156,10 @@ def init_db():
             ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
         """)
 
-
+@_with_cursor
 def migrate_db():
     logging.basicConfig(level=logging.INFO)
     conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
     try:
         logging.info("Starte Migration: Gruppen, Einstellungen, Mitglieder…")
 
@@ -278,44 +301,39 @@ if __name__ == "__main__":
     migrate_db()
 
 # Gruppenverwaltung
+@_with_cursor
 def register_group(chat_id: int, title: str, welcome_topic_id: int = 0):
-    with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO groups (chat_id, title, welcome_topic_id)
             VALUES (%s, %s, %s)
             ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title;
         """, (chat_id, title, welcome_topic_id))
-
+@_with_cursor
 def get_registered_groups():
-    with conn.cursor() as cur:
         cur.execute("SELECT chat_id, title FROM groups;")
         return cur.fetchall()
-
+@_with_cursor
 def unregister_group(chat_id: int):
-    with conn.cursor() as cur:
         cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
 
 # Mitgliederverwaltung
 
 def add_member(chat_id: int, user_id: int):
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO members (chat_id, user_id, joined_at)
-                VALUES (%s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT DO NOTHING;
-            """, (chat_id, user_id))
+        cur.execute("""
+            INSERT INTO members (chat_id, user_id, joined_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT DO NOTHING;
+        """, (chat_id, user_id))
         logging.info(f"✅ add_member: user {user_id} zu chat {chat_id} hinzugefügt")
     except Exception as e:
         logging.error(f"❌ Fehler in add_member: {e}", exc_info=True)
 
 def remove_member(chat_id: int, user_id: int):
-    with conn.cursor() as cur:
         cur.execute("DELETE FROM members WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
 def list_members(chat_id: int) -> List[int]:
     #Gibt alle user_id aus der members-Tabelle für diese Gruppe zurück.
-    with conn.cursor() as cur:
         cur.execute(
             "SELECT user_id FROM members WHERE chat_id = %s;",
             (chat_id,)
@@ -324,7 +342,6 @@ def list_members(chat_id: int) -> List[int]:
 
 def count_members(chat_id: int) -> int:
     #Gibt die Anzahl Mitglieder in dieser Gruppe zurück.
-    with conn.cursor() as cur:
         cur.execute(
             "SELECT COUNT(*) FROM members WHERE chat_id = %s;",
             (chat_id,)
@@ -332,7 +349,6 @@ def count_members(chat_id: int) -> int:
         return cur.fetchone()[0] or 0
 
 def inc_message_count(chat_id: int, user_id: int, stat_date: date):
-    with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO daily_stats AS ds (chat_id, stat_date, user_id, messages)
             VALUES (%s, %s, %s, 1)
@@ -341,7 +357,6 @@ def inc_message_count(chat_id: int, user_id: int, stat_date: date):
         """, (chat_id, stat_date, user_id))
 
 def get_group_stats(chat_id: int, stat_date: date) -> List[Tuple[int, int]]:
-    with conn.cursor() as cur:
         cur.execute("""
             SELECT user_id, messages
             FROM daily_stats
@@ -352,7 +367,6 @@ def get_group_stats(chat_id: int, stat_date: date) -> List[Tuple[int, int]]:
         return cur.fetchall()
 
 def get_new_members_count(chat_id: int, date: date) -> int:
-    with conn.cursor() as cur:
         cur.execute("""
             SELECT COUNT(*) FROM members
             WHERE chat_id = %s AND DATE(joined_at) = %s;
@@ -361,57 +375,53 @@ def get_new_members_count(chat_id: int, date: date) -> int:
 
 def mark_member_deleted(chat_id: int, user_id: int):
     """Markiert einen Member als gelöscht, statt ihn zu entfernen."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE members
-            SET is_deleted  = TRUE,
-                deleted_at  = CURRENT_TIMESTAMP
-            WHERE chat_id = %s AND user_id = %s;
-        """, (chat_id, user_id))
+    cur.execute("""
+        UPDATE members
+        SET is_deleted  = TRUE,
+            deleted_at  = CURRENT_TIMESTAMP
+        WHERE chat_id = %s AND user_id = %s;
+    """, (chat_id, user_id))
 
 def list_active_members(chat_id: int) -> List[int]:
     """Gibt nur noch aktive (nicht-gelöschte) Mitglieder zurück."""
-    with conn.cursor() as cur:
-        cur.execute("""
+    cur.execute("""
             SELECT user_id
             FROM members
             WHERE chat_id = %s AND is_deleted = FALSE;
         """, (chat_id,))
-        return [row[0] for row in cur.fetchall()]
+    return [row[0] for row in cur.fetchall()]
 
+@_with_cursor
 def purge_deleted_members(chat_id: int | None = None):
     """
     Löscht aus der Tabelle alle Einträge mit is_deleted=TRUE.
     Wenn chat_id angegeben, nur für diese Gruppe.
     """
-    with conn.cursor() as cur:
-        if chat_id is None:
-            cur.execute("DELETE FROM members WHERE is_deleted = TRUE;")
-        else:
-            cur.execute(
-                "DELETE FROM members WHERE chat_id = %s AND is_deleted = TRUE;",
-                (chat_id,)
-            )
-    conn.commit()
+    if chat_id is None:
+        cur.execute("DELETE FROM members WHERE is_deleted = TRUE;")
+    else:
+        cur.execute(
+            "DELETE FROM members WHERE chat_id = %s AND is_deleted = TRUE;",
+            (chat_id,)
+        )
 
 # Mood
-
+@_with_cursor
 def save_mood(chat_id: int, message_id: int, user_id: int, mood: str):
     logger.debug(f"Speicher Mood: chat={chat_id}, msg={message_id}, user={user_id}, mood={mood}")
-    with conn.cursor() as cur:
-        try:
-            cur.execute("""
-                INSERT INTO mood_meter(chat_id, message_id, user_id, mood)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (chat_id, message_id, user_id)
-                DO UPDATE SET mood = EXCLUDED.mood;
-            """, (chat_id, message_id, user_id, mood))
-        except Exception:
-            logger.exception("Konnte Mood nicht speichern")
-            raise
-
+    try:
+        cur.execute("""
+            INSERT INTO mood_meter(chat_id, message_id, user_id, mood)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (chat_id, message_id, user_id)
+            DO UPDATE SET mood = EXCLUDED.mood;
+        """, (chat_id, message_id, user_id, mood))
+    except Exception:
+        logger.exception("Konnte Mood nicht speichern")
+        raise
+    
+@_with_cursor
 def get_mood_counts(chat_id: int, message_id: int) -> Dict[str, int]:
-    with conn.cursor() as cur:
         cur.execute("""
             SELECT mood, COUNT(*) FROM mood_meter
             WHERE chat_id = %s AND message_id = %s
@@ -419,8 +429,8 @@ def get_mood_counts(chat_id: int, message_id: int) -> Dict[str, int]:
         """, (chat_id, message_id))
         return dict(cur.fetchall())
 
+@_with_cursor
 def get_mood_question(chat_id: int) -> str:
-    with conn.cursor() as cur:
         cur.execute(
             "SELECT mood_question FROM group_settings WHERE chat_id = %s",
             (chat_id,)
@@ -430,7 +440,7 @@ def get_mood_question(chat_id: int) -> str:
 
 
 def set_mood_question(chat_id: int, question: str):
-    with conn.cursor() as cur:
+
         cur.execute("""
             INSERT INTO group_settings (chat_id, mood_question)
             VALUES (%s, %s)
@@ -440,7 +450,7 @@ def set_mood_question(chat_id: int, question: str):
 
 # Welcome
 def set_welcome(chat_id: int, photo_id: str | None, text: str | None):
-    with conn.cursor() as cur:
+
         cur.execute("""
             INSERT INTO welcome (chat_id, photo_id, text)
             VALUES (%s, %s, %s)
@@ -449,17 +459,17 @@ def set_welcome(chat_id: int, photo_id: str | None, text: str | None):
         """, (chat_id, photo_id, text))
 
 def get_welcome(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("SELECT photo_id, text FROM welcome WHERE chat_id = %s;", (chat_id,))
         return cur.fetchone()
 
 def delete_welcome(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("DELETE FROM welcome WHERE chat_id = %s;", (chat_id,))
 
 # Rules
 def set_rules(chat_id: int, photo_id: str | None, text: str | None):
-    with conn.cursor() as cur:
+
         cur.execute("""
             INSERT INTO rules (chat_id, photo_id, text)
             VALUES (%s, %s, %s)
@@ -468,17 +478,17 @@ def set_rules(chat_id: int, photo_id: str | None, text: str | None):
         """, (chat_id, photo_id, text))
 
 def get_rules(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("SELECT photo_id, text FROM rules WHERE chat_id = %s;", (chat_id,))
         return cur.fetchone()
 
 def delete_rules(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("DELETE FROM rules WHERE chat_id = %s;", (chat_id,))
 
 # Farewell
 def set_farewell(chat_id: int, photo_id: str | None, text: str | None):
-    with conn.cursor() as cur:
+
         cur.execute("""
             INSERT INTO farewell (chat_id, photo_id, text)
             VALUES (%s, %s, %s)
@@ -487,18 +497,18 @@ def set_farewell(chat_id: int, photo_id: str | None, text: str | None):
         """, (chat_id, photo_id, text))
 
 def get_farewell(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("SELECT photo_id, text FROM farewell WHERE chat_id = %s;", (chat_id,))
         return cur.fetchone()
 
 def delete_farewell(chat_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("DELETE FROM farewell WHERE chat_id = %s;", (chat_id,))
 
 # RSS-Feeds
 
 def set_rss_topic(chat_id: int, topic_id: int):
-    with conn.cursor() as cur:
+
         # Falls group_settings-Zeile fehlt, daily_stats_enabled auf TRUE lassen
         cur.execute("""
             INSERT INTO group_settings (chat_id, daily_stats_enabled, rss_topic_id)
@@ -508,7 +518,7 @@ def set_rss_topic(chat_id: int, topic_id: int):
         """, (chat_id, topic_id))
 
 def get_rss_topic(chat_id: int) -> int:
-    with conn.cursor() as cur:
+
         cur.execute(
             "SELECT rss_topic_id FROM group_settings WHERE chat_id = %s;",
             (chat_id,)
@@ -517,7 +527,7 @@ def get_rss_topic(chat_id: int) -> int:
         return row[0] if row else 0
 
 def add_rss_feed(chat_id: int, url: str, topic_id: int):
-    with conn.cursor() as cur:
+
         cur.execute("""
             INSERT INTO rss_feeds (chat_id, url, topic_id)
             VALUES (%s, %s, %s)
@@ -525,30 +535,25 @@ def add_rss_feed(chat_id: int, url: str, topic_id: int):
         """, (chat_id, url, topic_id))
 
 def list_rss_feeds(chat_id: int):
-    with conn.cursor() as cur:
         cur.execute("SELECT url, topic_id FROM rss_feeds WHERE chat_id = %s;", (chat_id,))
         return cur.fetchall()
 
 def remove_rss_feed(chat_id: int, url: str | None = None):
-    with conn.cursor() as cur:
         if url:
             cur.execute("DELETE FROM rss_feeds WHERE chat_id = %s AND url = %s;", (chat_id, url))
         else:
             cur.execute("DELETE FROM rss_feeds WHERE chat_id = %s;", (chat_id,))
 
 def get_rss_feeds():
-    with conn.cursor() as cur:
         cur.execute("SELECT chat_id, url, topic_id FROM rss_feeds;")
         return cur.fetchall()
 
 # Deduplizierung
 def get_posted_links(chat_id: int):
-    with conn.cursor() as cur:
         cur.execute("SELECT link FROM last_posts WHERE chat_id = %s;", (chat_id,))
         return {row[0] for row in cur.fetchall()}
 
 def add_posted_link(chat_id: int, link: str):
-    with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO last_posts (chat_id, link)
             VALUES (%s, %s)
@@ -557,7 +562,6 @@ def add_posted_link(chat_id: int, link: str):
 
 # Themenzuweisung für Linksperre-Ausnahme
 def assign_topic(chat_id: int, user_id: int, topic_id: int = 0, topic_name: str | None = None):
-    with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name)
             VALUES (%s, %s, %s, %s)
@@ -567,23 +571,19 @@ def assign_topic(chat_id: int, user_id: int, topic_id: int = 0, topic_name: str 
         """, (chat_id, user_id, topic_id, topic_name))
 
 def remove_topic(chat_id: int, user_id: int):
-    with conn.cursor() as cur:
         cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
 # Ausnahmen-Themenbesitzer abrufen
 def get_topic_owners(chat_id: int) -> list[int]:
-    with conn.cursor() as cur:
         cur.execute("SELECT user_id FROM user_topics WHERE chat_id = %s;", (chat_id,))
         return [row[0] for row in cur.fetchall()]
 
 def has_topic(chat_id: int, user_id: int) -> bool:
-    with conn.cursor() as cur:
         cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
         return cur.fetchone() is not None
 
 # Daily Stats
 def is_daily_stats_enabled(chat_id: int) -> bool:
-    with conn.cursor() as cur:
         cur.execute(
             "SELECT daily_stats_enabled FROM group_settings WHERE chat_id = %s",
             (chat_id,)
@@ -592,7 +592,6 @@ def is_daily_stats_enabled(chat_id: int) -> bool:
         return row[0] if row else True  # Default = True
 
 def set_daily_stats(chat_id: int, enabled: bool):
-    with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO group_settings(chat_id, daily_stats_enabled)
             VALUES (%s, %s)
