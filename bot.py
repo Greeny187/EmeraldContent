@@ -1,9 +1,7 @@
 import os
 import datetime
 import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
-
+from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
@@ -12,50 +10,41 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 
-# --- Setup Logging & Database ---
+# Anfang
+
 setup_logging()
 init_db()
 
-# --- Config aus ENV ---
-BOT_TOKEN    = os.getenv("BOT_TOKEN")
-WEBHOOK_URL  = os.getenv("WEBHOOK_URL")   # z.B. https://<app>.herokuapp.com/webhook
-PORT         = int(os.getenv("PORT", "8443"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN ist nicht gesetzt.")
 
-if not BOT_TOKEN or not WEBHOOK_URL:
-    raise ValueError("❌ BOT_TOKEN und WEBHOOK_URL müssen gesetzt sein.")
+async def log_update(update, context):
+    logging.info(f"Update angekommen: {update}")
 
-# --- Bot Application aufbauen ---
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+def main():
+    
+    # Startzeit merken
+    start_time = datetime.datetime.now()
+    
+    #Botstart
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
+    app.add_handler(MessageHandler(filters.ALL, log_update),group=-1)
 
-# Optional: jedes Update loggen
-async def log_update(update: Update, context):
-    logging.info(f"📩 Update empfangen: {update}")
+    # Globaler Error-Handler
+    app.add_error_handler(error_handler)
 
-# Logging-Level tweak
-logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
-# Füge das Logging-Handler hinzu
-app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
+    # Handlerregistrierung
+    register_handlers(app)
+    register_rss(app)
+    register_mood(app)
+    register_menu(app)
+    register_jobs(app)
 
-# Globaler Error-Handler
-app.add_error_handler(error_handler)
+    app.bot_data['start_time'] = start_time
 
-# Registriere alle Module/Handler
-register_handlers(app)
-register_rss(app)
-register_mood(app)
-register_menu(app)
-register_jobs(app)
+    app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
 
-# Uptime in bot_data speichern
-app.bot_data["start_time"] = datetime.datetime.now()
-
-# --- Entry Point: run_webhook statt main() ---
 if __name__ == "__main__":
-    # bindet /webhook an Deinen Heroku-Web-Dyno
-    logging.info(f"🎬 Starting bot with webhook {WEBHOOK_URL}")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="webhook",
-        webhook_url=WEBHOOK_URL,
-    )
+    main()
