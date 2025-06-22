@@ -52,9 +52,10 @@ app.bot_data["start_time"] = datetime.datetime.now()
 # --- Entry Point: run_webhook statt main() ---
 if __name__ == "__main__":
     # bindet /webhook an Deinen Heroku-Web-Dyno
+    logging.info(f"🎬 Starting bot with webhook {WEBHOOK_URL}")
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path="/webhook",   # Route auf die Telegram pusht
-        webhook_url=WEBHOOK_URL,  # volle URL für Telegram, inkl. https://...
+        url_path="/webhook",
+        webhook_url=WEBHOOK_URL,
     )
