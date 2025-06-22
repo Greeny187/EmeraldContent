@@ -9,7 +9,6 @@ from database import init_db
 from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
-from aiohttp import web
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -33,12 +32,6 @@ def main():
     PORT = int(os.getenv("PORT", 8443))
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
-
-    async def health(request):
-        return web.Response(text="OK")
-
-    # Zugriff auf das aiohttp-WebApp-Objekt
-    app.web_app.router.add_get("/health", health)
 
     # Deine Handler und Error-Handler registrieren
     app.add_error_handler(error_handler)
