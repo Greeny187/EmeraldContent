@@ -10,31 +10,34 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 
+BOT_TOKEN   = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN ist nicht gesetzt.")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL ist nicht gesetzt.")
+
 async def log_update(update, context):
     logging.info(f"Update angekommen: {update}")
+
+async def on_startup(app):
+    await app.bot.set_webhook(
+        webhook_url=WEBHOOK_URL,
+        drop_pending_updates=True
+    )
+    print(f"✅ Webhook gesetzt: {WEBHOOK_URL}")
 
 def main():
     setup_logging()
     init_db()
 
-    BOT_TOKEN   = os.getenv("BOT_TOKEN")
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")   # z.B. https://myapp.herokuapp.com/webhook/<BOT_TOKEN>
-    PORT        = int(os.getenv("PORT", 8443))
-
-    if not BOT_TOKEN or not WEBHOOK_URL:
-        raise ValueError("BOT_TOKEN und WEBHOOK_URL müssen gesetzt sein.")
-
-    # Application bauen
+    PORT = int(os.getenv("PORT", 8443))
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
 
-    # Globaler Error-Handler
+    # Deine Handler und Error-Handler registrieren
     app.add_error_handler(error_handler)
-
-    # Logging aller Updates (optional)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
-
-    # alle weiteren Handler registrieren
     register_handlers(app)
     register_rss(app)
     register_mood(app)
@@ -49,7 +52,8 @@ def main():
         listen="0.0.0.0",
         port=PORT,
         url_path=f"/webhook/{BOT_TOKEN}",
-        webhook_url=WEBHOOK_URL
+        webhook_url=WEBHOOK_URL,
+        on_startup=on_startup
     )
 
 if __name__ == "__main__":
