@@ -10,41 +10,47 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 
-# Anfang
-
-setup_logging()
-init_db()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN ist nicht gesetzt.")
-
 async def log_update(update, context):
     logging.info(f"Update angekommen: {update}")
 
 def main():
-    
-    # Startzeit merken
-    start_time = datetime.datetime.now()
-    
-    #Botstart
+    setup_logging()
+    init_db()
+
+    BOT_TOKEN   = os.getenv("BOT_TOKEN")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")   # z.B. https://myapp.herokuapp.com/webhook/<BOT_TOKEN>
+    PORT        = int(os.getenv("PORT", 8443))
+
+    if not BOT_TOKEN or not WEBHOOK_URL:
+        raise ValueError("BOT_TOKEN und WEBHOOK_URL müssen gesetzt sein.")
+
+    # Application bauen
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
-    app.add_handler(MessageHandler(filters.ALL, log_update),group=-1)
 
     # Globaler Error-Handler
     app.add_error_handler(error_handler)
 
-    # Handlerregistrierung
+    # Logging aller Updates (optional)
+    app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
+
+    # alle weiteren Handler registrieren
     register_handlers(app)
     register_rss(app)
     register_mood(app)
     register_menu(app)
     register_jobs(app)
 
-    app.bot_data['start_time'] = start_time
+    # Startzeit merken (optional)
+    app.bot_data['start_time'] = datetime.datetime.now()
 
-    app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
+    # Webhook starten
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=f"/webhook/{BOT_TOKEN}",
+        webhook_url=WEBHOOK_URL
+    )
 
 if __name__ == "__main__":
     main()
