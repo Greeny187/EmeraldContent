@@ -1,10 +1,10 @@
 import os
 import datetime
 import logging
+import asyncio
 from aiohttp import web
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
-from telegram.ext import get_running_loop
 
 from handlers import register_handlers, error_handler
 from menu import register_menu
@@ -73,7 +73,7 @@ async def main():
     logging.info(f"🚀 Webhook läuft auf {WEBHOOK_URL} (Port {PORT})")
 
     # ⬇ Endlos warten
-    await get_running_loop().create_future()
+    await asyncio.get_running_loop().create_future()
 
 # ⬇ Entry Point
 if __name__ == "__main__":
