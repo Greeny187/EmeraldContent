@@ -248,6 +248,29 @@ def purge_deleted_members(cur, chat_id: Optional[int] = None):
             (chat_id,)
         )
 
+# --- Themenzuweisung für Linksperre-Ausnahme ---
+@_with_cursor
+def assign_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name: Optional[str] = None):
+    cur.execute(
+        "INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (chat_id, user_id) DO UPDATE SET topic_id = EXCLUDED.topic_id, topic_name = EXCLUDED.topic_name;",
+        (chat_id, user_id, topic_id, topic_name)
+    )
+
+@_with_cursor
+def remove_topic(cur, chat_id: int, user_id: int):
+    cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+
+@_with_cursor
+def has_topic(cur, chat_id: int, user_id: int) -> bool:
+    cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+    return cur.fetchone() is not None
+
+@_with_cursor
+def get_topic_owners(cur, chat_id: int) -> List[int]:
+    cur.execute("SELECT user_id FROM user_topics WHERE chat_id = %s;", (chat_id,))
+    return [row[0] for row in cur.fetchall()]
+
 # --- Daily Stats ---
 @_with_cursor
 def inc_message_count(cur, chat_id: int, user_id: int, stat_date: date):
