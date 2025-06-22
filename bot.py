@@ -20,16 +20,14 @@ if not WEBHOOK_URL:
 async def log_update(update, context):
     logging.info(f"Update angekommen: {update}")
 
-async def on_startup(app):
-    await app.bot.set_webhook(
-        webhook_url=WEBHOOK_URL,
-        drop_pending_updates=True
-    )
-    print(f"✅ Webhook gesetzt: {WEBHOOK_URL}")
-
 def main():
+    
     setup_logging()
     init_db()
+
+    BOT_TOKEN   = os.getenv("BOT_TOKEN")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    PORT        = int(os.getenv("PORT", 8443))
 
     PORT = int(os.getenv("PORT", 8443))
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -53,7 +51,8 @@ def main():
         port=PORT,
         url_path=f"/webhook/{BOT_TOKEN}",
         webhook_url=WEBHOOK_URL,
-        on_startup=on_startup
+        drop_pending_updates=True,
+        max_connections=40
     )
 
 if __name__ == "__main__":
