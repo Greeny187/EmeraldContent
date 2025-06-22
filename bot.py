@@ -1,8 +1,6 @@
 import os
 import datetime
 import logging
-import asyncio
-from aiohttp import web
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
 
@@ -14,72 +12,49 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 
-# --- Setup ---
+# --- Setup Logging & Database ---
 setup_logging()
 init_db()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # z. B. https://deinprojekt.herokuapp.com/webhook
-PORT = int(os.environ.get("PORT", 8443))
+# --- Config aus ENV ---
+BOT_TOKEN    = os.getenv("BOT_TOKEN")
+WEBHOOK_URL  = os.getenv("WEBHOOK_URL")   # z.B. https://<app>.herokuapp.com/webhook
+PORT         = int(os.getenv("PORT", "8443"))
 
 if not BOT_TOKEN or not WEBHOOK_URL:
-    raise ValueError("❌ BOT_TOKEN oder WEBHOOK_URL ist nicht gesetzt.")
+    raise ValueError("❌ BOT_TOKEN und WEBHOOK_URL müssen gesetzt sein.")
 
-# ⬇ globales app-Objekt
-app = None
+# --- Bot Application aufbauen ---
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Optionales Logging jedes Updates
-async def log_update(update, context):
+# Optional: jedes Update loggen
+async def log_update(update: Update, context):
     logging.info(f"📩 Update empfangen: {update}")
 
-# ⬇ Webhook-Endpunkt
-async def handle(request):
-    data = await request.json()
-    update = Update.de_json(data, app.bot)
-    await app.process_update(update)
-    return web.Response(text="OK")
+# Logging-Level tweak
+logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
+# Füge das Logging-Handler hinzu
+app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
 
-# ⬇ Main-Funktion für Webhook-Betrieb
-async def main():
-    global app
-    start_time = datetime.datetime.now()
+# Globaler Error-Handler
+app.add_error_handler(error_handler)
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
-    app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
-    app.add_error_handler(error_handler)
+# Registriere alle Module/Handler
+register_handlers(app)
+register_rss(app)
+register_mood(app)
+register_menu(app)
+register_jobs(app)
 
-    # ⬇ Handler & Module
-    register_handlers(app)
-    register_rss(app)
-    register_mood(app)
-    register_menu(app)
-    register_jobs(app)
+# Uptime in bot_data speichern
+app.bot_data["start_time"] = datetime.datetime.now()
 
-    app.bot_data['start_time'] = start_time
-
-    # ⬇ Webhook bei Telegram registrieren
-    await app.bot.set_webhook(WEBHOOK_URL)
-
-    # ⬇ aiohttp Webserver starten
-    web_app = web.Application()
-    web_app.router.add_post("/webhook", handle)
-
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-
-    logging.info(f"🚀 Webhook läuft auf {WEBHOOK_URL} (Port {PORT})")
-
-    # ⬇ Endlos warten
-    await asyncio.get_running_loop().create_future()
-
-# ⬇ Entry Point
+# --- Entry Point: run_webhook statt main() ---
 if __name__ == "__main__":
+    # bindet /webhook an Deinen Heroku-Web-Dyno
     app.run_webhook(
-    listen="0.0.0.0",
-    port=PORT,
-    webhook_url=WEBHOOK_URL,
-    webhook_path="/webhook",
-)
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="/webhook",   # Route auf die Telegram pusht
+        webhook_url=WEBHOOK_URL,  # volle URL für Telegram, inkl. https://...
+    )
