@@ -77,5 +77,9 @@ async def main():
 
 # ⬇ Entry Point
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    app.run_webhook(
+    listen="0.0.0.0",
+    port=PORT,
+    webhook_url=WEBHOOK_URL,
+    webhook_path="/webhook",
+)
