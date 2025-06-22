@@ -10,6 +10,7 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 
+
 # Anfang
 
 setup_logging()
