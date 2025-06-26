@@ -4,8 +4,7 @@ import re
 import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
-from telegram.error import BadRequest
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, ChannelPostHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
 get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel)
@@ -36,7 +35,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from database import add_channel
         add_channel(chat.id, chat.id, chat.username, chat.title)
         return await update.message.reply_text("✅ Kanal registriert! Wechsle in deinen privaten Bot-Chat und sende /start.")
-    
     
     if update.effective_chat.type == "private":
         user = update.effective_user
@@ -442,8 +440,9 @@ def register_handlers(app):
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT|filters.PHOTO) & ~filters.COMMAND,edit_content),group=-1)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT|filters.PHOTO) & ~filters.COMMAND,edit_content), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
+    app.add_handler(ChannelPostHandler(filters=filters.Regex(r"^/start(@\w+)?$"), callback=start), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
 
