@@ -82,7 +82,7 @@ async def menu_callback(update, context):
         if chat_id not in [cid for cid, _ in visible_groups]:
             return await query.message.reply_text("🚫 Du hast keinen Zugriff auf diese Gruppe.")
         context.user_data["selected_chat_id"] = chat_id
-        return await show_group_menu(query, chat_id)
+        return await show_group_menu(query, context, chat_id)
 
     if data.startswith("channel_"):
         chan_id = int(data.split("_",1)[1])
