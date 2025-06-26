@@ -4,7 +4,7 @@ import re
 import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, ChannelPostHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
 get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel)
@@ -429,7 +429,12 @@ async def dashboard_command(update, context):
 
 def register_handlers(app):
 
-    app.add_handler(CommandHandler("start", start))
+    # 1) /start in Kanälen (als Channel-Post)
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Regex(r"^/start(@\w+)?$"), start), group=0)
+    # 2) /start in Gruppen (group & supergroup)
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.GROUPS), group=1)
+    # 3) /start im privaten Chat
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE), group=2)
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
@@ -442,7 +447,6 @@ def register_handlers(app):
 
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT|filters.PHOTO) & ~filters.COMMAND,edit_content), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
-    app.add_handler(ChannelPostHandler(filters=filters.Regex(r"^/start(@\w+)?$"), callback=start), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
 
