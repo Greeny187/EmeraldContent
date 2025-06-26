@@ -1,5 +1,5 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply
-from telegram.ext import CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply, CallbackQuery
+from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import (
     get_registered_groups,
     get_welcome, set_welcome, delete_welcome,
@@ -19,7 +19,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def show_group_menu(query_or_update, chat_id: int):
+async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     question = get_mood_question(chat_id)
     keyboard = [
         [InlineKeyboardButton("Begrüßung",    callback_data=f"{chat_id}_welcome")],
@@ -39,17 +39,22 @@ async def show_group_menu(query_or_update, chat_id: int):
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"
     markup = InlineKeyboardMarkup(keyboard)
 
-    # Universelle Behandlung je nach Typ
-    if hasattr(query_or_update, "edit_message_text"):
-        await query_or_update.edit_message_text(text, reply_markup=markup)
-    elif getattr(query_or_update, "callback_query", None) is not None:
-        await query_or_update.callback_query.edit_message_text(text, reply_markup=markup)
-    elif hasattr(query_or_update, "reply_text"):  # plain Message-Objekt
-        await query_or_update.reply_text(text, reply_markup=markup)
-    elif hasattr(query_or_update, "message"):  # plain Update mit Message
-        await query_or_update.message.reply_text(text, reply_markup=markup)
-    else:
-        raise TypeError("❌ Ungültiger Objekttyp für show_group_menu()")
+    msg = query.message
+    # 1) Nachrichten mit Text bearbeiten
+    if msg and msg.text is not None:
+        return await query.edit_message_text(text=text, reply_markup=markup)
+    # 2) Medien-Caption bearbeiten
+    elif msg and (msg.photo or msg.video or msg.animation):
+        return await query.edit_message_caption(caption=text, reply_markup=markup)
+    # 3) sonst: nur Keyboard aktualisieren
+    elif msg:
+        return await query.edit_message_reply_markup(reply_markup=markup)
+    # 4) Fallback: komplett neu senden
+    return await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=markup
+    )
 
 async def menu_callback(update, context):
     query = update.callback_query
