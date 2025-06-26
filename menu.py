@@ -100,7 +100,7 @@ async def menu_callback(update, context):
         current = is_daily_stats_enabled(chat_id)
         set_daily_stats(chat_id, not current)
         await query.answer(f"Tagesstatistik {'aktiviert' if not current else 'deaktiviert'}", show_alert=True)
-        return await show_group_menu(query, chat_id)
+        return await show_group_menu(query, context, chat_id)
 
     if data.endswith("_edit_mood_q"):
         chat_id = int(data.split("_",1)[0])
