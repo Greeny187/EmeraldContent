@@ -22,6 +22,7 @@ async def error_handler(update, context):
     logger.error("Uncaught exception", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"/start in Chat {update.effective_chat.id} (type={update.effective_chat.type})")
     chat = update.effective_chat
     user = update.effective_user
 
@@ -31,7 +32,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
 
     # 2) Kanal registrieren
-    if chat.type == "channel":
+    if chat.type == "channel" or chat.type == "supergroup":
         from database import add_channel
         add_channel(chat.id, chat.id, chat.username, chat.title)
         return await update.message.reply_text("✅ Kanal registriert! Wechsle in deinen privaten Bot-Chat und sende /start.")
