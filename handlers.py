@@ -281,12 +281,18 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cm = update.chat_member
-    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
+    # update.chat_member liefert None, wenn es kein Chat-Member-Update ist
+    cm = update.chat_member or update.my_chat_member
+    if cm is None or cm.new_chat_member is None:
+        return  # nichts zu tun
+
+    chat_id = update.effective_chat.id if update.effective_chat else None
     user = cm.new_chat_member.user
     status = cm.new_chat_member.status
-    cm = update.chat_member or update.my_chat_member
-    chat_id = cm.chat.id
+
+    logger.info(
+        f"🔔 track_members aufgerufen: chat_id={chat_id}, user={user.id}, status={status}"
+    )
 
     # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
