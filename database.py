@@ -163,6 +163,18 @@ def init_db(cur):
         );
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS channels (
+            id            SERIAL PRIMARY KEY,
+            parent_chat_id   BIGINT   NOT NULL,
+            channel_id    BIGINT   NOT NULL,
+            channel_username TEXT,
+            channel_title TEXT,
+            created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """
+    )
 
 # --- Group Management ---
 @_with_cursor
@@ -181,6 +193,64 @@ def get_registered_groups(cur) -> List[Tuple[int, str]]:
 @_with_cursor
 def unregister_group(cur, chat_id: int):
     cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
+
+#Channel Management
+
+@_with_cursor
+def add_channel(cur, parent_chat_id: int, channel_id: int,
+                channel_username: Optional[str] = None,
+                channel_title: Optional[str] = None):
+    """
+    Fügt einen Kanal zur Verwaltung hinzu.
+    Ignoriert Einträge, die schon existieren.
+    """
+    cur.execute(
+        """
+        INSERT INTO channels (parent_chat_id, channel_id, channel_username, channel_title)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT DO NOTHING;
+        """,
+        (parent_chat_id, channel_id, channel_username, channel_title)
+    )
+
+@_with_cursor
+def remove_channel(cur, parent_chat_id: int, channel_id: int):
+    """
+    Entfernt einen Kanal aus der Verwaltung.
+    """
+    cur.execute(
+        "DELETE FROM channels WHERE parent_chat_id = %s AND channel_id = %s;",
+        (parent_chat_id, channel_id)
+    )
+
+@_with_cursor
+def list_channels(cur, parent_chat_id: int) -> List[Tuple[int, Optional[str], Optional[str]]]:
+    """
+    Gibt alle Kanäle zurück, die in der Gruppe (chat_id) registriert sind.
+    Liefert Tuples: (channel_id, channel_username, channel_title).
+    """
+    cur.execute(
+        """
+        SELECT channel_id, channel_username, channel_title
+        FROM channels
+        WHERE parent_chat_id = %s;
+        """,
+        (parent_chat_id,)
+    )
+    return cur.fetchall()
+
+@_with_cursor
+def get_all_channels(cur) -> List[Tuple[int, Optional[str], Optional[str]]]:
+    """
+    Liefert eine Liste aller in der Datenbank registrierten Kanäle.
+    """
+    cur.execute(
+        """
+        SELECT parent_chat_id, channel_id, channel_username, channel_title
+        FROM channels;
+        """
+    )
+    return cur.fetchall()
 
 # --- Member Management ---
 @_with_cursor

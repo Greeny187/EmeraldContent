@@ -3,7 +3,7 @@ from telegram.ext import CallbackQueryHandler
 from database import (
     get_registered_groups,
     get_welcome, set_welcome, delete_welcome,
-    list_members,
+    list_members,list_channels, get_all_channels,
     get_rules, set_rules, delete_rules,
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
@@ -78,6 +78,17 @@ async def menu_callback(update, context):
             return await query.message.reply_text("🚫 Du hast keinen Zugriff auf diese Gruppe.")
         context.user_data["selected_chat_id"] = chat_id
         return await show_group_menu(query, chat_id)
+
+    if data.startswith("channel_"):
+        chan_id = int(data.split("_",1)[1])
+        # nur Admins/Inhaber dürfen sehen
+        admins = await context.bot.get_chat_administrators(chan_id)
+        if not any(a.user.id == update.effective_user.id for a in admins):
+            return await query.message.reply_text("🚫 Zugriff verweigert.")
+        parent = next((parent_id for parent_id, c, _, _ in get_all_channels() if c == chan_id), None)
+        rows = list_channels(parent) if parent is not None else []
+        title = rows[0][2] if rows else str(chan_id)
+        return await query.message.reply_text(f"📺 Kanal «{title}» ausgewählt.")
 
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])

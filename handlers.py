@@ -8,12 +8,12 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
-get_rss_feeds, count_members, get_farewell, get_welcome)
+get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
 from menu import show_group_menu
-from access import get_visible_groups
+from access import get_visible_groups, get_visible_channels
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +22,30 @@ async def error_handler(update, context):
     logger.error("Uncaught exception", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
+    if update.effective_chat.type == "private":
+        user = update.effective_user
 
-    if chat.type in ("group", "supergroup"):
-        register_group(chat.id, chat.title)
-        return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
+        all_groups    = get_registered_groups()    # [(chat_id, title), …]
+        visible_groups   = await get_visible_groups(user.id, context.bot, all_groups)
 
-    if chat.type == "private":
-        all_groups = get_registered_groups()
-        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+        all_channels = get_all_channels()  # [(parent_chat_id, channel_id, username, title), …]
+        visible_channels    = await get_visible_channels(user.id, context.bot, all_channels)
 
-        if not visible_groups:
+        if not visible_groups and not visible_channels:
             return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+                "🚫 Du bist in keiner Gruppe oder keinem Kanal Admin, in dem der Bot aktiv ist."
             )
 
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-        markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+        keyboard = []
+        for gid, title in visible_groups:
+            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
+        for cid, title in visible_channels:
+            keyboard.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
 
+        return await update.message.reply_text(
+            "🔧 Wähle eine Gruppe oder einen Kanal:", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # show_group_menu now only needs update & context
     await show_group_menu(update, context)
@@ -417,10 +420,10 @@ def register_handlers(app):
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT|filters.PHOTO) & ~filters.COMMAND,edit_content),group=-1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
 
     app.add_handler(help_handler)
 
