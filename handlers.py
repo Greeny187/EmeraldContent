@@ -34,7 +34,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type == "channel" or chat.type == "supergroup":
         from database import add_channel
         add_channel(chat.id, chat.id, chat.username, chat.title)
-        return await update.message.reply_text("✅ Kanal registriert! Wechsle in deinen privaten Bot-Chat und sende /start.")
+        return await update.effective_message.reply_text(
+            "✅ Kanal registriert! Wechsle in deinen privaten Bot-Chat und sende /start."
+        )
     
     if update.effective_chat.type == "private":
         user = update.effective_user
