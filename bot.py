@@ -1,6 +1,7 @@
 import os
 import datetime
 import logging
+import asyncio
 from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
@@ -42,24 +43,21 @@ def main():
     register_menu(app)
     register_jobs(app)
 
-    import asyncio
-    async def _setup_allowed_updates():
-        # erst alten Webhook löschen
-        await app.bot.delete_webhook()
-        # dann neuen mit channel_post & edited_channel_post
-        await app.bot.set_webhook(
-            url=WEBHOOK_URL,
-            allowed_updates=[
-                "message",
-                "edited_message",
-                "channel_post",
-                "edited_channel_post",
-                "callback_query"
-            ]
-        )
-    # asynchron ausführen, bevor run_webhook startet
-    asyncio.run(_setup_allowed_updates())
+    # 1) Hole dir den aktuellen Loop (oder erstelle einen)
+    loop = asyncio.get_event_loop()
 
+    # 2) Setze Webhook im gleichen Loop
+    loop.run_until_complete(app.bot.delete_webhook())
+    loop.run_until_complete(app.bot.set_webhook(
+        url=WEBHOOK_URL,
+        allowed_updates=[
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "callback_query"
+        ]
+    ))
 
     # Startzeit merken (optional)
     app.bot_data['start_time'] = datetime.datetime.now()
