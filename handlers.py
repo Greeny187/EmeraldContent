@@ -430,11 +430,11 @@ async def dashboard_command(update, context):
 def register_handlers(app):
 
     # 1) /start in Kanälen (als Channel-Post)
-    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Regex(r"^/start(@\w+)?$"), start), group=0)
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Regex(r"^/start(@\w+)?$"), start), group=-2)
     # 2) /start in Gruppen (group & supergroup)
-    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.GROUPS), group=1)
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.GROUPS), group=0)
     # 3) /start im privaten Chat
-    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE), group=2)
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE), group=1)
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
