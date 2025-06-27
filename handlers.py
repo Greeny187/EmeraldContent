@@ -525,7 +525,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
 
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
-    app.add_handler(MessageHandler(filters.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
 
     app.add_handler(help_handler)
 
