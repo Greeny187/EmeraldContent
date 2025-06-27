@@ -89,25 +89,8 @@ async def menu_callback(update, context):
         return await show_group_menu(query, context, chat_id)
 
     if data.startswith("channel_"):
-        chan_id = int(data.split("_",1)[1])
-        # nur Admins/Inhaber dürfen sehen
-        admins = await context.bot.get_chat_administrators(chan_id)
-        if not any(a.user.id == update.effective_user.id for a in admins):
-            return await query.message.reply_text("🚫 Zugriff verweigert.")
-        parent = next((parent_id for parent_id, c, _, _ in get_all_channels() if c == chan_id), None)
-        rows = list_channels(parent) if parent is not None else []
-        title = rows[0][2] if rows else str(chan_id)
-        # Neues Kanal-Hauptmenü
-        buttons = [
-            [InlineKeyboardButton("📝 Broadcast senden", callback_data=f"ch_broadcast_{chan_id}")],
-            [InlineKeyboardButton("📈 Statistiken",       callback_data=f"ch_stats_{chan_id}")],
-            [InlineKeyboardButton("📌 Pinned verwalten",  callback_data=f"ch_pins_{chan_id}")],
-            [InlineKeyboardButton("🗓️ Geplante Beiträge", callback_data=f"ch_schedule_{chan_id}")],
-            [InlineKeyboardButton("⚙️ Einstellungen",      callback_data=f"ch_settings_{chan_id}")],
-            [InlineKeyboardButton("🔙 Zurück",             callback_data="main_menu")],
-        ]
-        text = f"🔧 Kanal «{title}» verwalten – wähle eine Funktion:"
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        channel_id = int(data.split("_",1)[1])
+        return await channel_mgmt_menu(update, context, channel_id)
 
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
@@ -291,13 +274,32 @@ async def menu_callback(update, context):
                 ])
             )
             return
-    
+        
+async def channel_mgmt_menu(update, context, channel_id: int):
+    q = update.callback_query
+    await q.answer()
+
+    # Titel holen
+    chat = await context.bot.get_chat(channel_id)
+    title = chat.title or str(channel_id)
+
+    buttons = [
+        [InlineKeyboardButton("📊 Statistiken",    callback_data=f"ch_stats_{channel_id}")],
+        [InlineKeyboardButton("⚙️ Einstellungen", callback_data=f"ch_settings_{channel_id}")],
+        [InlineKeyboardButton("📝 Broadcast",       callback_data=f"ch_broadcast_{channel_id}")],
+        [InlineKeyboardButton("📌 Pinned",          callback_data=f"ch_pins_{channel_id}")],
+        [InlineKeyboardButton("🔄 Kanal wechseln", callback_data="change_channel")],
+        [InlineKeyboardButton("🔙 Zurück",          callback_data="main_menu")],
+    ]
+    await q.edit_message_text(f"🔧 Kanal «{title}» verwalten – wähle eine Funktion:", reply_markup=InlineKeyboardMarkup(buttons))
+
 # /menu 
 
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
     # Kanal-Submenüs
+    app.add_handler(CallbackQueryHandler(lambda u,c: channel_mgmt_menu(u,c, int(u.callback_query.data.split('_')[1])), pattern=r"^channel_\d+$"), group=4)
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
     app.add_handler(CallbackQueryHandler(channel_stats_menu,   pattern=r"^ch_stats_\d+"),     group=5)
     app.add_handler(CallbackQueryHandler(channel_pins_menu,    pattern=r"^ch_pins_\d+"),      group=5)
