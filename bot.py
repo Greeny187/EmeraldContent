@@ -42,6 +42,25 @@ def main():
     register_menu(app)
     register_jobs(app)
 
+    import asyncio
+    async def _setup_allowed_updates():
+        # erst alten Webhook löschen
+        await app.bot.delete_webhook()
+        # dann neuen mit channel_post & edited_channel_post
+        await app.bot.set_webhook(
+            url=WEBHOOK_URL,
+            allowed_updates=[
+                "message",
+                "edited_message",
+                "channel_post",
+                "edited_channel_post",
+                "callback_query"
+            ]
+        )
+    # asynchron ausführen, bevor run_webhook startet
+    asyncio.run(_setup_allowed_updates())
+
+
     # Startzeit merken (optional)
     app.bot_data['start_time'] = datetime.datetime.now()
 
