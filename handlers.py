@@ -11,7 +11,6 @@ get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_c
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
-from menu import show_group_menu
 from access import get_visible_groups, get_visible_channels
 
 logger = logging.getLogger(__name__)
@@ -63,9 +62,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # show_group_menu now only needs update & context
-    await show_group_menu(update, context)
-
     chat = update.effective_chat
     user = update.effective_user
 
@@ -87,8 +83,8 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
         markup = InlineKeyboardMarkup(keyboard)
-        return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
-    await show_group_menu(update, chat_id)
+    return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
+    
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
