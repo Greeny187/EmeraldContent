@@ -1,3 +1,4 @@
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply, CallbackQuery
 from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import (
@@ -12,10 +13,13 @@ from database import (
     set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
 )
+from handlers import (channel_broadcast_menu, 
+    channel_stats_menu, channel_pins_menu, 
+    channel_schedule_menu, channel_settings_menu,
+)
 from utils import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +97,17 @@ async def menu_callback(update, context):
         parent = next((parent_id for parent_id, c, _, _ in get_all_channels() if c == chan_id), None)
         rows = list_channels(parent) if parent is not None else []
         title = rows[0][2] if rows else str(chan_id)
-        return await query.message.reply_text(f"📺 Kanal «{title}» ausgewählt.")
+        # Neues Kanal-Hauptmenü
+        buttons = [
+            [InlineKeyboardButton("📝 Broadcast senden", callback_data=f"ch_broadcast_{chan_id}")],
+            [InlineKeyboardButton("📈 Statistiken",       callback_data=f"ch_stats_{chan_id}")],
+            [InlineKeyboardButton("📌 Pinned verwalten",  callback_data=f"ch_pins_{chan_id}")],
+            [InlineKeyboardButton("🗓️ Geplante Beiträge", callback_data=f"ch_schedule_{chan_id}")],
+            [InlineKeyboardButton("⚙️ Einstellungen",      callback_data=f"ch_settings_{chan_id}")],
+            [InlineKeyboardButton("🔙 Zurück",             callback_data="main_menu")],
+        ]
+        text = f"🔧 Kanal «{title}» verwalten – wähle eine Funktion:"
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
@@ -283,3 +297,9 @@ async def menu_callback(update, context):
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
+    # Kanal-Submenüs
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,   pattern=r"^ch_stats_\d+"),     group=5)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,    pattern=r"^ch_pins_\d+"),      group=5)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,pattern=r"^ch_schedule_\d+"),  group=5)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,pattern=r"^ch_settings_\d+"),  group=5)

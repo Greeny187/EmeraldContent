@@ -4,10 +4,10 @@ import re
 import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
-get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel)
+get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel, add_scheduled_post, list_scheduled_posts)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -406,6 +406,82 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
     await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
 
+async def channel_broadcast_menu(update, context):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_",1)[1])
+    # Frage nach Inhalt
+    context.user_data["broadcast_chan"] = chan_id
+    return await q.edit_message_text(
+        "📝 Bitte sende jetzt den Broadcast-Inhalt (Text oder Foto + Text)."
+    )
+
+async def handle_broadcast_content(update, context):
+    if "broadcast_chan" not in context.user_data:
+        return
+    chan_id = context.user_data.pop("broadcast_chan")
+    msg = update.effective_message
+    # Foto + Caption oder reiner Text
+    if msg.photo:
+        fid = msg.photo[-1].file_id
+        caption = msg.caption or ""
+        await context.bot.send_photo(chan_id, fid, caption=caption, parse_mode="HTML")
+    else:
+        await context.bot.send_message(chan_id, msg.text, parse_mode="HTML")
+    return await update.message.reply_text("✅ Broadcast gesendet.")
+
+async def channel_stats_menu(update, context):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_",1)[1])
+    # basic: Abonnenten‐Anzahl
+    chat = await context.bot.get_chat(chan_id)
+    subs = chat.get_members_count()
+    text = f"📈 Kanal‐Statistiken:\n• Abonnenten: {subs}"
+    return await q.edit_message_text(text)
+
+async def channel_pins_menu(update, context):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_",1)[1])
+    # Letzten Pin abrufen
+    pinned = (await context.bot.get_chat(chan_id)).pinned_message
+    lines = ["📌 Aktuell angeheftete Nachricht:"]
+    if pinned:
+        lines.append(pinned.text or "(Mediennachricht)")
+        lines.append(f"(ID: {pinned.message_id})")
+    else:
+        lines.append("– Keine –")
+    buttons = [
+        [InlineKeyboardButton("🔙 Zurück", callback_data=f"channel_{chan_id}")],
+    ]
+    await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+async def channel_schedule_menu(update, context):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_",1)[1])
+    schedules = list_scheduled_posts(chan_id)
+    lines = ["🗓️ Geplante Beiträge:"]
+    for text, cron in schedules:
+        lines.append(f"• {cron} → «{text[:30]}…»")
+    buttons = [
+        [InlineKeyboardButton("➕ Neu planen", callback_data=f"ch_sched_add_{chan_id}")],
+        [InlineKeyboardButton("🔙 Zurück",        callback_data=f"channel_{chan_id}")],
+    ]
+    await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+async def channel_settings_menu(update, context):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_",1)[1])
+    buttons = [
+        [InlineKeyboardButton("✏️ Titel ändern", callback_data=f"ch_settitle_{chan_id}")],
+        [InlineKeyboardButton("📝 Beschreibung", callback_data=f"ch_setdesc_{chan_id}")],
+        [InlineKeyboardButton("🔙 Zurück",         callback_data=f"channel_{chan_id}")],
+    ]
+    return await q.edit_message_text("⚙️ Kanal‐Einstellungen:", reply_markup=InlineKeyboardMarkup(buttons))
+
 async def dashboard_command(update, context):
     user_id = update.effective_user.id
     dev_id = os.getenv("DEVELOPER_CHAT_ID")
@@ -451,6 +527,9 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
+
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
+    app.add_handler(MessageHandler(filters.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
 
     app.add_handler(help_handler)
 

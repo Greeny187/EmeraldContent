@@ -252,6 +252,41 @@ def get_all_channels(cur) -> List[Tuple[int, Optional[str], Optional[str]]]:
     )
     return cur.fetchall()
 
+# ─── Geplante Kanal-Beiträge ─────────────────────────────────────────
+@_with_cursor
+def add_scheduled_post(cur, channel_id: int, post_text: str, schedule_cron: str):
+    """
+    Speichert einen geplanten Beitrag für einen Kanal.
+    `schedule_cron` z.B. "0 9 * * *" für täglich 9:00 Uhr.
+    """
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS channel_schedules (
+            channel_id   BIGINT,
+            post_text    TEXT,
+            schedule_cron TEXT,
+            PRIMARY KEY (channel_id, post_text)
+        );
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO channel_schedules (channel_id, post_text, schedule_cron)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (channel_id, post_text) DO UPDATE
+        SET schedule_cron = EXCLUDED.schedule_cron;
+        """,
+        (channel_id, post_text, schedule_cron)
+    )
+
+@_with_cursor
+def list_scheduled_posts(cur, channel_id: int) -> List[Tuple[str, str]]:
+    cur.execute(
+        "SELECT post_text, schedule_cron FROM channel_schedules WHERE channel_id = %s;",
+        (channel_id,)
+    )
+    return cur.fetchall()
+
 # --- Member Management ---
 @_with_cursor
 def add_member(cur, chat_id: int, user_id: int):
