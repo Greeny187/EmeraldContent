@@ -7,11 +7,12 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
-get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel, add_scheduled_post, list_scheduled_posts)
+get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel, add_scheduled_post, list_scheduled_posts, set_group_language)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
 from access import get_visible_groups, get_visible_channels
+from i18n import t, TRANSLATIONS
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,13 @@ async def error_handler(update, context):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/start in Chat {update.effective_chat.id} (type={update.effective_chat.type})")
     chat = update.effective_chat
+    chat_id = chat.id
     user = update.effective_user
 
     # 1) Gruppe registrieren
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
-        return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
+        await update.message.reply_text(t(chat_id, 'WELCOME_SET'))
 
     # 2) Kanal registrieren
     if chat.type == "channel" or chat.type == "supergroup":
@@ -169,6 +171,22 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("⬅ Zurück", callback_data=f"{chat_id}_{action.split('_')[0]}")
     ]])
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
+
+async def set_language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type not in ('group', 'supergroup'):
+        return await update.message.reply_text(t(chat.id, 'ERROR_PRIV_CMD'))
+    # Admin-Prüfung
+    admins = await context.bot.get_chat_administrators(chat.id)
+    if user.id not in {adm.user.id for adm in admins}:
+        return await update.message.reply_text(t(chat.id, 'ERROR_ADMIN_CMD'))
+    # Argument-Prüfung
+    if not context.args or context.args[0] not in ('de', 'en', 'fr', 'ru'):
+        return await update.message.reply_text(t(chat.id, 'ERROR_USAGE_LANG'))
+    lang = context.args[0]
+    set_group_language(chat.id, lang)
+    return await update.message.reply_text(t(chat.id, 'LANGUAGE_SET').format(lang=lang))
 
 async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Sicherstellen, dass context.user_data existiert
@@ -489,21 +507,22 @@ async def dashboard_command(update, context):
         return await update.message.reply_text("❌ Zugriff verweigert.")
 
     # Metriken sammeln
-    total_groups = len(get_registered_groups())
-    total_rss = len(get_rss_feeds())
-    total_users  = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
-    uptime = datetime.datetime.now() - context.bot_data.get('start_time', datetime.datetime.now())
+    total_groups   = len(get_registered_groups())
+    total_rss      = len(get_rss_feeds())
+    total_users    = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
+    total_channels = len(get_all_channels())
+    uptime         = datetime.datetime.now() - context.bot_data['start_time']
 
     msg = (
         f"🤖 *Bot Dashboard*\n"
-        f"\n• Startzeit: `{context.bot_data.get('start_time')}`"
+        f"\n• Startzeit: `{context.bot_data['start_time']}`"
         f"\n• Uptime: `{str(uptime).split('.')[0]}`"
         f"\n• Gruppen: `{total_groups}`"
+        f"\n• Kanäle: `{total_channels}`"               # neu
         f"\n• RSS-Feeds: `{total_rss}`"
         f"\n• Gesamt-Mitglieder: `{total_users}`"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
-
 
 def register_handlers(app):
 
@@ -522,6 +541,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("setlanguage", set_language_cmd, filters=filters.ChatType.GROUPS))
 
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT|filters.PHOTO) & ~filters.COMMAND,edit_content), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)

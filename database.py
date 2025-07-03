@@ -3,7 +3,7 @@ import logging
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
-
+from types import SimpleNamespace
 import psycopg2
 from psycopg2 import pool
 
@@ -66,6 +66,7 @@ def init_db(cur):
         """
         CREATE TABLE IF NOT EXISTS group_settings (
             chat_id BIGINT PRIMARY KEY,
+            language TEXT NOT NULL DEFAULT 'de',
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
@@ -193,6 +194,30 @@ def get_registered_groups(cur) -> List[Tuple[int, str]]:
 @_with_cursor
 def unregister_group(cur, chat_id: int):
     cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
+
+@_with_cursor
+def get_group_setting(cur, chat_id: int) -> Optional[SimpleNamespace]:
+    cur.execute("SELECT chat_id, daily_stats_enabled, rss_topic_id, mood_question, language FROM group_settings WHERE chat_id = %s;", (chat_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    # z.B. return ein kleines Objekt oder NamedTuple
+    
+    return SimpleNamespace(
+        chat_id=row[0],
+        daily_stats_enabled=row[1],
+        rss_topic_id=row[2],
+        mood_question=row[3],
+        language=row[4]
+    )
+
+@_with_cursor
+def set_group_language(cur, chat_id: int, language: str):
+    cur.execute(
+        "INSERT INTO group_settings (chat_id, language) VALUES (%s, %s) "
+        "ON CONFLICT (chat_id) DO UPDATE SET language = EXCLUDED.language;",
+        (chat_id, language)
+    )
 
 #Channel Management
 

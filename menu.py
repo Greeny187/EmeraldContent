@@ -8,7 +8,7 @@ from database import (
     get_rules, set_rules, delete_rules,
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    get_topic_owners,
+    get_topic_owners,set_group_language,
     is_daily_stats_enabled,  # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
@@ -37,6 +37,7 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
             callback_data=f"{chat_id}_toggle_stats"
         )],
         [InlineKeyboardButton("✍️ Mood-Frage ändern", callback_data=f"{chat_id}_edit_mood_q")],
+        [InlineKeyboardButton("🌐 Sprache", callback_data=f"{chat_id}_language")],
         [InlineKeyboardButton("📖 Handbuch",  callback_data="help")],
         [InlineKeyboardButton("🔄 Gruppe wechseln", callback_data="group_select")]
     ]
@@ -63,6 +64,7 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
 async def menu_callback(update, context):
     query = update.callback_query
     await query.answer()
+    parts = data.split('_')  # sicherstellen, dass parts definiert ist
     data = query.data
 
     # → Kanal-Submenüs weiterreichen und hier nicht weiter verarbeiten
@@ -110,6 +112,27 @@ async def menu_callback(update, context):
         return await query.message.reply_text(
             "Bitte sende deine neue Mood-Frage:", reply_markup=ForceReply(selective=True)
         )
+
+    if data.endswith('_language'):
+        chat_id = int(data.split('_')[0])
+        buttons = [
+            [InlineKeyboardButton('Deutsch',   callback_data=f"{chat_id}_lang_de")],
+            [InlineKeyboardButton('English',   callback_data=f"{chat_id}_lang_en")],
+            [InlineKeyboardButton('Français',  callback_data=f"{chat_id}_lang_fr")],
+            [InlineKeyboardButton('Русский',   callback_data=f"{chat_id}_lang_ru")],
+            [InlineKeyboardButton('⬅ Hauptmenü', callback_data=f"group_{chat_id}")]
+        ]
+        return await query.edit_message_text(
+            text="🌐 Wähle die Sprache:", reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+    # Handling der Button-Klicks:
+    if parts[1].startswith('lang'):
+        _, action = parts
+        lang = action.split('_')[1]
+        set_group_language(chat_id, lang)
+        await query.answer(f"Sprache geändert zu {lang}", show_alert=True)
+    return await show_group_menu(query, context, chat_id)
 
     if data == "help":
         return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
