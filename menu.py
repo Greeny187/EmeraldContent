@@ -20,6 +20,7 @@ from handlers import (channel_broadcast_menu,
 from utils import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
+from i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,58 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
 
 async def menu_callback(update, context):
     query = update.callback_query
-    await query.answer()
-    parts = data.split('_')  # sicherstellen, dass parts definiert ist
-    data = query.data
+    if not query:
+        return
+    # data holen (oder leeren String, wenn None)
+    data = query.data or ""
+    parts = data.split('_')
+    # wir erwarten mindestens "<chat_id>_<aktion>"
+    if len(parts) < 2:
+        return
+
+    # chat_id extrahieren
+    try:
+        chat_id = int(parts[0])
+    except ValueError:
+        return
+
+    action = parts[1]
+
+    # 1) Sprachwahl-Menü öffnen
+    if action == 'language':
+        kb = [
+            [InlineKeyboardButton('Deutsch',  callback_data=f"{chat_id}_lang_de")],
+            [InlineKeyboardButton('English',  callback_data=f"{chat_id}_lang_en")],
+            [InlineKeyboardButton('Français', callback_data=f"{chat_id}_lang_fr")],
+            [InlineKeyboardButton('Русский',  callback_data=f"{chat_id}_lang_ru")],
+            [InlineKeyboardButton('⬅ Menü',    callback_data=f"{chat_id}_menu")],
+        ]
+        return await query.edit_message_text(
+            t(chat_id, 'LANG_SELECT_PROMPT'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    # 2) Sprachwechsel ausführen
+    if action.startswith('lang'):
+        # parts[1] == "lang" und parts[2] == "<code>"
+        if len(parts) != 3:
+            return
+        lang = parts[2]
+        set_group_language(chat_id, lang)
+        # kurze Alert-Meldung
+        await query.answer(t(chat_id, 'LANGUAGE_SET').format(lang=lang), show_alert=True)
+        # Menü neu zeichnen
+        return await query.edit_message_text(
+            t(chat_id, 'MENU_HEADER'),
+            reply_markup=show_group_menu(chat_id)
+        )
+
+    # 3) Zurück ins Hauptmenü
+    if action == 'menu':
+        return await query.edit_message_text(
+            t(chat_id, 'MENU_HEADER'),
+            reply_markup=show_group_menu(chat_id)
+        )
 
     # → Kanal-Submenüs weiterreichen und hier nicht weiter verarbeiten
     if data.startswith("ch_"):
