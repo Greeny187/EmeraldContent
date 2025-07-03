@@ -300,7 +300,7 @@ async def channel_mgmt_menu(update, context, channel_id: int):
 # /menu 
 
 def register_menu(app):
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_|ch_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
     # Kanal-Submenüs
     app.add_handler(CallbackQueryHandler(lambda u,c: channel_mgmt_menu(u,c, int(u.callback_query.data.split('_')[1])), pattern=r"^channel_\d+$"), group=4)
