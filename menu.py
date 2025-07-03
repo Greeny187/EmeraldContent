@@ -65,6 +65,10 @@ async def menu_callback(update, context):
     await query.answer()
     data = query.data
 
+    # → Kanal-Submenüs weiterreichen und hier nicht weiter verarbeiten
+    if data.startswith("ch_"):
+        return
+
     if data == "group_select":
         all_groups = get_registered_groups()
         user_id = update.effective_user.id
