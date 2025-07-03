@@ -171,6 +171,10 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
 
 async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Sicherstellen, dass context.user_data existiert
+    if not hasattr(context, "user_data") or not context.user_data:
+        return
+    
     # Prüfen, ob wir auf eine Mood-Frage warten
     if not context.user_data.get("awaiting_mood_question"):
         return  # nichts tun, zurück an den normalen Handler
