@@ -20,6 +20,8 @@ async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/start in Chat {update.effective_chat.id} (type={update.effective_chat.type})")
     chat = update.effective_chat

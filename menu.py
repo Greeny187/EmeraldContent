@@ -54,29 +54,27 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query or update.message
+    # ack
+    if hasattr(query, 'answer'):
+        await query.answer()
+    all_groups = get_registered_groups()
+    visible    = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+    if not visible:
+        return await (query.message if query.message else query).reply_text(t(0, 'NO_VISIBLE_GROUPS'))
+    kb = [
+        [InlineKeyboardButton(title, callback_data=f"group_{cid}")]
+        for cid, title in visible
+    ]
+    return await (query.message if query.message else query).reply_text(
+        t(0, 'SELECT_GROUP'),
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-
-    if chat.type != "private":
-        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
-
-    chat_id = context.user_data.get("selected_chat_id")
-
-    if not chat_id:
-        # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
-        all_groups = get_registered_groups()
-        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
-
-        if not visible_groups:
-            return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
-            )
-
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-        markup = InlineKeyboardMarkup(keyboard)
-    return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
+    # Leite weiter an den Group-Select-Handler:
+    return await _handle_group_select(update, context)
 
 # ‒‒‒ Submenus ‒‒‒
 async def submenu_welcome(query: CallbackQuery, context):
@@ -339,6 +337,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
 
+    if data == 'group_select':
+        return await _handle_group_select(update, context)
+
+    if data.startswith('group_'):
+        return await show_group_menu(query, context, int(data.split('_',1)[1]))
+
     # Channel-Auswahl
     if data.startswith("channel_"):
         return await channel_mgmt_menu(update, context)
@@ -434,26 +438,23 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-
-    app.add_handler(CommandHandler('menu', menu_command), group=1)
-
-    # 1) Kanal-Auswahl: channel_<id> → channel_mgmt_menu(update, context, channel_id)
+    # 1) Kanal-Auswahl (group=0)
     app.add_handler(
-        CallbackQueryHandler(
-            channel_mgmt_menu,
-            pattern=r"^channel_\d+$"
-        ),
+        CommandHandler('menu', menu_command),
+        group=1
+    )
+    app.add_handler(
+        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"),
         group=0
     )
-    # 2) Kanal-Untermenüs (Broadcast, Stats, Pins, Schedule, Settings)
+    # 2) Alle ch_…-Submenüs (Broadcast, Stats, Pins, …)
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu,   pattern=r"^ch_broadcast_\d+$"),  group=0)
     app.add_handler(CallbackQueryHandler(channel_stats_menu,       pattern=r"^ch_stats_\d+$"),      group=0)
     app.add_handler(CallbackQueryHandler(channel_pins_menu,        pattern=r"^ch_pins_\d+$"),       group=0)
     app.add_handler(CallbackQueryHandler(channel_schedule_menu,    pattern=r"^ch_schedule_\d+$"),   group=0)
     app.add_handler(CallbackQueryHandler(channel_settings_menu,    pattern=r"^ch_settings_\d+$"),   group=0)
 
-    # 3) Alle übrigen CallbackQueries: Gruppen-Menü & Submenus
-    #    (kein Pattern nötig – filtert automatisch ch_* auf group=0 weg)
+    # 3) Alle übrigen CallbackQueries für Gruppen-Menüs & Submenus (group=1)
     app.add_handler(
         CallbackQueryHandler(menu_callback),
         group=1
