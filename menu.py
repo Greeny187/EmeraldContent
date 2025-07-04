@@ -6,23 +6,20 @@ from telegram import (
     ForceReply,
     CallbackQuery,
 )
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import CallbackQueryHandler, ContextTypes,  MessageHandler, filters
 
 from database import (
     get_registered_groups,
     get_welcome,    set_welcome,    delete_welcome,
     get_rules,      set_rules,      delete_rules,
     get_farewell,   set_farewell,   delete_farewell,
-    list_rss_feeds, remove_rss_feed,
+    list_rss_feeds, remove_rss_feed, list_scheduled_posts,
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
     set_group_language, get_group_setting,
 )
 from handlers import (
     channel_broadcast_menu,
-    channel_stats_menu,
-    channel_pins_menu,
-    channel_schedule_menu,
-    channel_settings_menu,
+    edit_content
 )
 from utils import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
@@ -130,8 +127,7 @@ async def welcome_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 async def welcome_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     chat_id = int(query.data.split('_')[0])
-    context.user_data['awaiting'] = 'welcome'
-    context.user_data['id']      = chat_id
+    context.user_data['last_edit'] = (chat_id, 'welcome_edit')
     await query.message.reply_text(
         t(chat_id, 'WELCOME_PROMPT'),
         reply_markup=ForceReply(selective=True)
@@ -145,7 +141,56 @@ async def welcome_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYP
     return await submenu_welcome(query, context)
 
 
-# (Analog: rules_show, rules_edit, rules_delete; farewell_show, farewell_edit, farewell_delete)
+# --- Regeln: show / edit / delete ---
+async def rules_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    text = get_rules(chat_id) or t(chat_id, 'RULES_NONE')
+    kb = [[InlineKeyboardButton("⬅", callback_data=f"{chat_id}_submenu_rules")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def rules_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['last_edit'] = (chat_id, 'rules_edit')
+    await query.message.reply_text(
+        t(chat_id, 'RULES_PROMPT'),
+        reply_markup=ForceReply(selective=True)
+    )
+
+
+async def rules_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = int(query.data.split('_')[0])
+    await query.answer(t(chat_id, 'RULES_DELETED'), show_alert=True)
+    delete_rules(chat_id)
+    return await submenu_rules(query, context)
+
+
+# --- Abschied: show / edit / delete ---
+async def farewell_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    text = get_farewell(chat_id) or t(chat_id, 'FAREWELL_NONE')
+    kb = [[InlineKeyboardButton("⬅", callback_data=f"{chat_id}_submenu_farewell")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def farewell_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['last_edit'] = (chat_id, 'farewell_edit')
+    await query.message.reply_text(
+        t(chat_id, 'FAREWELL_PROMPT'),
+        reply_markup=ForceReply(selective=True)
+    )
+
+
+async def farewell_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = int(query.data.split('_')[0])
+    await query.answer(t(chat_id, 'FAREWELL_DELETED'), show_alert=True)
+    delete_farewell(chat_id)
+    return await submenu_farewell(query, context)
 
 
 # --- RSS Actions ---
@@ -296,6 +341,71 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == 'help':
         return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
 
+async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_", 1)[1])
+    # Frage nach Broadcast-Inhalt
+    context.user_data["broadcast_chan"] = chan_id
+    return await q.edit_message_text(
+        "📝 Bitte sende jetzt den Broadcast-Inhalt (Text oder Foto + Text)."
+    )
+# Quelle in handlers.py :contentReference[oaicite:0]{index=0}
+
+async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_", 1)[1])
+    # Abonnenten-Zahl holen
+    chat = await context.bot.get_chat(chan_id)
+    subs = await chat.get_members_count()
+    text = f"📈 Kanal-Statistiken:\n• Abonnenten: {subs}"
+    return await q.edit_message_text(text)
+# Quelle in handlers.py :contentReference[oaicite:1]{index=1}
+
+async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_", 1)[1])
+    # Aktuell gepinnte Nachricht
+    pinned = (await context.bot.get_chat(chan_id)).pinned_message
+    lines = ["📌 Aktuell angeheftete Nachricht:"]
+    if pinned:
+        lines.append(pinned.text or "(Medien-Medium)")
+        lines.append(f"(ID: {pinned.message_id})")
+    else:
+        lines.append("– Keine –")
+    kb = [[InlineKeyboardButton("🔙 Zurück", callback_data=f"channel_{chan_id}")]]
+    return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+# Quelle in handlers.py :contentReference[oaicite:2]{index=2}
+
+async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_", 1)[1])
+    schedules = list_scheduled_posts(chan_id)
+    lines = ["🗓️ Geplante Beiträge:"]
+    for text, cron in schedules:
+        lines.append(f"• {cron} → «{text[:30]}…»")
+    kb = [
+        [InlineKeyboardButton("➕ Neu planen", callback_data=f"ch_schedule_add_{chan_id}")],
+        [InlineKeyboardButton("🔙 Zurück",      callback_data=f"channel_{chan_id}")]
+    ]
+    return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+# Quelle in handlers.py :contentReference[oaicite:3]{index=3}
+
+async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chan_id = int(q.data.rsplit("_", 1)[1])
+    kb = [
+        [InlineKeyboardButton("✏️ Titel ändern",      callback_data=f"ch_settitle_{chan_id}")],
+        [InlineKeyboardButton("📝 Beschreibung ändern", callback_data=f"ch_setdesc_{chan_id}")],
+        [InlineKeyboardButton("🔙 Zurück",             callback_data=f"channel_{chan_id}")]
+    ]
+    return await q.edit_message_text("⚙️ Kanal-Einstellungen:", reply_markup=InlineKeyboardMarkup(kb))
+# Quelle in handlers.py :contentReference[oaicite:4]{index=4}
+
 
 # --- Registrierung der Handler ---
 def register_menu(app):
@@ -303,3 +413,4 @@ def register_menu(app):
     app.add_handler(CallbackQueryHandler(_handle_channel, pattern=r'^ch_'), group=0)
     # Alle übrigen CallbackQueries: group=1
     app.add_handler(CallbackQueryHandler(menu_callback), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, edit_content), group=2)
