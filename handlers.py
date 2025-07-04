@@ -424,16 +424,6 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
     await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
 
-async def channel_broadcast_menu(update, context):
-    q = update.callback_query
-    await q.answer()
-    chan_id = int(q.data.rsplit("_",1)[1])
-    # Frage nach Inhalt
-    context.user_data["broadcast_chan"] = chan_id
-    return await q.edit_message_text(
-        "📝 Bitte sende jetzt den Broadcast-Inhalt (Text oder Foto + Text)."
-    )
-
 async def handle_broadcast_content(update, context):
     if "broadcast_chan" not in context.user_data:
         return
@@ -495,8 +485,6 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
-
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
 
     app.add_handler(help_handler)

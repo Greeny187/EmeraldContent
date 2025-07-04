@@ -414,3 +414,4 @@ def register_menu(app):
     # Alle übrigen CallbackQueries: group=1
     app.add_handler(CallbackQueryHandler(menu_callback), group=1)
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, edit_content), group=2)
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
