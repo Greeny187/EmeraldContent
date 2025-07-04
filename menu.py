@@ -6,8 +6,7 @@ from telegram import (
     ForceReply,
     CallbackQuery,
 )
-from telegram.ext import CallbackQueryHandler, ContextTypes,  MessageHandler, filters
-
+from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import (
     get_registered_groups,
     get_welcome,    set_welcome,    delete_welcome,
@@ -17,13 +16,10 @@ from database import (
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
     set_group_language, get_group_setting,
 )
-from handlers import (
-    edit_content
-)
 from utils import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
-from i18n import t
+from i18n import t, TRANSLATIONS
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +49,39 @@ async def show_group_menu(
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    # channel_id aus Payload ziehen
+    data = query.data or ""
+    channel_id = int(data.split("_", 1)[1])
+
+    # Titel holen
+    chat = await context.bot.get_chat(channel_id)
+    title = chat.title or str(channel_id)
+
+    # Buttons bauen
+    kb = [
+        [InlineKeyboardButton(t(channel_id, 'CHANNEL_STATS_MENU'),
+                              callback_data=f"ch_stats_{channel_id}")],
+        [InlineKeyboardButton(t(channel_id, 'CHANNEL_SETTINGS_MENU'),
+                              callback_data=f"ch_settings_{channel_id}")],
+        [InlineKeyboardButton(t(channel_id, 'CHANNEL_BROADCAST_MENU'),
+                              callback_data=f"ch_broadcast_{channel_id}")],
+        [InlineKeyboardButton(t(channel_id, 'CHANNEL_PINS_MENU'),
+                              callback_data=f"ch_pins_{channel_id}")],
+        [InlineKeyboardButton(t(channel_id, 'CHANNEL_SWITCH'),
+                              callback_data="group_select")],
+        [InlineKeyboardButton(t(channel_id, 'BACK'),
+                              callback_data="group_select")],
+    ]
+
+    # Header-Text aus i18n mit Titel-Platzhalter
+    await query.edit_message_text(
+        t(channel_id, 'CHANNEL_MENU_HEADER').format(title=title),
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # --- Submenus: Welcome / Rules / Farewell / RSS / Language ---
 async def submenu_welcome(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
@@ -356,7 +385,6 @@ async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_T
     return await q.edit_message_text(
         "📝 Bitte sende jetzt den Broadcast-Inhalt (Text oder Foto + Text)."
     )
-# Quelle in handlers.py :contentReference[oaicite:0]{index=0}
 
 async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -367,7 +395,6 @@ async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     subs = await chat.get_members_count()
     text = f"📈 Kanal-Statistiken:\n• Abonnenten: {subs}"
     return await q.edit_message_text(text)
-# Quelle in handlers.py :contentReference[oaicite:1]{index=1}
 
 async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -383,7 +410,6 @@ async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("– Keine –")
     kb = [[InlineKeyboardButton("🔙 Zurück", callback_data=f"channel_{chan_id}")]]
     return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
-# Quelle in handlers.py :contentReference[oaicite:2]{index=2}
 
 async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -398,7 +424,6 @@ async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("🔙 Zurück",      callback_data=f"channel_{chan_id}")]
     ]
     return await q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
-# Quelle in handlers.py :contentReference[oaicite:3]{index=3}
 
 async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -410,14 +435,22 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("🔙 Zurück",             callback_data=f"channel_{chan_id}")]
     ]
     return await q.edit_message_text("⚙️ Kanal-Einstellungen:", reply_markup=InlineKeyboardMarkup(kb))
-# Quelle in handlers.py :contentReference[oaicite:4]{index=4}
 
 
 # --- Registrierung der Handler ---
+
+
 def register_menu(app):
-    # Channel‐Menus: group=0
-    app.add_handler(CallbackQueryHandler(_handle_channel, pattern=r'^ch_'), group=0)
-    # Alle übrigen CallbackQueries: group=1
-    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, edit_content), group=2)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=5)
+    # 1) Kanal-Auswahl („channel_<id>“) → channel_mgmt_menu
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"), group=0)
+
+    # 2) Kanal-Subaktionen (broadcast, stats, pins, …) bleiben in group=0
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_\d+$"),  group=0)
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_\d+$"),      group=0)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_\d+$"),       group=0)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_\d+$"),   group=0)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_\d+$"),   group=0)
+
+    # 3) Alle übrigen CallbackQueries für Gruppen-Menüs
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(?:mood_|ch_)).*'), group=1)
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^cleanup$"),group=1)
