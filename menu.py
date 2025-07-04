@@ -319,11 +319,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await globals()[f"submenu_{submenu}"](query, context)
 
     # 7) Standard‐Aktionen
-    if '_welcome_'   in data: return await globals()[f"welcome_{data.split('_')[1]}"](query, context)
-    if '_rules_'     in data: return await globals()[f"rules_{data.split('_')[1]}"](query, context)
-    if '_farewell_'  in data: return await globals()[f"farewell_{data.split('_')[1]}"](query, context)
-    if data.endswith('_edit_mood'):    return await edit_mood(query, context)
-    if data.endswith('_clean_delete'): return await clean_delete(query, context)
+    if any(tag in data for tag in ('_welcome_', '_rules_', '_farewell_')):
+        # data = "<chat_id>_<category>_<action>"
+        parts = data.split('_', 2)
+        if len(parts) == 3:
+            _, category, action = parts
+            handler_name = f"{category}_{action}"
+            if handler_name in globals():
+                return await globals()[handler_name](query, context)
+    if data.endswith('_edit_mood'):
+        return await edit_mood(query, context)
+    if data.endswith('_clean_delete'):
+        return await clean_delete(query, context)
     if '_rss_'       in data:
         action = data.split('_rss_',1)[1]
         return await globals()[f"rss_{action}"](query, context)
