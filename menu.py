@@ -2,7 +2,7 @@ import logging
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     Update, ForceReply, CallbackQuery,
-    InputMediaPhoto
+    InputMediaPhoto, Message
 )
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -69,7 +69,18 @@ async def submenu_welcome(query: CallbackQuery, context):
         [InlineKeyboardButton(t(chat_id, 'BACK'),
                               callback_data=f"{chat_id}_menu_back")],
     ]
-    await query.edit_message_text(t(chat_id, 'WELCOME_MENU'), reply_markup=InlineKeyboardMarkup(kb))
+    # Wenn die aktuelle Message ein Foto/Media ist, Caption editieren,
+    # sonst ganz normal Text editieren:
+    if isinstance(query.message, Message) and query.message.photo:
+        await query.edit_message_caption(
+            t(chat_id, 'WELCOME_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    else:
+        await query.edit_message_text(
+            t(chat_id, 'WELCOME_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
 
 async def submenu_rules(query: CallbackQuery, context):
@@ -85,7 +96,16 @@ async def submenu_rules(query: CallbackQuery, context):
         [InlineKeyboardButton(t(chat_id, 'BACK'),
                               callback_data=f"{chat_id}_menu_back")],
     ]
-    await query.edit_message_text(t(chat_id, 'RULES_MENU'), reply_markup=InlineKeyboardMarkup(kb))
+    if isinstance(query.message, Message) and query.message.photo:
+        await query.edit_message_caption(
+            t(chat_id, 'RULES_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    else:
+        await query.edit_message_text(
+            t(chat_id, 'RULES_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
 
 async def submenu_farewell(query: CallbackQuery, context):
@@ -101,7 +121,16 @@ async def submenu_farewell(query: CallbackQuery, context):
         [InlineKeyboardButton(t(chat_id, 'BACK'),
                               callback_data=f"{chat_id}_menu_back")],
     ]
-    await query.edit_message_text(t(chat_id, 'FAREWELL_MENU'), reply_markup=InlineKeyboardMarkup(kb))
+    if isinstance(query.message, Message) and query.message.photo:
+        await query.edit_message_caption(
+            t(chat_id, 'FAREWELL_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    else:
+        await query.edit_message_text(
+            t(chat_id, 'FAREWELL_MENU'),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
 
 async def submenu_rss(query: CallbackQuery, context):
@@ -381,17 +410,17 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 # --- Registrierung der Handler ---
 
-
 def register_menu(app):
-    # Channel-Buttons (group=0)
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"), group=0)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_\d+$"), group=0)
-    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_\d+$"),     group=0)
-    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_\d+$"),      group=0)
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_\d+$"),  group=0)
-    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_\d+$"),  group=0)
+    # 1) Kanal-Auswahl: „channel_<id>“ → channel_mgmt_menu(update, context, channel_id)
+    app.add_handler(CallbackQueryHandler(lambda update, context: channel_mgmt_menu(update, context, int(update.callback_query.data.split('_', 1)[1])), pattern=r"^channel_\d+$"), group=0)
 
-    # Alle übrigen Menüs (group=1)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
+     # 2) Kanal-spezifische Submenus
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_\d+$"),  group=0)
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_\d+$"),      group=0)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_\d+$"),       group=0)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_\d+$"),   group=0)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_\d+$"),   group=0)
+ 
+     # 3) Gruppen-Menüs (alles außer ch_* und mood_*)
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(?:mood_|ch_)).*'), group=1)
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^cleanup$"),group=1)
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^cleanup$"), group=1)
