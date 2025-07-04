@@ -6,7 +6,7 @@ from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
-remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
+remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_group_setting, 
 get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, add_channel, add_scheduled_post, list_scheduled_posts, set_group_language)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
@@ -62,30 +62,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(
             "🔧 Wähle eine Gruppe oder einen Kanal:", reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
 
-    if chat.type != "private":
-        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
+async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wenn der Bot einer Gruppe beitritt, zeige Erst-Sprachauswahl."""
+    # update.my_chat_member enthält alten und neuen Status
+    new_status = update.my_chat_member.new_chat_member.status
+    chat_id    = update.effective_chat.id
 
-    chat_id = context.user_data.get("selected_chat_id")
-
-    if not chat_id:
-        # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
-        all_groups = get_registered_groups()
-        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
-
-        if not visible_groups:
-            return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+    # Wenn wir frisch hinzugefügt wurden…
+    if new_status in ("member", "administrator"):
+        # …und noch keine Gruppeneinstellungen existieren:
+        if not get_group_setting(chat_id):
+            kb = [
+                InlineKeyboardButton("Deutsch 🇩🇪", callback_data=f"{chat_id}_setlang_de"),
+                InlineKeyboardButton("English 🇬🇧", callback_data=f"{chat_id}_setlang_en"),
+            ]
+            kb.append([
+                InlineKeyboardButton("Français 🇫🇷", callback_data=f"{chat_id}_setlang_fr"),
+                InlineKeyboardButton("Русский 🇷🇺",   callback_data=f"{chat_id}_setlang_ru"),
+            ])
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=t(chat_id, 'LANGUAGE_FIRST_PROMPT'),
+                reply_markup=InlineKeyboardMarkup(kb)
             )
-
-        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-        markup = InlineKeyboardMarkup(keyboard)
-    return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
     
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -470,7 +470,6 @@ def register_handlers(app):
     app.add_handler(CommandHandler("start", start, filters=filters.ChatType.GROUPS), group=0)
     # 3) /start im privaten Chat
     app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE), group=1)
-    app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))
@@ -488,6 +487,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
 
     app.add_handler(help_handler)
-
+    
+    app.add_handler(ChatMemberHandler(on_bot_added, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))

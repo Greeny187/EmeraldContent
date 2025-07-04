@@ -4,7 +4,7 @@ from telegram import (
     Update, ForceReply, CallbackQuery,
     InputMediaPhoto, Message
 )
-from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler
 
 from database import (
     get_registered_groups, list_scheduled_posts,
@@ -54,6 +54,29 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type != "private":
+        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
+
+    chat_id = context.user_data.get("selected_chat_id")
+
+    if not chat_id:
+        # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+
+        if not visible_groups:
+            return await update.message.reply_text(
+                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+            )
+
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+        markup = InlineKeyboardMarkup(keyboard)
+    return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
 
 # ‒‒‒ Submenus ‒‒‒
 async def submenu_welcome(query: CallbackQuery, context):
@@ -411,6 +434,9 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 # --- Registrierung der Handler ---
 
 def register_menu(app):
+
+    app.add_handler(CommandHandler('menu', menu_command), group=1)
+
     # 1) Kanal-Auswahl: channel_<id> → channel_mgmt_menu(update, context, channel_id)
     app.add_handler(
         CallbackQueryHandler(
