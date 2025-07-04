@@ -45,6 +45,97 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
     text = "🔧 Gruppe verwalten – wähle eine Funktion:"  
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+# ------------------ Submenus ------------------
+async def submenu_welcome(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_submenu_welcome')[0])
+    buttons = [
+        [InlineKeyboardButton('Bearbeiten', callback_data=f"{chat_id}_welcome_edit")],
+        [InlineKeyboardButton('Anzeigen',  callback_data=f"{chat_id}_welcome_show")],
+        [InlineKeyboardButton('Löschen',   callback_data=f"{chat_id}_welcome_delete")],
+        [InlineKeyboardButton('⬅ Hauptmenü', callback_data=f"{chat_id}_menu_back")]
+    ]
+    await query.edit_message_text(t(chat_id,'WELCOME_MENU'), reply_markup=InlineKeyboardMarkup(buttons))
+
+async def submenu_rules(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_submenu_rules')[0])
+    buttons = [
+        [InlineKeyboardButton('Bearbeiten', callback_data=f"{chat_id}_rules_edit")],
+        [InlineKeyboardButton('Anzeigen',  callback_data=f"{chat_id}_rules_show")],
+        [InlineKeyboardButton('Löschen',   callback_data=f"{chat_id}_rules_delete")],
+        [InlineKeyboardButton('⬅ Hauptmenü', callback_data=f"{chat_id}_menu_back")]
+    ]
+    await query.edit_message_text(t(chat_id,'RULES_MENU'), reply_markup=InlineKeyboardMarkup(buttons))
+
+async def submenu_farewell(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_submenu_farewell')[0])
+    buttons = [
+        [InlineKeyboardButton('Bearbeiten', callback_data=f"{chat_id}_farewell_edit")],
+        [InlineKeyboardButton('Anzeigen',  callback_data=f"{chat_id}_farewell_show")],
+        [InlineKeyboardButton('Löschen',   callback_data=f"{chat_id}_farewell_delete")],
+        [InlineKeyboardButton('⬅ Hauptmenü', callback_data=f"{chat_id}_menu_back")]
+    ]
+    await query.edit_message_text(t(chat_id,'FAREWELL_MENU'), reply_markup=InlineKeyboardMarkup(buttons))
+
+# ------------------ Detail Actions ------------------
+async def welcome_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    text = get_welcome(chat_id) or t(chat_id,'WELCOME_NONE')
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅', callback_data=f"{chat_id}_submenu_welcome")]]))
+
+async def welcome_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['awaiting'] = 'welcome'
+    context.user_data['id'] = chat_id
+    await query.message.reply_text(t(chat_id,'WELCOME_PROMPT'), reply_markup=ForceReply(selective=True))
+
+async def welcome_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer(t(int(query.data.split('_')[0]),'WELCOME_DELETED'), show_alert=True)
+    delete_welcome(int(query.data.split('_')[0]))
+    return await submenu_welcome(query, context)
+
+# Regeln
+async def rules_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    text = get_rules(chat_id) or t(chat_id,'RULES_NONE')
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅', callback_data=f"{chat_id}_submenu_rules")]]))
+
+async def rules_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['awaiting'] = 'rules'
+    context.user_data['id'] = chat_id
+    await query.message.reply_text(t(chat_id,'RULES_PROMPT'), reply_markup=ForceReply(selective=True))
+
+async def rules_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer(t(int(query.data.split('_')[0]),'RULES_DELETED'), show_alert=True)
+    delete_rules(int(query.data.split('_')[0]))
+    return await submenu_rules(query, context)
+
+# Abschied
+async def farewell_show(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    text = get_farewell(chat_id) or t(chat_id,'FAREWELL_NONE')
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅', callback_data=f"{chat_id}_submenu_farewell")]]))
+
+async def farewell_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['awaiting'] = 'farewell'
+    context.user_data['id'] = chat_id
+    await query.message.reply_text(t(chat_id,'FAREWELL_PROMPT'), reply_markup=ForceReply(selective=True))
+
+async def farewell_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer(t(int(query.data.split('_')[0]),'FAREWELL_DELETED'), show_alert=True)
+    delete_farewell(int(query.data.split('_')[0]))
+    return await submenu_farewell(query, context)
+
 # --- Language Submenu ---
 async def submenu_language(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
