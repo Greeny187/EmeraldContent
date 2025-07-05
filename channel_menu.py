@@ -1,8 +1,9 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes, CallbackQueryHandler
+from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from access import get_visible_channels, get_visible_groups
 from database import get_registered_groups, get_all_channels
+from channel_handlers import channel_edit_reply
 from i18n import t
 
 logger = logging.getLogger(__name__)
@@ -10,11 +11,11 @@ logger = logging.getLogger(__name__)
 # --- Kanal-Hauptmenü ---
 async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    logger.info(f"🔄 Button empfangen: {query.data}")
     await query.answer()
     chan_id = int(query.data.split("_", 1)[1])
     chat = await context.bot.get_chat(chan_id)
     title = chat.title or str(chan_id)
-
     kb = [
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'), callback_data=f"ch_stats_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'), callback_data=f"ch_settings_{chan_id}")],
@@ -51,6 +52,20 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔧 Wähle eine Gruppe oder einen Kanal:",
         reply_markup=InlineKeyboardMarkup(kb)
     )
+
+async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chan_id = int(query.data.split("_", 2)[2])
+    await query.message.reply_text(f"✏️ Bitte sende den neuen Titel für Kanal {chan_id}.")
+    context.user_data["awaiting_title"] = chan_id
+
+async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chan_id = int(query.data.split("_", 2)[2])
+    await query.message.reply_text(f"✏️ Bitte sende die neue Beschreibung für Kanal {chan_id}.")
+    context.user_data["awaiting_desc"] = chan_id
 
 def register_channel_menu(app):
     # schon bestehend …
@@ -138,36 +153,14 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 def register_channel_menu(app):
-    # schon bestehende Handler…
-    app.add_handler(
-        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"),
-        group=0
-    )
-    
-    # ↓ NEU: Callback für Hauptmenü (Back/Switch im Kanal)
-    app.add_handler(
-        CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"),
-        group=0
-    )
 
-    # 2) Kanal-Submenus: ch_broadcast_*, ch_stats_*, ch_pins_*, ch_schedule_*, ch_settings_*
-    app.add_handler(
-        CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"),
-        group=0
-    )
-    app.add_handler(
-        CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_\d+$"),
-        group=0
-    )
-    app.add_handler(
-        CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_\d+$"),
-        group=0
-    )
-    app.add_handler(
-        CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_\d+$"),
-        group=0
-    )
-    app.add_handler(
-        CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_\d+$"),
-        group=0
-    )
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_\d+$"))
+    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"))
+    app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_\d+$"), group=0)
+    app.add_handler(CallbackQueryHandler(channel_setdesc_menu,  pattern=r"^ch_setdesc_\d+$"), group=0)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)

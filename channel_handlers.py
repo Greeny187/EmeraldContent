@@ -35,20 +35,6 @@ async def list_channels_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n".join(f"• `{cid}`" for cid in channels)
     await update.message.reply_text(t(chat.id, 'CHANNEL_LIST').format(list=text), parse_mode="Markdown")
 
-async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    chan_id = int(query.data.split("_", 2)[2])
-    await query.message.reply_text(f"✏️ Bitte sende den neuen Titel für Kanal {chan_id}.")
-    context.user_data["awaiting_title"] = chan_id
-
-async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    chan_id = int(query.data.split("_", 2)[2])
-    await query.message.reply_text(f"✏️ Bitte sende die neue Beschreibung für Kanal {chan_id}.")
-    context.user_data["awaiting_desc"] = chan_id
-
 async def handle_broadcast_content(update, context):
     if "broadcast_chan" not in context.user_data:
         return
@@ -75,9 +61,7 @@ async def channel_edit_reply(update, context):
         await msg.reply_text("✅ Beschreibung geändert.")
 
 def register_channel_handlers(app):
-    app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_\d+$"), group=0)
-    app.add_handler(CallbackQueryHandler(channel_setdesc_menu, pattern=r"^ch_setdesc_\d+$"), group=0)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
+
     app.add_handler(CommandHandler("addchannel",   add_channel_cmd,   filters=filters.ChatType.GROUPS), group=1)
     app.add_handler(CommandHandler("removechannel",remove_channel_cmd,filters=filters.ChatType.GROUPS), group=1)
     app.add_handler(CommandHandler("listchannels", list_channels_cmd,filters=filters.ChatType.GROUPS), group=1)
