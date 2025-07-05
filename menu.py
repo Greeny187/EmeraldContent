@@ -10,7 +10,7 @@ from database import (
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds, add_rss_feed, remove_rss_feed, get_rss_topic,
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
-    set_group_language, get_group_setting)
+    set_group_language, get_group_setting, get_topic_owners)
 from channel_menu import channel_mgmt_menu
 from handlers import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
@@ -177,19 +177,75 @@ async def submenu_language(query: CallbackQuery, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-async def submenu_links(query: CallbackQuery, context):
+async def submenu_links(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     chat_id = int(query.data.split('_submenu_links')[0])
-    kb = [[InlineKeyboardButton(t(chat_id, 'BACK'), callback_data=f"{chat_id}_menu_back")]]
+
+    kb = [
+        [InlineKeyboardButton("🔍 Ausnahmen anzeigen",
+                              callback_data=f"{chat_id}_links_exceptions")],
+        [InlineKeyboardButton(t(chat_id, 'BACK'),
+                              callback_data=f"{chat_id}_menu_back")],
+    ]
     text = (
         "🔗 Linkposting ist standardmäßig deaktiviert.\n\n"
-        "Erlaubt sind:\n"
-        "• Admins & Owner\n"
-        "• Anonyme Admins\n"
-        "• Nutzer mit einem zugewiesenen *Thema*\n"
-        "\n👉 Verwende /settopic im gewünschten Thema."
+        "⚙️ Hier siehst du, wer trotzdem Links posten darf:"
     )
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ─── Callback: Ausnahmen anzeigen ────────────────────────────────────
+async def links_exceptions(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_links_exceptions')[0])
+
+    # 1) Admins
+    admins = await context.bot.get_chat_administrators(chat_id)
+    admin_names = [
+        f"@{a.user.username}" if a.user.username else a.user.first_name
+        for a in admins
+        if a.status in ("administrator", "creator")
+    ]
+
+    # 2) Owner (creator)
+    owner = next((a for a in admins if a.status == "creator"), None)
+    owner_name = (
+        f"@{owner.user.username}" 
+        if owner and owner.user.username 
+        else (owner.user.first_name if owner else "–")
+    )
+
+    # 3) Themenbesitzer
+    topic_ids = get_topic_owners(chat_id)
+    topic_names = []
+    for uid in topic_ids:
+        try:
+            m = await context.bot.get_chat_member(chat_id, uid)
+            topic_names.append(
+                f"@{m.user.username}" if m.user.username else m.user.first_name
+            )
+        except:
+            continue
+
+    # 4) Nachricht zusammensetzen
+    lines = ["🔓 Ausnahmen der Link-Sperre:"]
+    lines.append(f"- Administratoren: {', '.join(admin_names) or '(keine)'}")
+    lines.append(f"- Inhaber: {owner_name}")
+    lines.append(f"- Themenbesitzer: {', '.join(topic_names) or '(keine)'}")
+    text = "\n".join(lines)
+
+    # Back-Button
+    back_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton(t(chat_id, 'BACK'),
+                             callback_data=f"{chat_id}_submenu_links")
+    ]])
+
+    # Je nach Media-Status caption oder Text ersetzen
+    msg = query.message
+    if isinstance(msg, Message) and (msg.photo or msg.caption):
+        await query.edit_message_caption(text, reply_markup=back_markup, parse_mode="Markdown")
+    else:
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode="Markdown")
 
 # ‒‒‒ Detail‐Show mit Foto-Unterstützung ‒‒‒
 async def welcome_show(query: CallbackQuery, context):
@@ -365,6 +421,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_group_language(int(chat_id), lang)
         await query.answer(t(int(chat_id),'LANGUAGE_SET').format(lang=lang), show_alert=True)
         return await show_group_menu(query, context, int(chat_id))
+
+    # Links-Ausnahmen
+    if data.endswith("_links_exceptions"):
+        return await links_exceptions(query, context)
 
     # 9) Hilfe
     if data == 'help':
