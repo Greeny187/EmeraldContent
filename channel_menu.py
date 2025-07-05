@@ -1,7 +1,6 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from database import get_registered_channels  # falls du das brauchst
 from telegram import Message  # falls du Media-Edits nutzt
 from i18n import t
 

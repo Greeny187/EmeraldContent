@@ -1,6 +1,6 @@
 from telegram import Update, Chat
 from telegram.ext import ContextTypes, CommandHandler, filters, MessageHandler
-from database import list_channels, add_channel, remove_channel, get_all_channels
+from database import add_channel, remove_channel, get_all_channels
 from i18n import t
 
 async def add_channel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
