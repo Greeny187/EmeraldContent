@@ -4,7 +4,7 @@ from telegram import (
     Update, ForceReply, CallbackQuery,
     InputMediaPhoto, Message
 )
-from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler
+from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler, filters
 from database import (
     get_registered_groups, list_scheduled_posts,
     get_welcome, set_welcome, delete_welcome,
@@ -356,13 +356,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    # Kanal-Callbacks: group=0
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu,   pattern=r"^channel_\d+$"),    group=0)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"), group=0)
-    app.add_handler(CallbackQueryHandler(channel_stats_menu,     pattern=r"^ch_stats_\d+$"),     group=0)
-    app.add_handler(CallbackQueryHandler(channel_pins_menu,      pattern=r"^ch_pins_\d+$"),      group=0)
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu,  pattern=r"^ch_schedule_\d+$"),  group=0)
-    app.add_handler(CallbackQueryHandler(channel_settings_menu,  pattern=r"^ch_settings_\d+$"),  group=0)
+    # 1) /menu-Command im Privat-Chat startet den Gruppen-Auswahl-Flow
+    app.add_handler(
+        CommandHandler(
+            'menu',
+            menu_command,
+            filters=filters.ChatType.PRIVATE
+        ),
+        group=1
+    )
 
-    # Gruppen-Menüs & Submenus: group=1
-    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
+    # 2) Alle CallbackQueries für Gruppen- und Submenus
+    #    (group_select, group_<id>, *_submenu_*, *_toggle_*, welcome_*, etc.)
+    app.add_handler(
+        CallbackQueryHandler(menu_callback),
+        group=1
+    )

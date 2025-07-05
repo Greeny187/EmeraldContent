@@ -1,6 +1,6 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CallbackQueryHandler
 from database import get_registered_channels  # falls du das brauchst
 from telegram import Message  # falls du Media-Edits nutzt
 from i18n import t
@@ -103,4 +103,33 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
     return await query.edit_message_text(
         t(chan_id, 'CHANNEL_SETTINGS_HEADER'),
         reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+def register_channel_menu(app):
+    # 1) Kanal-Hauptmenü: channel_<id>
+    app.add_handler(
+        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"),
+        group=0
+    )
+
+    # 2) Kanal-Submenus: ch_broadcast_*, ch_stats_*, ch_pins_*, ch_schedule_*, ch_settings_*
+    app.add_handler(
+        CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"),
+        group=0
+    )
+    app.add_handler(
+        CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_\d+$"),
+        group=0
+    )
+    app.add_handler(
+        CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_\d+$"),
+        group=0
+    )
+    app.add_handler(
+        CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_\d+$"),
+        group=0
+    )
+    app.add_handler(
+        CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_\d+$"),
+        group=0
     )
