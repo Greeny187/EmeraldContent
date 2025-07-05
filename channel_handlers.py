@@ -37,17 +37,19 @@ async def list_channels_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_broadcast_content(update, context):
     if "broadcast_chan" not in context.user_data:
-        return
+        return  # nicht im Broadcast-Modus
+
     chan_id = context.user_data.pop("broadcast_chan")
     msg = update.effective_message
-    # Foto + Caption oder reiner Text
+
     if msg.photo:
-        fid = msg.photo[-1].file_id
+        photo_id = msg.photo[-1].file_id
         caption = msg.caption or ""
-        await context.bot.send_photo(chan_id, fid, caption=caption, parse_mode="HTML")
+        await context.bot.send_photo(chan_id, photo_id, caption=caption, parse_mode="HTML")
     else:
         await context.bot.send_message(chan_id, msg.text, parse_mode="HTML")
-    return await update.message.reply_text("✅ Broadcast gesendet.")
+
+    await update.message.reply_text("✅ Broadcast gesendet.")
 
 async def channel_edit_reply(update, context):
     msg = update.message

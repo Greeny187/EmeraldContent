@@ -6,6 +6,7 @@ TRANSLATIONS = {
     'de': {
         'CHANNEL_MENU_HEADER':   '🔧 Kanal «{title}» verwalten – wähle eine Funktion:',
         'CHANNEL_STATS_MENU':    '📊 Statistiken',
+        'CHANNEL_STATS_HEADER': '📊 Abonnenten: {count}',
         'CHANNEL_SETTINGS_MENU': '⚙️ Einstellungen',
         'CHANNEL_BROADCAST_MENU': '📝 Broadcast',
         'CHANNEL_BROADCAST_PROMPT': '📢 Bitte sende die Nachricht, die im Kanal veröffentlicht werden soll.',
