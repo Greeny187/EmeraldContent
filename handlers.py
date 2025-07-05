@@ -369,6 +369,56 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remove_member(chat_id, user.id)
         return
 
+async def service_member_events(update, context):
+    """Fängt new_chat_members & left_chat_member in Gruppen/Themen ab."""
+    msg = update.effective_message
+    chat_id = update.effective_chat.id
+
+    # 1) Neue Mitglieder
+    if msg.new_chat_members:
+        for user in msg.new_chat_members:
+            rec = get_welcome(chat_id)
+            if rec:
+                photo_id, text = rec
+                text = (text or "").replace(
+                    "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+                )
+                if photo_id:
+                    await context.bot.send_photo(
+                        chat_id, photo_id, caption=text, parse_mode="HTML"
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id, text, parse_mode="HTML"
+                    )
+            # Mitglied in DB aufnehmen
+            try:
+                add_member(chat_id, user.id)
+            except Exception as e:
+                logger.error(f"add_member error in service_member_events: {e}")
+    # 2) Ausgetretene / gekickte Mitglieder
+    if msg.left_chat_member:
+        user = msg.left_chat_member
+        rec = get_farewell(chat_id)
+        if rec:
+            photo_id, text = rec
+            text = (text or "").replace(
+                "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            )
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id, photo_id, caption=text, parse_mode="HTML"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id, text, parse_mode="HTML"
+                )
+        # Mitglied als gelöscht markieren / entfernen
+        try:
+            remove_member(chat_id, user.id)
+        except Exception as e:
+            logger.error(f"remove_member error in service_member_events: {e}")
+
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     count   = await clean_delete_accounts_for_chat(chat_id, context.bot)

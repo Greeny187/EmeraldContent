@@ -42,7 +42,7 @@ def main():
     register_handlers(app)
     register_channel_handlers(app)
     register_menu(app)
-    register_channel_menu
+    register_channel_menu(app)
     register_rss(app)
     register_mood(app)
     register_jobs(app)

@@ -162,7 +162,7 @@ async def submenu_rss(query: CallbackQuery, context):
     chat_id = int(query.data.split('_submenu_rss')[0])
     kb = [
             [InlineKeyboardButton("➕ " + t(chat_id, 'RSS_URL_PROMPT'), callback_data=f"{chat_id}_rss_add")],
-            [InlineKeyboardButton("📋 RSS_LIST", callback_data=f"{chat_id}_rss_list")],
+            [InlineKeyboardButton("📋 " + t(chat_id, 'RSS_LIST'), callback_data=f"{chat_id}_rss_list")]
             [InlineKeyboardButton("🗑️ " + t(chat_id, 'RSS_NONE'), callback_data=f"{chat_id}_rss_remove")],
     ]
     await query.edit_message_text(t(chat_id, 'RSS_MENU'), reply_markup=InlineKeyboardMarkup(kb))

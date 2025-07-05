@@ -69,17 +69,16 @@ async def fetch_rss_feed(context: CallbackContext):
             add_posted_link(chat_id, entry.link)
 
 async def rss_url_reply(update, context):
-    # Prüfen, ob wir gerade auf eine RSS-URL warten
     if not context.user_data.get("awaiting_rss_url"):
         return
+
     url = update.message.text.strip()
     chat_id = context.user_data.pop("rss_group_id")
     context.user_data.pop("awaiting_rss_url", None)
-    # Bestes Topic ermitteln (Forum-Thread oder Default aus DB)
+
     topic_id = get_rss_topic(chat_id) or None
-    # Feed speichern
     add_rss_feed(chat_id, url, topic_id)
-    # Bestätigung senden
+
     dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
     await update.message.reply_text(
         f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}"
