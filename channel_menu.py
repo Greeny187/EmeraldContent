@@ -1,4 +1,5 @@
 import logging
+from telegram.error import BadRequest
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from access import get_visible_channels, get_visible_groups
@@ -13,7 +14,7 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     logger.info(f"🔄 Button empfangen: {query.data}")
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     chat = await context.bot.get_chat(chan_id)
     title = chat.title or str(chan_id)
     kb = [
@@ -24,10 +25,17 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'), callback_data="main_menu")], 
         [InlineKeyboardButton(t(chan_id, 'BACK'), callback_data="main_menu")],
     ]
-    await query.edit_message_text(
-        t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    try:
+        await query.edit_message_text(
+            t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass  # absichtlich ignorieren
+        else:
+            raise
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -56,14 +64,14 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 2)[2])
+    chan_id = int(query.data.rsplit("_", 2)[2])
     await query.message.reply_text(f"✏️ Bitte sende den neuen Titel für Kanal {chan_id}.")
     context.user_data["awaiting_title"] = chan_id
 
 async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 2)[2])
+    chan_id = int(query.data.rsplit("_", 2)[2])
     await query.message.reply_text(f"✏️ Bitte sende die neue Beschreibung für Kanal {chan_id}.")
     context.user_data["awaiting_desc"] = chan_id
 
@@ -85,7 +93,7 @@ def register_channel_menu(app):
 async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     context.user_data["broadcast_chan"] = chan_id
     return await query.edit_message_text(
         t(chan_id, 'CHANNEL_BROADCAST_PROMPT')
@@ -94,7 +102,7 @@ async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_T
 async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     chat = await context.bot.get_chat(chan_id)
     subs = await chat.get_members_count()
     text = t(chan_id, 'CHANNEL_STATS_HEADER').format(count=subs)
@@ -103,7 +111,7 @@ async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     pinned = (await context.bot.get_chat(chan_id)).pinned_message
     lines = ["📌 " + t(chan_id, 'CHANNEL_PINS_HEADER')]
     if pinned:
@@ -119,7 +127,7 @@ async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     # Annahme: list_scheduled_posts gibt List[Tuple[text, cron]]
     from database import list_scheduled_posts
     schedules = list_scheduled_posts(chan_id)
@@ -138,7 +146,7 @@ async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TY
 async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.split("_", 1)[1])
+    chan_id = int(query.data.rsplit("_", 1)[1])
     kb = [
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_TITLE'),
                               callback_data=f"ch_settitle_{chan_id}")],
