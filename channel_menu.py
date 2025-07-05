@@ -1,7 +1,9 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from telegram import Message  # falls du Media-Edits nutzt
+from access import get_visible_channels, get_visible_groups
+from database import get_registered_groups, get_all_channels
+from menu import _handle_group_select
 from i18n import t
 
 logger = logging.getLogger(__name__)
@@ -15,24 +17,56 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = chat.title or str(chan_id)
 
     kb = [
-        [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),
-                              callback_data=f"ch_stats_{chan_id}")],
-        [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),
-                              callback_data=f"ch_settings_{chan_id}")],
-        [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'),
-                              callback_data=f"ch_broadcast_{chan_id}")],
-        [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),
-                              callback_data=f"ch_pins_{chan_id}")],
-        [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),
-                              callback_data="group_select")],
-        [InlineKeyboardButton(t(chan_id, 'BACK'),
-                              callback_data="group_select")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'), callback_data=f"ch_stats_{chan_id}")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'), callback_data=f"ch_settings_{chan_id}")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'), callback_data=f"ch_pins_{chan_id}")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'), callback_data="main_menu")], 
+        [InlineKeyboardButton(t(chan_id, 'BACK'), callback_data="main_menu")],
     ]
     await query.edit_message_text(
         t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
         reply_markup=InlineKeyboardMarkup(kb)
     )
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Listet Gruppen **und** Kanäle zur Auswahl im privaten Bot-Chat."""
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
 
+    # alle sichtbaren Gruppen
+    all_groups     = get_registered_groups()
+    visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+
+    # alle sichtbaren Kanäle
+    all_channels     = get_all_channels()
+    visible_channels = await get_visible_channels(user.id, context.bot, all_channels)
+
+    kb = []
+    for gid, title in visible_groups:
+        kb.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
+    for cid, title in visible_channels:
+        kb.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
+
+    await query.edit_message_text(
+        "🔧 Wähle eine Gruppe oder einen Kanal:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+def register_channel_menu(app):
+    # schon bestehend …
+    app.add_handler(
+        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"),
+        group=0
+    )
+    # deine ch_* Submenus …
+    # …
+
+    # neu: Main-Menu Callback
+    app.add_handler(
+        CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"),
+        group=0
+    )
 # --- Kanal-Submenus ---
 async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

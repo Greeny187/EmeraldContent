@@ -55,18 +55,23 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
 
 async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query or update.message
-    # ack
     if hasattr(query, 'answer'):
         await query.answer()
+
     all_groups = get_registered_groups()
     visible    = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+
+    # Ziel-Objekt ermitteln: CallbackQuery → query.message, sonst → query selbst (Message)
+    target = query.message if isinstance(query, CallbackQuery) else query
+
     if not visible:
-        return await (query.message if query.message else query).reply_text(t(0, 'NO_VISIBLE_GROUPS'))
+        return await target.reply_text(t(0, 'NO_VISIBLE_GROUPS'))
+
     kb = [
         [InlineKeyboardButton(title, callback_data=f"group_{cid}")]
         for cid, title in visible
     ]
-    return await (query.message if query.message else query).reply_text(
+    return await target.reply_text(
         t(0, 'SELECT_GROUP'),
         reply_markup=InlineKeyboardMarkup(kb)
     )
@@ -405,6 +410,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # RSS-Menü-Aktionen
         if obj_type == "rss":
             return await globals()[f"rss_{action}"](query, context)
+
 
     # lang set
     if "_setlang_" in data:

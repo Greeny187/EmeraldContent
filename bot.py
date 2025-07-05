@@ -7,6 +7,7 @@ from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
 from channel_handlers import register_channel_handlers
+from channel_menu import register_channel_menu
 from database import init_db
 from logger import setup_logging
 from mood import register_mood
@@ -41,6 +42,7 @@ def main():
     register_handlers(app)
     register_channel_handlers(app)
     register_menu(app)
+    register_channel_menu
     register_rss(app)
     register_mood(app)
     register_jobs(app)
