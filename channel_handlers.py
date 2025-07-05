@@ -64,7 +64,7 @@ async def channel_edit_reply(update, context):
 
 def register_channel_handlers(app):
 
-    app.add_handler(CommandHandler("addchannel",   add_channel_cmd,   filters=filters.ChatType.GROUPS), group=1)
-    app.add_handler(CommandHandler("removechannel",remove_channel_cmd,filters=filters.ChatType.GROUPS), group=1)
-    app.add_handler(CommandHandler("listchannels", list_channels_cmd,filters=filters.ChatType.GROUPS), group=1)
+    app.add_handler(CommandHandler("addchannel",   add_channel_cmd,   filters=filters.ChatType.GROUPS), group=0)
+    app.add_handler(CommandHandler("removechannel",remove_channel_cmd,filters=filters.ChatType.GROUPS), group=0)
+    app.add_handler(CommandHandler("listchannels", list_channels_cmd,filters=filters.ChatType.GROUPS), group=0)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=1)

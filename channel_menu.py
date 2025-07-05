@@ -21,6 +21,7 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'), callback_data=f"ch_stats_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'), callback_data=f"ch_settings_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
+        [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),  callback_data=f"ch_schedule_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'), callback_data=f"ch_pins_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'), callback_data="main_menu")], 
         [InlineKeyboardButton(t(chan_id, 'BACK'), callback_data="main_menu")],
@@ -75,28 +76,16 @@ async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.reply_text(f"✏️ Bitte sende die neue Beschreibung für Kanal {chan_id}.")
     context.user_data["awaiting_desc"] = chan_id
 
-def register_channel_menu(app):
-    # schon bestehend …
-    app.add_handler(
-        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"),
-        group=0
-    )
-    # deine ch_* Submenus …
-    # …
-
-    # neu: Main-Menu Callback
-    app.add_handler(
-        CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"),
-        group=0
-    )
 # --- Kanal-Submenus ---
 async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chan_id = int(query.data.rsplit("_", 1)[1])
     context.user_data["broadcast_chan"] = chan_id
+    kb = [[InlineKeyboardButton(t(chan_id, 'BACK'), callback_data=f"channel_{chan_id}")]]
     return await query.edit_message_text(
-        t(chan_id, 'CHANNEL_BROADCAST_PROMPT')
+        t(chan_id, 'CHANNEL_BROADCAST_PROMPT'),
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
 async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,7 +95,8 @@ async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat = await context.bot.get_chat(chan_id)
     subs = await context.bot.get_chat_member_count(chan_id)
     text = t(chan_id, 'CHANNEL_STATS_HEADER').format(count=subs)
-    return await query.edit_message_text(text)
+    kb = [[InlineKeyboardButton(t(chan_id, 'BACK'), callback_data=f"channel_{chan_id}")]]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 async def channel_pins_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
