@@ -175,6 +175,16 @@ def init_db(cur):
         );
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS channel_schedules (
+            channel_id   BIGINT,
+            post_text    TEXT,
+            schedule_cron TEXT,
+            PRIMARY KEY (channel_id, post_text)
+        );
+        """
+    )
 
 # --- Group Management ---
 @_with_cursor
