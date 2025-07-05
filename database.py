@@ -4,7 +4,6 @@ from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
 from types import SimpleNamespace
-import psycopg2
 from psycopg2 import pool
 
 # Logger setup
@@ -498,8 +497,7 @@ def set_rules(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     cur.execute(
         "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)
-    )
+        (chat_id, photo_id, text))
 
 @_with_cursor
 def get_rules(cur, chat_id: int) -> Optional[Tuple[str, str]]:

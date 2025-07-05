@@ -1,22 +1,17 @@
-import logging
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     Update, ForceReply, CallbackQuery,
-    InputMediaPhoto, Message
-)
+    InputMediaPhoto, Message)
 from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler, filters
 from database import (
     get_registered_groups, list_scheduled_posts,
     get_welcome, set_welcome, delete_welcome,
     get_rules, set_rules, delete_rules,
     get_farewell, set_farewell, delete_farewell,
-    list_rss_feeds, remove_rss_feed,
+    list_rss_feeds, add_rss_feed, remove_rss_feed, get_rss_topic,
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
-    set_group_language, get_group_setting
-)
-from channel_menu import (
-    channel_mgmt_menu,
-)
+    set_group_language, get_group_setting)
+from channel_menu import channel_mgmt_menu
 from handlers import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
@@ -38,6 +33,8 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
                               callback_data=f"{chat_id}_submenu_farewell")],
         [InlineKeyboardButton(t(chat_id, 'MENU_RSS'),
                               callback_data=f"{chat_id}_submenu_rss")],
+        [InlineKeyboardButton(t(chat_id, 'ANTISPAM'), 
+                              callback_data=f"{chat_id}_submenu_links")],
         [InlineKeyboardButton(f"{stats_label}",  # Icon + label kommen aus i18n
                               callback_data=f"{chat_id}_toggle_stats")],
         [InlineKeyboardButton(t(chat_id, 'MENU_MOOD'),
@@ -155,20 +152,15 @@ async def submenu_farewell(query: CallbackQuery, context):
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
-
 async def submenu_rss(query: CallbackQuery, context):
     await query.answer()
     chat_id = int(query.data.split('_submenu_rss')[0])
     kb = [
-        [InlineKeyboardButton("➕ " + t(chat_id, 'RSS_URL_PROMPT'),
-                              callback_data=f"{chat_id}_rss_add")],
-        [InlineKeyboardButton("🗑️ " + t(chat_id, 'RSS_NONE'),
-                              callback_data=f"{chat_id}_rss_remove")],
-        [InlineKeyboardButton(t(chat_id, 'BACK'),
-                              callback_data=f"{chat_id}_menu_back")],
+            [InlineKeyboardButton("➕ " + t(chat_id, 'RSS_URL_PROMPT'), callback_data=f"{chat_id}_rss_add")],
+            [InlineKeyboardButton("📋 RSS_LIST", callback_data=f"{chat_id}_rss_list")],
+            [InlineKeyboardButton("🗑️ " + t(chat_id, 'RSS_NONE'), callback_data=f"{chat_id}_rss_remove")],
     ]
     await query.edit_message_text(t(chat_id, 'RSS_MENU'), reply_markup=InlineKeyboardMarkup(kb))
-
 
 async def submenu_language(query: CallbackQuery, context):
     await query.answer()
@@ -185,6 +177,19 @@ async def submenu_language(query: CallbackQuery, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def submenu_links(query: CallbackQuery, context):
+    await query.answer()
+    chat_id = int(query.data.split('_submenu_links')[0])
+    kb = [[InlineKeyboardButton(t(chat_id, 'BACK'), callback_data=f"{chat_id}_menu_back")]]
+    text = (
+        "🔗 Linkposting ist standardmäßig deaktiviert.\n\n"
+        "Erlaubt sind:\n"
+        "• Admins & Owner\n"
+        "• Anonyme Admins\n"
+        "• Nutzer mit einem zugewiesenen *Thema*\n"
+        "\n👉 Verwende /settopic im gewünschten Thema."
+    )
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 # ‒‒‒ Detail‐Show mit Foto-Unterstützung ‒‒‒
 async def welcome_show(query: CallbackQuery, context):
@@ -249,7 +254,7 @@ async def rss_list(query: CallbackQuery, context):
     chat_id = int(query.data.split('_')[0])
     feeds = list_rss_feeds(chat_id)
     if not feeds:
-        text = t(chat_id, 'RSS_NONE')
+        text = t(chat_id, 'RSS_LIST')
     else:
         text = "\n".join(f"• {url} (Topic ID: {tid})" for url, tid in feeds)
     kb = [[InlineKeyboardButton(t(chat_id, 'BACK'),
@@ -257,12 +262,20 @@ async def rss_list(query: CallbackQuery, context):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def rss_add(query: CallbackQuery, context):
+async def rss_add(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
-    chat_id = int(query.data.split('_')[0])
-    context.user_data['last_edit'] = (chat_id, 'rss_add')
-    await query.message.reply_text(
-        t(chat_id, 'RSS_URL_PROMPT'),
+    chat_id = int(query.data.split('_rss_add')[0])
+    # prüfen, ob ein RSS-Topic gesetzt ist
+    topic_id = get_rss_topic(chat_id)
+    if not topic_id:
+        return await query.message.reply_text(
+            "⚠️ Kein RSS-Posting-Thema gesetzt. Bitte `/settopicrss` im gewünschten Forum-Thema ausführen.",
+            parse_mode="Markdown"
+        )
+    # Prompt für URL und Flag setzen
+    context.user_data['awaiting_rss_url'] = True
+    context.user_data['rss_group_id'] = chat_id
+    await query.message.reply_text(t(chat_id, 'RSS_URL_PROMPT'),
         reply_markup=ForceReply(selective=True)
     )
 
@@ -331,6 +344,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(part)==3 and part[1] in ("welcome","rules","farewell"):
         action = part[2]
         return await globals()[f"{part[1]}_{action}"](query, context)
+
+    if action == "edit":
+        context.user_data['last_edit'] = (int(part[0]), f"{part[1]}_edit")
+        await query.message.reply_text(t(int(part[0]), f"{part[1].upper()}_PROMPT"),
+                                       reply_markup=ForceReply(selective=True))
+    elif action == "delete":
+        delete_fn = globals()[f"delete_{part[1]}"]
+        delete_fn(int(part[0]))
+        await query.answer(f"{part[1].capitalize()} gelöscht.", show_alert=True)
+        return await globals()[f"submenu_{part[1]}"](query, context)
 
     # rss_list, rss_add, rss_remove
     if part[1]=="rss":
