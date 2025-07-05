@@ -234,10 +234,10 @@ async def links_exceptions(query: CallbackQuery, context: ContextTypes.DEFAULT_T
             continue
 
     # 4) Nachricht zusammensetzen
-    lines = ["🔓 Ausnahmen der Link-Sperre:"]
-    lines.append(f"- Administratoren: {', '.join(admin_names) or '(keine)'}")
-    lines.append(f"- Inhaber: {owner_name}")
-    lines.append(f"- Themenbesitzer: {', '.join(topic_names) or '(keine)'}")
+    lines = ["🔓 <b>Ausnahmen der Link-Sperre:</b>"]
+    lines.append(f"• <b>Administratoren:</b> {', '.join(admin_names) or '(keine)'}")
+    lines.append(f"• <b>Inhaber:</b> {owner_name}")
+    lines.append(f"• <b>Themenbesitzer:</b> {', '.join(topic_names) or '(keine)'}")
     text = "\n".join(lines)
 
     # Back-Button
@@ -249,9 +249,9 @@ async def links_exceptions(query: CallbackQuery, context: ContextTypes.DEFAULT_T
     # Je nach Media-Status caption oder Text ersetzen
     msg = query.message
     if isinstance(msg, Message) and (msg.photo or msg.caption):
-        await query.edit_message_caption(text, reply_markup=back_markup, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode="HTML")
     else:
-        await query.edit_message_text(text, reply_markup=back_markup, parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=back_markup, parse_mode="HTML")
 
 # ‒‒‒ Detail‐Show mit Foto-Unterstützung ‒‒‒
 async def welcome_show(query: CallbackQuery, context):

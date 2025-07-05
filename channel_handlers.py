@@ -53,14 +53,22 @@ async def handle_broadcast_content(update, context):
 
 async def channel_edit_reply(update, context):
     msg = update.message
+    text = msg.text or ""
+    bot = context.bot
+
+    # Titel ändern
     if "awaiting_title" in context.user_data:
         chan_id = context.user_data.pop("awaiting_title")
-        await context.bot.set_chat_title(chan_id, msg.text)
+        await bot.set_chat_title(chan_id, text)
         await msg.reply_text("✅ Titel geändert.")
-    elif "awaiting_desc" in context.user_data:
+        return
+
+    # Beschreibung ändern
+    if "awaiting_desc" in context.user_data:
         chan_id = context.user_data.pop("awaiting_desc")
-        await context.bot.set_chat_description(chan_id, msg.text)
+        await bot.set_chat_description(chan_id, text)
         await msg.reply_text("✅ Beschreibung geändert.")
+        return
 
 def register_channel_handlers(app):
 
@@ -68,3 +76,4 @@ def register_channel_handlers(app):
     app.add_handler(CommandHandler("removechannel",remove_channel_cmd,filters=filters.ChatType.GROUPS), group=0)
     app.add_handler(CommandHandler("listchannels", list_channels_cmd,filters=filters.ChatType.GROUPS), group=0)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=1)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
