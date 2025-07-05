@@ -315,45 +315,36 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # update.chat_member liefert None, wenn es kein Chat-Member-Update ist
     cm = update.chat_member or update.my_chat_member
     if cm is None or cm.new_chat_member is None:
-        return  # nichts zu tun
+        return
 
     chat_id = update.effective_chat.id if update.effective_chat else None
-    user = cm.new_chat_member.user
-    status = cm.new_chat_member.status
+    user    = cm.new_chat_member.user
+    status  = cm.new_chat_member.status
 
-    logger.info(
-        f"🔔 track_members aufgerufen: chat_id={chat_id}, user={user.id}, status={status}"
-    )
+    logger.info(f"🏷️ track_members aufgerufen: chat={chat_id}, user={user.id}, status={status}")
 
     # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
         rec = get_welcome(chat_id)
+        logger.info(f"    → get_welcome({chat_id}) returned: {rec!r}")
         if rec:
             photo_id, text = rec
-            # Nutzer direkt ansprechen:
-            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            text = (text or "").replace("{user}",
+                      f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            logger.info("    → sende Welcome-Nachricht")
             if photo_id:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_id,
-                    caption=text,
-                    parse_mode="HTML"
-                )
+                await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
             else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode="HTML"
-                )
-  
+                await context.bot.send_message(chat_id, text, parse_mode="HTML")
+        else:
+            logger.info("    → keine Welcome-Nachricht gesetzt, breche ab")
+        # Mitglied in DB aufnehmen
         try:
             add_member(chat_id, user.id)
-            logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
         except Exception as e:
-            logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
+            logger.error(f"    → Fehler beim add_member: {e}")
         return
 
     # 2) Abschied verschicken
