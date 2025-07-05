@@ -394,26 +394,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         submenu = data.split("_submenu_",1)[1]
         return await globals()[f"submenu_{submenu}"](query, context)
 
-    # Einzel-Actions:
-    # welcome_edit, welcome_delete, etc.
-    part = data.split("_",2)
-    if len(part)==3 and part[1] in ("welcome","rules","farewell"):
-        action = part[2]
-        return await globals()[f"{part[1]}_{action}"](query, context)
 
-    if action == "edit":
-        context.user_data['last_edit'] = (int(part[0]), f"{part[1]}_edit")
-        await query.message.reply_text(t(int(part[0]), f"{part[1].upper()}_PROMPT"),
-                                       reply_markup=ForceReply(selective=True))
-    elif action == "delete":
-        delete_fn = globals()[f"delete_{part[1]}"]
-        delete_fn(int(part[0]))
-        await query.answer(f"{part[1].capitalize()} gelöscht.", show_alert=True)
-        return await globals()[f"submenu_{part[1]}"](query, context)
-
-    # rss_list, rss_add, rss_remove
-    if part[1]=="rss":
-        return await globals()[f"rss_{part[2]}"](query, context)
+    # Einzel-Actions: welcome, rules, farewell und RSS
+    parts = data.split("_", 2)
+    if len(parts) == 3:
+        chat_id_str, obj_type, action = parts
+        # Begrüßung, Regeln, Abschied
+        if obj_type in ("welcome", "rules", "farewell"):
+            return await globals()[f"{obj_type}_{action}"](query, context)
+        # RSS-Menü-Aktionen
+        if obj_type == "rss":
+            return await globals()[f"rss_{action}"](query, context)
 
     # lang set
     if "_setlang_" in data:

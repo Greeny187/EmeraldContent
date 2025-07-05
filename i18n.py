@@ -46,6 +46,10 @@ TRANSLATIONS = {
         'MENU_HELP':          'Hilfe',
         'MENU_GROUP_SELECT':  'Gruppe wählen',
         'MENU_HEADER':        '🔧 Gruppe verwalten – wähle eine Funktion:',
+        'ANTISPAM':            'Linksperre',
+        'RSS_NONE':            '⚠️ Keine RSS-Feeds gesetzt.',
+        'CLEANUP_DONE':        '✅ Gelöschte Accounts entfernt: {count}',
+        'LANG_SELECT_PROMPT':  '👋 Bitte wähle deine Sprache:',
     },
     'en': {
         'CHANNEL_MENU_HEADER':   '🔧 Manage channel «{title}» – pick an option:',
@@ -86,6 +90,10 @@ TRANSLATIONS = {
         'STATS_DISABLED':       '✅ Daily stats disabled.',
         'LANGUAGE_SET':         '✅ Language set to: {lang}',
         'LANGUAGE_CURRENT':     'Current language is: {lang}',
+        'ANTISPAM':            'Link lock',
+        'RSS_LIST':            'ℹ️ RSS list',
+        'CLEANUP_DONE':        '✅ Deleted accounts removed: {count}',
+        'LANG_SELECT_PROMPT':  '👋 Please select a language:',
     },
     'fr': {
         'CHANNEL_MENU_HEADER':   '🔧 Gérer le canal «{title}» – choisissez une option :',
@@ -126,6 +134,11 @@ TRANSLATIONS = {
         'STATS_DISABLED':       '✅ Statistiques journalières désactivées.',
         'LANGUAGE_SET':         '✅ Langue définie sur : {lang}',
         'LANGUAGE_CURRENT':     'La langue actuelle est : {lang}',
+        'ANTISPAM':            'Blocage des liens',
+        'RSS_LIST':            'ℹ️ Liste RSS',
+        'RSS_NONE':            '⚠️ Aucun flux RSS défini.',
+        'CLEANUP_DONE':        '✅ Comptes supprimés retirés : {count}',
+        'LANG_SELECT_PROMPT':  '👋 Veuillez sélectionner une langue :',
     },
     'ru': {
         'MENU_WELCOME':         'Приветственное сообщение',
@@ -159,6 +172,10 @@ TRANSLATIONS = {
         'STATS_DISABLED':       '✅ Ежедневная статистика отключена.',
         'LANGUAGE_SET':         '✅ Язык установлен: {lang}',
         'LANGUAGE_CURRENT':     'Текущий язык: {lang}',
+        'ANTISPAM':            'Блокировка ссылок',
+        'RSS_LIST':            'ℹ️ Список RSS',
+        'CLEANUP_DONE':        '✅ Удалённые аккаунты удалены: {count}',
+        'LANG_SELECT_PROMPT':  '👋 Пожалуйста, выберите язык:',
     },
 }
 
