@@ -104,7 +104,7 @@ async def channel_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     chan_id = int(query.data.rsplit("_", 1)[1])
     chat = await context.bot.get_chat(chan_id)
-    subs = await chat.get_members_count()
+    subs = await context.bot.get_chat_member_count(chan_id)
     text = t(chan_id, 'CHANNEL_STATS_HEADER').format(count=subs)
     return await query.edit_message_text(text)
 
@@ -147,6 +147,9 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     chan_id = int(query.data.rsplit("_", 1)[1])
+    chat = await context.bot.get_chat(chan_id)
+    title = chat.title or "–"
+    desc  = chat.description or "–"
     kb = [
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_TITLE'),
                               callback_data=f"ch_settitle_{chan_id}")],
@@ -155,10 +158,12 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton(t(chan_id, 'BACK'),
                               callback_data=f"channel_{chan_id}")]
     ]
-    return await query.edit_message_text(
-        t(chan_id, 'CHANNEL_SETTINGS_HEADER'),
-        reply_markup=InlineKeyboardMarkup(kb)
+    text = (
+        f"{t(chan_id, 'CHANNEL_SETTINGS_HEADER')}\n\n"
+        f"*Titel:* {title}\n"
+        f"*Beschreibung:* {desc}"
     )
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 def register_channel_menu(app):
 

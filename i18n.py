@@ -8,6 +8,7 @@ TRANSLATIONS = {
         'CHANNEL_STATS_MENU':    '📊 Statistiken',
         'CHANNEL_SETTINGS_MENU': '⚙️ Einstellungen',
         'CHANNEL_BROADCAST_MENU': '📝 Broadcast',
+        'CHANNEL_BROADCAST_PROMPT': '📢 Bitte sende die Nachricht, die im Kanal veröffentlicht werden soll.',
         'CHANNEL_PINS_MENU':     '📌 Pinned',
         'CHANNEL_SWITCH':        '🔄 Kanal wechseln',
         'CHANNEL_SETTINGS_HEADER':  '⚙️ Einstellungen für diesen Kanal:',
