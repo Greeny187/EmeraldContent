@@ -6,6 +6,7 @@ from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
+from channel_handlers import register_channel_handlers
 from database import init_db
 from logger import setup_logging
 from mood import register_mood
@@ -38,9 +39,10 @@ def main():
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
     register_handlers(app)
+    register_channel_handlers(app)
+    register_menu(app)
     register_rss(app)
     register_mood(app)
-    register_menu(app)
     register_jobs(app)
 
     # 1) Hole dir den aktuellen Loop (oder erstelle einen)

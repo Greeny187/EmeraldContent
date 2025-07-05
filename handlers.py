@@ -20,8 +20,6 @@ async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/start in Chat {update.effective_chat.id} (type={update.effective_chat.type})")
     chat = update.effective_chat
@@ -426,20 +424,6 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
     await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
 
-async def handle_broadcast_content(update, context):
-    if "broadcast_chan" not in context.user_data:
-        return
-    chan_id = context.user_data.pop("broadcast_chan")
-    msg = update.effective_message
-    # Foto + Caption oder reiner Text
-    if msg.photo:
-        fid = msg.photo[-1].file_id
-        caption = msg.caption or ""
-        await context.bot.send_photo(chan_id, fid, caption=caption, parse_mode="HTML")
-    else:
-        await context.bot.send_message(chan_id, msg.text, parse_mode="HTML")
-    return await update.message.reply_text("✅ Broadcast gesendet.")
-
 async def dashboard_command(update, context):
     user_id = update.effective_user.id
     dev_id = os.getenv("DEVELOPER_CHAT_ID")
@@ -486,7 +470,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_broadcast_content), group=6)
+
 
     app.add_handler(help_handler)
     
