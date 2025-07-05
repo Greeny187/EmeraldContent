@@ -154,13 +154,13 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 def register_channel_menu(app):
 
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_\d+$"))
-    app.add_handler(CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_\d+$"))
-    app.add_handler(CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_\d+$"))
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_\d+$"))
-    app.add_handler(CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_\d+$"))
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_-?\d+$"))
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"))
-    app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_\d+$"), group=0)
-    app.add_handler(CallbackQueryHandler(channel_setdesc_menu,  pattern=r"^ch_setdesc_\d+$"), group=0)
+    app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_-?\d+$"), group=0)
+    app.add_handler(CallbackQueryHandler(channel_setdesc_menu,  pattern=r"^ch_setdesc_-?\d+$"), group=0)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
