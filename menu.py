@@ -54,26 +54,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data  = query.data
     await query.answer()
     logger.info("menu_callback received callback_data=%r", data)
-
-    # Prefix entfernen
-    payload = data[len("grp_"):]
-
-    # 0) neu auswählen
-    if payload == "group_select":
+    # jetzt dispatchen auf eure Cases, z.B.
+    if data == 'group_select':
         return await _handle_group_select(update, context)
 
-    # 1) Haupt-Gruppenmenü
-    m = re.match(r"^group_(\d+)$", payload)
+    m = re.match(r'^group_(\d+)$', data)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
 
-    # 2) Back zum Hauptmenü
-    m = re.match(r"^(\d+)_menu_back$", payload)
+    m = re.match(r'^(\d+)_menu_back$', data)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
 
     # 3) Sub-Menus
-    m = re.match(r"^(\d+)_submenu_(\w+)$", payload)
+    m = re.match(r"^(\d+)_submenu_(\w+)$", data)
     if m:
         gid, sub = int(m.group(1)), m.group(2)
         fn = globals().get(f"submenu_{sub}")
@@ -83,28 +77,28 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 4) Show/Edit/Delete für welcome/rules/farewell
-    m = re.match(r"^(\d+)_(welcome|rules|farewell)_(show|edit|delete)$", payload)
+    m = re.match(r"^(\d+)_(welcome|rules|farewell)_(show|edit|delete)$", data)
     if m:
         gid, obj, action = int(m.group(1)), m.group(2), m.group(3)
         return await globals()[f"{obj}_{action}"](query, context)
 
     # 5) RSS add/list/remove
-    m = re.match(r"^(\d+)_rss_(add|list|remove)$", payload)
+    m = re.match(r"^(\d+)_rss_(add|list|remove)$", data)
     if m:
         return await globals()[f"rss_{m.group(2)}"](query, context)
 
     # 6) Stats toggle, Mood, Links, Cleanup
-    if re.match(r"^\d+_toggle_stats$", payload):
+    if re.match(r"^\d+_toggle_stats$", data):
         return await toggle_stats(query, context)
-    if re.match(r"^\d+_edit_mood$", payload):
+    if re.match(r"^\d+_edit_mood$", data):
         return await edit_mood(query, context)
-    if re.match(r"^\d+_links_exceptions$", payload):
+    if re.match(r"^\d+_links_exceptions$", data):
         return await links_exceptions(query, context)
-    if re.match(r"^\d+_clean_delete$", payload):
+    if re.match(r"^\d+_clean_delete$", data):
         return await clean_delete(query, context)
 
     # 7) Sprache setzen
-    m = re.match(r"^(\d+)_setlang_(\w+)$", payload)
+    m = re.match(r"^(\d+)_setlang_(\w+)$", data)
     if m:
         cid, lang = int(m.group(1)), m.group(2)
         set_group_language(cid, lang)
@@ -112,10 +106,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_group_menu(query, context, cid)
 
     # 8) Hilfe
-    if payload == "help":
+    if data == "help":
         return await query.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
-    logger.error("Unbekanntes grp_-Payload: %r", payload)
+    logger.error("Unbekanntes grp_-Payload: %r", data)
 
 async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await query.answer()
@@ -132,7 +126,7 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton(t(chat_id, "MENU_LANGUAGE"), callback_data=f"{chat_id}_submenu_language")],
         [InlineKeyboardButton(t(chat_id, "MENU_CLEANUP"),  callback_data=f"{chat_id}_clean_delete")],
         [InlineKeyboardButton(t(chat_id, "MENU_HELP"),     callback_data="help")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'), callback_data="grp_group_select")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'), callback_data="group_select")]
     ]
     await query.edit_message_text(
         t(chat_id, "MENU_HEADER"),
@@ -494,6 +488,7 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payload = data
     query = update.callback_query               # ← zuerst die Query holen
     data  = query.data                           # ← dann die Callback-Daten
     logger.info("menu_callback received callback_data=%r", data)
@@ -565,5 +560,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    app.add_handler(CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE), group=1)
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^(?:group_\d+|group_select|\d+_submenu_.*|\d+_menu_back|help)$"), group=1,)
+    # 1) /start und /menu in Gruppenchats zeigen das Gruppen-Auswahl-Menü
+    group_filter = filters.ChatType.GROUP | filters.ChatType.SUPERGROUP
+    app.add_handler(
+        CommandHandler(['start','menu'], menu_command, filters=group_filter),
+        group=1
+    )
+    # 2) /menu in Privatchat (damit Admins auch aus dem Bot-Chat starten können)
+    app.add_handler(
+        CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE),
+        group=1
+    )
+    # 3) Alle CallbackQueries, die **nicht** mit ch_/channel_ beginnen,
+    #    gehören ins Gruppen-Menu
+    app.add_handler(
+        CallbackQueryHandler(menu_callback, pattern=r'^(?!ch_|channel_).+'),
+        group=1
+    )
