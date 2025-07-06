@@ -181,7 +181,7 @@ async def submenu_mood(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
     current = get_mood_question(chat_id) or "(keine Frage gesetzt)"
     kb = [
         [InlineKeyboardButton("✏️ Bearbeiten", callback_data=f"{chat_id}_edit_mood")],
-        [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
+                [InlineKeyboardButton(t(chat_id, 'BACK'), callback_data=f"{chat_id}_menu_back")],
     ]
     return await query.edit_message_text(current, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -431,79 +431,68 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
 
-    # Gruppen-Auswahl starten
+    # 0) Gruppen-Auswahl neu starten
     if data == 'group_select':
         return await _handle_group_select(update, context)
 
-    # 1) Auswahl einer Gruppe öffnen
-    if data.startswith('group_'):
-        group_id = int(data.split('_', 1)[1])
-        return await show_group_menu(query, context, group_id)
+    # 1) Haupt-Gruppenmenü öffnen (via button “group_<id>”)
+    m_group = re.match(r'^group_(\d+)$', data)
+    if m_group:
+        return await show_group_menu(query, context, int(m_group.group(1)))
 
-    # 2) „Weiter zu Untermenüs / Toggles / Aktionen“ für eine geöffnete Gruppe
-    #    hier erkennen wir reinen Chat-ID-Prefix, z.B. "123_submenu_welcome"
-    if re.match(r'^\d+_', data):
-        chat_id_str, tail = data.split('_', 1)
-        chat_id = int(chat_id_str)
-    # Untermenü aufrufen
-        if tail.startswith('submenu_'):
-            submenu = tail.split('submenu_',1)[1]
-            return await globals()[f"submenu_{submenu}"](query, context)
+    # 2) Back-Button aus jedem Sub-Menu (“<id>_menu_back”)
+    m_back = re.match(r'^(\d+)_menu_back$', data)
+    if m_back:
+        return await show_group_menu(query, context, int(m_back.group(1)))
 
-        parts = data.split('_', 2)
-        if len(parts) == 3:
-            chat_id_str, obj, action = parts
-            chat_id = int(chat_id_str)
-            # Show
-            if action == 'show' and obj in ('welcome', 'rules', 'farewell'):
-                rec = globals()[f"get_{obj}"](chat_id)
-                if rec and rec[0]:
-                    media = InputMediaPhoto(rec[0], caption=rec[1] or "")
-                    return await query.edit_message_media(media)
-                else:
-                    return await query.edit_message_text(rec[1] or f"(kein {obj})")
-            # Delete
-            if action == 'delete' and obj in ('welcome', 'rules', 'farewell'):
-                globals()[f"delete_{obj}"](chat_id)
-                return await query.edit_message_text(f"✅ {obj.capitalize()} gelöscht.")
-            # Edit starten
-            if action == 'edit' and obj in ('welcome', 'rules', 'farewell'):
-                context.user_data['last_edit'] = (chat_id, f"{obj}_edit")
-                return await query.message.reply_text(
-                    t(chat_id, f'{obj.upper()}_PROMPT'),
-                    reply_markup=ForceReply(selective=True)
-                )
-        # RSS-Aktionen
-        if tail.endswith('_rss_list'):
-            return await rss_list(query, context)
-        if tail.endswith('_rss_add'):
-            return await rss_add(query, context)
-        if tail.endswith('_rss_remove'):
-            return await rss_remove(query, context)
-        # Stats toggle
-        if tail.endswith('_toggle_stats'):
-            return await toggle_stats(query, context)
-        # Mood edit
-        if tail.endswith('_edit_mood'):
-            return await edit_mood(query, context)
-        # Links exceptions
-        if tail.endswith('_links_exceptions'):
-            return await links_exceptions(query, context)
-        # Clean delete
-        if tail.endswith('_clean_delete'):
-            return await clean_delete(query, context)
-        # Sprache
-        if '_setlang_' in data:
-            chat_id_str, lang = data.split('_setlang_')
-            set_group_language(int(chat_id_str), lang)
-            await query.answer(t(int(chat_id_str), 'LANGUAGE_SET').format(lang=lang), show_alert=True)
-            return await show_group_menu(query, context, int(chat_id_str))
-        # Hilfe
-        if data == 'help':
-            return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
+    # 3) Sub-Menus öffnen (“<id>_submenu_<name>”)
+    m_sub = re.match(r'^(\d+)_submenu_(\w+)$', data)
+    if m_sub:
+        chat_id, submenu = int(m_sub.group(1)), m_sub.group(2)
+        fn = globals().get(f"submenu_{submenu}")
+        if fn:
+            return await fn(query, context)
+        logger.error("Unbekanntes Sub-Menu: %r", submenu)
+        return
 
-    # Fallback: nicht für Gruppendaten
-    logger.debug("Ignoriere Callback im group menu: %r", data)
+    # 4) Welcome/Rules/Farewell Show/Edit/Delete
+    m_wrf = re.match(r'^(\d+)_(welcome|rules|farewell)_(show|edit|delete)$', data)
+    if m_wrf:
+        chat_id, obj, action = int(m_wrf.group(1)), m_wrf.group(2), m_wrf.group(3)
+        return await globals()[f"{obj}_{action}"](query, context)
+
+    # 5) RSS-Actions (“<id>_rss_add|list|remove”)
+    m_rss = re.match(r'^(\d+)_rss_(add|list|remove)$', data)
+    if m_rss:
+        return await globals()[f"rss_{m_rss.group(2)}"](query, context)
+
+    # 6) Toggle Stats, Edit Mood, Links Exceptions, Cleanup
+    if re.match(r'^\d+_toggle_stats$', data):
+        return await toggle_stats(query, context)
+    if re.match(r'^\d+_edit_mood$', data):
+        return await edit_mood(query, context)
+    if re.match(r'^\d+_links_exceptions$', data):
+        return await links_exceptions(query, context)
+    if re.match(r'^\d+_clean_delete$', data):
+        return await clean_delete(query, context)
+
+    # 7) Sprache setzen (“<id>_setlang_<code>”)
+    m_lang = re.match(r'^(\d+)_setlang_(\w+)$', data)
+    if m_lang:
+        cid, lang = int(m_lang.group(1)), m_lang.group(2)
+        set_group_language(cid, lang)
+        await query.answer(
+            t(cid, 'LANGUAGE_SET').format(lang=lang),
+            show_alert=True
+        )
+        return await show_group_menu(query, context, cid)
+
+    # 8) Hilfe
+    if data == 'help':
+        return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
+
+    # Fallback
+    logger.debug("Unbekannte callback_data im group menu: %r", data)
 
 # --- Registrierung der Handler ---
 
