@@ -132,7 +132,7 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton(t(chat_id, "MENU_LANGUAGE"), callback_data=f"{chat_id}_submenu_language")],
         [InlineKeyboardButton(t(chat_id, "MENU_CLEANUP"),  callback_data=f"{chat_id}_clean_delete")],
         [InlineKeyboardButton(t(chat_id, "MENU_HELP"),     callback_data="help")],
-        [InlineKeyboardButton(t(chat_id, "MENU_GROUP_SELECT"), callback_data="group_select")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'), callback_data="grp_group_select")],
     ]
     await query.edit_message_text(
         t(chat_id, "MENU_HEADER"),
@@ -565,13 +565,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    # 1) /menu startet das Gruppen-Menu
     app.add_handler(
         CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE),
-        group=1,
+        group=1
     )
-    # 2) Alle grp_-Callbacks landen hier
     app.add_handler(
         CallbackQueryHandler(menu_callback, pattern=r'^grp_'),
-        group=1,
+        group=1
     )
