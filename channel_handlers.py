@@ -1,6 +1,6 @@
 from telegram import Update, Chat
 from telegram.ext import ContextTypes, CommandHandler, filters, MessageHandler, CallbackQueryHandler
-from database import add_channel, remove_channel, get_all_channels
+from database import add_channel, remove_channel, list_channels
 from i18n import t
 
 async def add_channel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -29,7 +29,7 @@ async def list_channels_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup"):
         return await update.message.reply_text(t(chat.id, 'ERROR_PRIV_CMD'))
-    channels = get_all_channels(chat.id)
+    channels = list_channels(chat.id)
     if not channels:
         return await update.message.reply_text(t(chat.id, 'NO_CHANNELS'))
     text = "\n".join(f"• `{cid}`" for cid in channels)
@@ -38,16 +38,19 @@ async def list_channels_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_broadcast_content(update, context):
     if "broadcast_chan" not in context.user_data:
         return  # nicht im Broadcast-Modus
-
     chan_id = context.user_data.pop("broadcast_chan")
     msg = update.effective_message
-
-    if msg.photo:
-        photo_id = msg.photo[-1].file_id
-        caption = msg.caption or ""
-        await context.bot.send_photo(chan_id, photo_id, caption=caption, parse_mode="HTML")
-    else:
-        await context.bot.send_message(chan_id, msg.text, parse_mode="HTML")
+    try:
+        if msg.photo:
+            photo_id = msg.photo[-1].file_id
+            caption = msg.caption or ""
+            await context.bot.send_photo(chan_id, photo_id, caption=caption, parse_mode="HTML")
+        else:
+            await context.bot.send_message(chan_id, msg.text, parse_mode="HTML")
+    
+    except Exception as e:
+        # z. B. fehlende Rechte o. ä.
+        return await update.message.reply_text(f"❌ Broadcast fehlgeschlagen: {e}")
 
     await update.message.reply_text("✅ Broadcast gesendet.")
 
@@ -59,14 +62,27 @@ async def channel_edit_reply(update, context):
     # Titel ändern
     if "awaiting_title" in context.user_data:
         chan_id = context.user_data.pop("awaiting_title")
-        await bot.set_chat_title(chan_id, text)
+        # Rechte checken
+        member = await bot.get_chat_member(chat_id=chan_id, user_id=bot.id)
+        if not getattr(member, "can_change_info", False):
+            return await msg.reply_text("❌ Ich habe nicht genügend Rechte, um den Titel zu ändern.")
+        try:
+            await bot.set_chat_title(chat_id=chan_id, title=text)
+        except Exception as e:
+            return await msg.reply_text(f"❌ Fehler beim Ändern des Titels: {e}")
         await msg.reply_text("✅ Titel geändert.")
         return
 
     # Beschreibung ändern
     if "awaiting_desc" in context.user_data:
         chan_id = context.user_data.pop("awaiting_desc")
-        await bot.set_chat_description(chan_id, text)
+        member = await bot.get_chat_member(chat_id=chan_id, user_id=bot.id)
+        if not getattr(member, "can_change_info", False):
+            return await msg.reply_text("❌ Ich habe nicht genügend Rechte, um die Beschreibung zu ändern.")
+        try:
+            await bot.set_chat_description(chat_id=chan_id, description=text)
+        except Exception as e:
+            return await msg.reply_text(f"❌ Fehler beim Ändern der Beschreibung: {e}")
         await msg.reply_text("✅ Beschreibung geändert.")
         return
 

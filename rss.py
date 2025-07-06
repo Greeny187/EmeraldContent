@@ -88,7 +88,5 @@ def register_rss(app):
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
-
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)
-
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE& filters.Regex(r'https?://')& ~filters.COMMAND,rss_url_reply), group=1)
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)

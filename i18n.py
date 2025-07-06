@@ -61,7 +61,7 @@ TRANSLATIONS = {
         'MENU_GROUP_SELECT':  'Gruppe wählen',
         'MENU_HEADER':        '🔧 Gruppe verwalten – wähle eine Funktion:',
         'ANTISPAM':            'Linksperre',
-        'RSS_NONE':            '⚠️ Keine RSS-Feeds gesetzt.',
+        'RSS_NONE':            '⚠️ Alle RSS-Feeds löschen.',
         'CLEANUP_DONE':        '✅ Gelöschte Accounts entfernt: {count}',
         'LANG_SELECT_PROMPT':  '👋 Bitte wähle deine Sprache:',
     },

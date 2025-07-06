@@ -338,7 +338,7 @@ async def rss_add(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_rss_url'] = True
     context.user_data['rss_group_id'] = chat_id
     await query.message.reply_text(t(chat_id, 'RSS_URL_PROMPT'),
-        reply_markup=ForceReply(selective=True)
+        reply_markup=ForceReply()
     )
 
 async def rss_remove(query: CallbackQuery, context):
