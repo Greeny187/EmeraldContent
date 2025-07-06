@@ -69,6 +69,7 @@ async def fetch_rss_feed(context: CallbackContext):
             add_posted_link(chat_id, entry.link)
 
 async def rss_url_reply(update, context):
+    logger.info(f"🕵️ rss_url_reply: user_data={context.user_data}, text={update.message.text!r}")
     if not context.user_data.get("awaiting_rss_url"):
         return
 
