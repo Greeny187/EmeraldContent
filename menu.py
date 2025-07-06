@@ -28,8 +28,9 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _handle_group_select(update, context)
 
 async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Kann von /menu oder Callback kommen
     query = update.callback_query or update.message
-    if hasattr(query, 'answer'):
+    if hasattr(query, "answer"):
         await query.answer()
 
     all_groups = get_registered_groups()
@@ -37,62 +38,62 @@ async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYP
     target     = query.message if isinstance(query, Message) else query
 
     if not visible:
-        return await target.reply_text(t(0, 'NO_VISIBLE_GROUPS'))
+        return await target.reply_text(t(0, "NO_VISIBLE_GROUPS"))
 
     kb = [
         [InlineKeyboardButton(title, callback_data=f"grp_group_{cid}")]
         for cid, title in visible
     ]
     return await target.reply_text(
-        t(0, 'SELECT_GROUP'),
-        reply_markup=InlineKeyboardMarkup(kb)
+        t(0, "SELECT_GROUP"),
+        reply_markup=InlineKeyboardMarkup(kb),
     )
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query               # zuerst Query holen
-    data  = query.data                           # dann Callback-Daten
+    query = update.callback_query
+    data  = query.data
     await query.answer()
     logger.info("menu_callback received callback_data=%r", data)
 
-    # Prefix abziehen
+    # Prefix entfernen
     payload = data[len("grp_"):]
 
-    # 0) Neue Auswahl starten
+    # 0) neu auswählen
     if payload == "group_select":
         return await _handle_group_select(update, context)
 
-    # 1) Haupt-Gruppenmenü öffnen
+    # 1) Haupt-Gruppenmenü
     m = re.match(r"^group_(\d+)$", payload)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
 
-    # 2) Back-Button ins Hauptmenü
+    # 2) Back zum Hauptmenü
     m = re.match(r"^(\d+)_menu_back$", payload)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
 
-    # 3) Sub-Menus öffnen
+    # 3) Sub-Menus
     m = re.match(r"^(\d+)_submenu_(\w+)$", payload)
     if m:
-        gid, submenu = int(m.group(1)), m.group(2)
-        fn = globals().get(f"submenu_{submenu}")
+        gid, sub = int(m.group(1)), m.group(2)
+        fn = globals().get(f"submenu_{sub}")
         if fn:
             return await fn(query, context)
-        logger.error("Unbekanntes Sub-Menu: %r", submenu)
+        logger.error("Unbekanntes Sub-Menu: %r", sub)
         return
 
-    # 4) Welcome/Rules/Farewell Show/Edit/Delete
+    # 4) Show/Edit/Delete für welcome/rules/farewell
     m = re.match(r"^(\d+)_(welcome|rules|farewell)_(show|edit|delete)$", payload)
     if m:
         gid, obj, action = int(m.group(1)), m.group(2), m.group(3)
         return await globals()[f"{obj}_{action}"](query, context)
 
-    # 5) RSS-Actions
+    # 5) RSS add/list/remove
     m = re.match(r"^(\d+)_rss_(add|list|remove)$", payload)
     if m:
         return await globals()[f"rss_{m.group(2)}"](query, context)
 
-    # 6) Stats, Mood, Links, Cleanup
+    # 6) Stats toggle, Mood, Links, Cleanup
     if re.match(r"^\d+_toggle_stats$", payload):
         return await toggle_stats(query, context)
     if re.match(r"^\d+_edit_mood$", payload):
@@ -107,38 +108,34 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if m:
         cid, lang = int(m.group(1)), m.group(2)
         set_group_language(cid, lang)
-        await query.answer(t(cid, 'LANGUAGE_SET').format(lang=lang), show_alert=True)
+        await query.answer(t(cid, "LANGUAGE_SET").format(lang=lang), show_alert=True)
         return await show_group_menu(query, context, cid)
 
     # 8) Hilfe
-    if payload == 'help':
-        return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
+    if payload == "help":
+        return await query.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
-    logger.debug("Unbekannte grp_-Payload: %r", payload)
+    logger.error("Unbekanntes grp_-Payload: %r", payload)
 
-
-# ─── Hauptmenü & Submenus ────────────────────────────────────────────────────────
-
-async def show_group_menu(query: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await query.answer()
-    mood_q      = get_mood_question(chat_id)
-    stats_label = t(chat_id, 'STATS_ENABLED') if is_daily_stats_enabled(chat_id) else t(chat_id, 'STATS_DISABLED')
+    stats_label = t(chat_id, "STATS_ENABLED") if is_daily_stats_enabled(chat_id) else t(chat_id, "STATS_DISABLED")
 
     kb = [
-        [InlineKeyboardButton(t(chat_id, 'MENU_WELCOME'),    callback_data=f"{chat_id}_submenu_welcome")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_RULES'),      callback_data=f"{chat_id}_submenu_rules")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_FAREWELL'),   callback_data=f"{chat_id}_submenu_farewell")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_RSS'),        callback_data=f"{chat_id}_submenu_rss")],
-        [InlineKeyboardButton(t(chat_id, 'ANTISPAM'),        callback_data=f"{chat_id}_submenu_links")],
-        [InlineKeyboardButton(stats_label,                   callback_data=f"{chat_id}_toggle_stats")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_MOOD'),      callback_data=f"{chat_id}_edit_mood")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_LANGUAGE'),  callback_data=f"{chat_id}_submenu_language")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_CLEANUP'),   callback_data=f"{chat_id}_clean_delete")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_HELP'),      callback_data="help")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'), callback_data="group_select")],
+        [InlineKeyboardButton(t(chat_id, "MENU_WELCOME"),   callback_data=f"{chat_id}_submenu_welcome")],
+        [InlineKeyboardButton(t(chat_id, "MENU_RULES"),     callback_data=f"{chat_id}_submenu_rules")],
+        [InlineKeyboardButton(t(chat_id, "MENU_FAREWELL"),  callback_data=f"{chat_id}_submenu_farewell")],
+        [InlineKeyboardButton(t(chat_id, "MENU_RSS"),       callback_data=f"{chat_id}_submenu_rss")],
+        [InlineKeyboardButton(t(chat_id, "ANTISPAM"),       callback_data=f"{chat_id}_submenu_links")],
+        [InlineKeyboardButton(stats_label,                  callback_data=f"{chat_id}_toggle_stats")],
+        [InlineKeyboardButton(t(chat_id, "MENU_MOOD"),     callback_data=f"{chat_id}_edit_mood")],
+        [InlineKeyboardButton(t(chat_id, "MENU_LANGUAGE"), callback_data=f"{chat_id}_submenu_language")],
+        [InlineKeyboardButton(t(chat_id, "MENU_CLEANUP"),  callback_data=f"{chat_id}_clean_delete")],
+        [InlineKeyboardButton(t(chat_id, "MENU_HELP"),     callback_data="help")],
+        [InlineKeyboardButton(t(chat_id, "MENU_GROUP_SELECT"), callback_data="group_select")],
     ]
     await query.edit_message_text(
-        t(chat_id, 'MENU_HEADER'),
+        t(chat_id, "MENU_HEADER"),
         reply_markup=InlineKeyboardMarkup(kb),
     )
 

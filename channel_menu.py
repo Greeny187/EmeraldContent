@@ -11,51 +11,13 @@ from i18n import t
 logger = logging.getLogger(__name__)
 
 # --- Kanal-Hauptmenü ---
-def register_channel_menu(app):
-    # 1) /channel startet das Kanal-Menu
-    app.add_handler(
-        CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE),
-        group=2,
-    )
-    # 2) Haupt-Channel-Buttons
-    app.add_handler(
-        CallbackQueryHandler(show_main_menu, pattern=r"^channel_\d+$"),
-        group=2,
-    )
-    # 3) Spezifische ch_*-Handler
-    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_-?\d+$"),      group=2)
-    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_-?\d+$"),   group=2)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_-?\d+$"),  group=2)
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_-?\d+$"),   group=2)
-    app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r"^ch_schedule_add_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_-?\d+$"),       group=2)
-    # 4) Fallback für alle ch_/channel_-Callbacks
-    app.add_handler(
-        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^(?:ch_|channel_)"),
-        group=2,
-    )
-    # 5) Antworten auf Freitext im Privat-Chat
-    app.add_handler(
-        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-                       channel_edit_reply),
-        group=2,
-    )
-    app.add_handler(
-        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-                       handle_schedule_input),
-        group=2,
-    )
-
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-    text = t(0, 'CHANNEL_SWITCH')  # Du kannst hier einen Key ergänzen oder hardcoden
-    channels = await get_visible_channels(update.effective_user.id, context.bot, get_all_channels())
-    kb = [
-        [InlineKeyboardButton(ch.title, callback_data=f"channel_{ch.id}")]
-        for ch in channels
-    ]
+    text = t(0, "CHANNEL_SWITCH")
+    chans = await get_visible_channels(update.effective_user.id, context.bot, get_all_channels())
+    kb = [[InlineKeyboardButton(ch.title, callback_data=f"channel_{ch.id}")] for ch in chans]
     if query:
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
     return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
@@ -66,37 +28,38 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     logger.info("channel_mgmt_menu received callback_data=%r", data)
 
-    chan_id = int(data.rsplit("_", 1)[-1])
+    chan_id = int(data.rsplit("_",1)[-1])
     chat    = await context.bot.get_chat(chan_id)
     title   = chat.title or str(chan_id)
-    text    = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title)
+    header  = t(chan_id, "CHANNEL_MENU_HEADER").format(title=title)
 
-    # Haupt vs. Submenu (Back)
+    # Back aus Submenus?
     if re.match(rf"^channel_{chan_id}_menu_back$", data):
         kb = [
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),     callback_data=f"ch_stats_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),  callback_data=f"ch_settings_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),  callback_data=f"ch_schedule_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),      callback_data=f"ch_pins_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),         callback_data="channel_main_menu")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_STATS_MENU"),    callback_data=f"ch_stats_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SETTINGS_MENU"), callback_data=f"ch_settings_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_BROADCAST_MENU"),callback_data=f"ch_broadcast_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SCHEDULE_MENU"), callback_data=f"ch_schedule_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_PINS_MENU"),     callback_data=f"ch_pins_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SWITCH"),        callback_data="channel_main_menu")],
         ]
     else:
+        # Erstaufruf: mit Back-Button
         kb = [
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),     callback_data=f"ch_stats_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),  callback_data=f"ch_settings_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),  callback_data=f"ch_schedule_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),      callback_data=f"ch_pins_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),         callback_data="channel_main_menu")],
-            [InlineKeyboardButton(t(chan_id, 'BACK'),                   callback_data=f"channel_{chan_id}_menu_back")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_STATS_MENU"),    callback_data=f"ch_stats_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SETTINGS_MENU"), callback_data=f"ch_settings_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_BROADCAST_MENU"),callback_data=f"ch_broadcast_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SCHEDULE_MENU"), callback_data=f"ch_schedule_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_PINS_MENU"),     callback_data=f"ch_pins_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, "CHANNEL_SWITCH"),        callback_data="channel_main_menu")],
+            [InlineKeyboardButton(t(chan_id, "BACK"),                  callback_data=f"channel_{chan_id}_menu_back")],
         ]
 
     try:
-        return await query.edit_message_text(
-            text,
+        await query.edit_message_text(
+            header,
             reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
     except BadRequest as e:
         if "Message is not modified" in str(e):
@@ -259,21 +222,39 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 def register_channel_menu(app):
-
-    # 1) /channel startet dein Channel-Management
+    # /channel startet das Kanal-Menu
     app.add_handler(
-        CommandHandler('channel', channel_mgmt_menu,
-                       filters=filters.ChatType.PRIVATE),
-        group=2)
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_).+'), group=2)
-    app.add_handler(CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_-?\d+$"), group=2)
+        CommandHandler("channel", show_main_menu, filters=filters.ChatType.PRIVATE),
+        group=2,
+    )
+    # Klick auf channel_<id>
+    app.add_handler(
+        CallbackQueryHandler(show_main_menu, pattern=r"^channel_\d+$"),
+        group=2,
+    )
+    # ch_*-Submenus
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_-?\d+$"),      group=2)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_-?\d+$"),   group=2)
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_-?\d+$"),  group=2)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_-?\d+$"),   group=2)
     app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r"^ch_schedule_add_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_-?\d+$"), group=2)
-    app.add_handler(CallbackQueryHandler(channel_setdesc_menu,  pattern=r"^ch_setdesc_-?\d+$"), group=2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_-?\d+$"),       group=2)
+    # Back-to-main
+    app.add_handler(
+        CallbackQueryHandler(show_main_menu, pattern=r"^channel_main_menu$"),
+        group=2,
+    )
+    # Fallback ch_/channel_
+    app.add_handler(
+        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^(?:ch_|channel_)"),
+        group=2,
+    )
+    # Freitext für Titel/Beschreibung & Zeitplan
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply),
+        group=2,
+    )
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input),
+        group=2,
+    )
