@@ -5,6 +5,7 @@ from database import get_group_setting, set_group_language
 TRANSLATIONS = {
     'de': {
         'CHANNEL_MENU_HEADER':   '🔧 Kanal «{title}» verwalten – wähle eine Funktion:',
+        'CHANNEL_SELECT_PROMPT': '🔧 Wähle einen Kanal:',
         'CHANNEL_STATS_MENU':    '📊 Statistiken',
         'CHANNEL_STATS_HEADER': '📊 Abonnenten: {count}',
         'CHANNEL_SETTINGS_MENU': '⚙️ Einstellungen',

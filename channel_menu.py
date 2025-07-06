@@ -11,97 +11,98 @@ from i18n import t
 logger = logging.getLogger(__name__)
 
 # --- Kanal-Hauptmenü ---
-async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query    = update.callback_query
-    data     = query.data                         # ← Callback-Payload holen
-    await query.answer()
-    # jetzt erst chan_id ermitteln
-    chan_id  = int(data.rsplit("_", 1)[1])
-    logger.info("🔄 Button empfangen für Channel %d: %r", chan_id, data)
-    chat     = await context.bot.get_chat(chan_id)
-    title    = chat.title or str(chan_id)
-    # z.B. Header-Text bauen
-    text     = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=await context.bot.get_chat(chan_id).title)
-
-    # 2) Keyboard je nach Button-Context bauen
-    if re.match(r'^channel_(\d+)_menu_back$', data):
-        # Rückkehr aus einem Submenu: nur die Unterbereiche zeigen
-        kb = [
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),
-                                  callback_data=f"ch_stats_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),
-                                  callback_data=f"ch_settings_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'),
-                                  callback_data=f"ch_broadcast_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),
-                                  callback_data=f"ch_schedule_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),
-                                  callback_data=f"ch_pins_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),
-                                  callback_data="main_menu")],
-        ]
-    else:
-        # Erster Aufruf via /channel oder “channel_<id>”: Haupt-Menü mit Back-Option
-        kb = [
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),
-                                  callback_data=f"ch_stats_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),
-                                  callback_data=f"ch_settings_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'),
-                                  callback_data=f"ch_broadcast_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),
-                                  callback_data=f"ch_schedule_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),
-                                  callback_data=f"ch_pins_{chan_id}")],
-            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),
-                                  callback_data="main_menu")],
-            [InlineKeyboardButton(t(chan_id, 'BACK'),
-                                  callback_data=f"channel_{chan_id}_menu_back")],
-        ]
-
-    try:
-        await query.edit_message_text(
-            t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
-    except BadRequest as e:
-        if "Message is not modified" in e.message:
-            logger.info("Kein Unterschied: überspringe Edit")
-        else:
-            raise
-
-    # 3) Nachricht editieren
-    await query.edit_message_text(
-        t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
+def register_channel_menu(app):
+    # 1) /channel startet das Kanal-Menu
+    app.add_handler(
+        CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE),
+        group=2,
+    )
+    # 2) Haupt-Channel-Buttons
+    app.add_handler(
+        CallbackQueryHandler(show_main_menu, pattern=r"^channel_\d+$"),
+        group=2,
+    )
+    # 3) Spezifische ch_*-Handler
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r"^ch_stats_-?\d+$"),      group=2)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r"^ch_settings_-?\d+$"),   group=2)
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r"^ch_broadcast_-?\d+$"),  group=2)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r"^ch_schedule_-?\d+$"),   group=2)
+    app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r"^ch_schedule_add_-?\d+$"), group=2)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r"^ch_pins_-?\d+$"),       group=2)
+    # 4) Fallback für alle ch_/channel_-Callbacks
+    app.add_handler(
+        CallbackQueryHandler(channel_mgmt_menu, pattern=r"^(?:ch_|channel_)"),
+        group=2,
+    )
+    # 5) Antworten auf Freitext im Privat-Chat
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+                       channel_edit_reply),
+        group=2,
+    )
+    app.add_handler(
+        MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+                       handle_schedule_input),
+        group=2,
     )
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query:
+        await query.answer()
+    text = t(0, 'CHANNEL_SWITCH')  # Du kannst hier einen Key ergänzen oder hardcoden
+    channels = await get_visible_channels(update.effective_user.id, context.bot, get_all_channels())
+    kb = [
+        [InlineKeyboardButton(ch.title, callback_data=f"channel_{ch.id}")]
+        for ch in channels
+    ]
+    if query:
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data  = query.data
     await query.answer()
-    user = update.effective_user
+    logger.info("channel_mgmt_menu received callback_data=%r", data)
 
-    # Alle Gruppen abrufen und filtern
-    all_groups     = get_registered_groups()
-    visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+    chan_id = int(data.rsplit("_", 1)[-1])
+    chat    = await context.bot.get_chat(chan_id)
+    title   = chat.title or str(chan_id)
+    text    = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title)
 
-    # Alle Kanäle abrufen und filtern
-    all_channels     = get_all_channels()
-    visible_channels = await get_visible_channels(user.id, context.bot, all_channels)
+    # Haupt vs. Submenu (Back)
+    if re.match(rf"^channel_{chan_id}_menu_back$", data):
+        kb = [
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),     callback_data=f"ch_stats_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),  callback_data=f"ch_settings_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),  callback_data=f"ch_schedule_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),      callback_data=f"ch_pins_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),         callback_data="channel_main_menu")],
+        ]
+    else:
+        kb = [
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_STATS_MENU'),     callback_data=f"ch_stats_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SETTINGS_MENU'),  callback_data=f"ch_settings_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_BROADCAST_MENU'), callback_data=f"ch_broadcast_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_MENU'),  callback_data=f"ch_schedule_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_PINS_MENU'),      callback_data=f"ch_pins_{chan_id}")],
+            [InlineKeyboardButton(t(chan_id, 'CHANNEL_SWITCH'),         callback_data="channel_main_menu")],
+            [InlineKeyboardButton(t(chan_id, 'BACK'),                   callback_data=f"channel_{chan_id}_menu_back")],
+        ]
 
-    # Keyboard bauen
-    kb = []
-    for gid, title in visible_groups:
-        kb.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
-    for cid, title in visible_channels:
-        kb.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
-
-    await query.edit_message_text(
-        "🔧 Wähle eine Gruppe oder einen Kanal:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    try:
+        return await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown",
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            logger.info("Channel-Menu unverändert, skip edit")
+        else:
+            raise
 
 async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
