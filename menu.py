@@ -3,7 +3,8 @@ import re
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     Update, ForceReply, CallbackQuery,
-    InputMediaPhoto, Message)
+    InputMediaPhoto, Message
+)
 from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler, filters
 from database import (
     get_registered_groups,
@@ -12,7 +13,8 @@ from database import (
     get_farewell, delete_farewell,
     list_rss_feeds, remove_rss_feed, get_rss_topic,
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
-    set_group_language, get_topic_owners)
+    set_group_language, get_topic_owners
+)
 from channel_menu import channel_mgmt_menu
 from handlers import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
@@ -28,28 +30,17 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
     stats_label = t(chat_id, 'STATS_ENABLED') if is_daily_stats_enabled(chat_id) else t(chat_id, 'STATS_DISABLED')
 
     kb = [
-        [InlineKeyboardButton(t(chat_id, 'MENU_WELCOME'),
-                              callback_data=f"{chat_id}_submenu_welcome")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_RULES'),
-                              callback_data=f"{chat_id}_submenu_rules")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_FAREWELL'),
-                              callback_data=f"{chat_id}_submenu_farewell")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_RSS'),
-                              callback_data=f"{chat_id}_submenu_rss")],
-        [InlineKeyboardButton(t(chat_id, 'ANTISPAM'), 
-                              callback_data=f"{chat_id}_submenu_links")],
-        [InlineKeyboardButton(f"{stats_label}",  # Icon + label kommen aus i18n
-                              callback_data=f"{chat_id}_toggle_stats")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_MOOD'),
-                              callback_data=f"{chat_id}_edit_mood")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_LANGUAGE'),
-                              callback_data=f"{chat_id}_submenu_language")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_CLEANUP'),
-                              callback_data=f"{chat_id}_clean_delete")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_HELP'),
-                              callback_data="help")],
-        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'),
-                              callback_data="group_select")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_WELCOME'), callback_data=f"{chat_id}_submenu_welcome")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_RULES'), callback_data=f"{chat_id}_submenu_rules")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_FAREWELL'), callback_data=f"{chat_id}_submenu_farewell")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_RSS'), callback_data=f"{chat_id}_submenu_rss")],
+        [InlineKeyboardButton(t(chat_id, 'ANTISPAM'), callback_data=f"{chat_id}_submenu_links")],
+        [InlineKeyboardButton(stats_label, callback_data=f"{chat_id}_toggle_stats")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_MOOD'), callback_data=f"{chat_id}_edit_mood")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_LANGUAGE'), callback_data=f"{chat_id}_submenu_language")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_CLEANUP'), callback_data=f"{chat_id}_clean_delete")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_HELP'), callback_data="help")],
+        [InlineKeyboardButton(t(chat_id, 'MENU_GROUP_SELECT'), callback_data="group_select")],
     ]
     await query.edit_message_text(
         text=t(chat_id, 'MENU_HEADER'),
@@ -62,9 +53,8 @@ async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer()
 
     all_groups = get_registered_groups()
-    visible    = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+    visible = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
 
-    # Ziel-Objekt ermitteln: CallbackQuery → query.message, sonst → query selbst (Message)
     target = query.message if isinstance(query, CallbackQuery) else query
 
     if not visible:
@@ -80,7 +70,6 @@ async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Leite weiter an den Group-Select-Handler:
     return await _handle_group_select(update, context)
 
 # ‒‒‒ Submenus ‒‒‒
@@ -435,109 +424,85 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
     count = await clean_delete_accounts_for_chat(chat_id, context.bot)
     await query.edit_message_text(t(chat_id, 'CLEANUP_DONE').format(count=count))
 
+
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data
+    if not query:
+        return
+    data = query.data or ""
 
+    # Gruppenauswahl
     if data == 'group_select':
         return await _handle_group_select(update, context)
 
-    if data.startswith('group_'):
-        return await show_group_menu(query, context, int(data.split('_',1)[1]))
+    # Gruppenspezifische Menüs
+    if re.match(r'^\d+', data):
+        if data.startswith('group_'):
+            return await show_group_menu(query, context, int(data.split('_',1)[1]))
+        if '_submenu_' in data:
+            submenu = data.split('_submenu_',1)[1]
+            return await globals()[f"submenu_{submenu}"](query, context)
 
-    # Channel-Auswahl
-    if data.startswith("channel_"):
-        return await channel_mgmt_menu(update, context)
-
-    # Submenu-Routes
-    if "_submenu_" in data:
-        submenu = data.split("_submenu_",1)[1]
-        return await globals()[f"submenu_{submenu}"](query, context)
-
-
-    # Einzel-Actions: welcome, rules, farewell und RSS
-    parts = data.split("_", 2)
-    if len(parts) == 3:
-        chat_id_str, obj, action = parts
-        chat_id = int(chat_id_str)
-
-        # Sub-Menüs öffnen
-        if obj == "submenu":
-            return await globals()[f"submenu_{action}"](query, context)
-
-        # Show
-        if action == "show" and obj in ("welcome", "rules", "farewell"):
-            rec = globals()[f"get_{obj}"](chat_id)
-            if not rec:
-                text = f"Keine {obj}-Nachricht gesetzt."
-                await query.edit_message_text(text)
-            else:
-                pid, txt = rec
-                if pid:
-                    media = InputMediaPhoto(pid, caption=txt or "")
-                    await query.edit_message_media(media)
+        parts = data.split('_', 2)
+        if len(parts) == 3:
+            chat_id_str, obj, action = parts
+            chat_id = int(chat_id_str)
+            # Show
+            if action == 'show' and obj in ('welcome', 'rules', 'farewell'):
+                rec = globals()[f"get_{obj}"](chat_id)
+                if rec and rec[0]:
+                    media = InputMediaPhoto(rec[0], caption=rec[1] or "")
+                    return await query.edit_message_media(media)
                 else:
-                    await query.edit_message_text(txt or "(kein Text)")
-            return
+                    return await query.edit_message_text(rec[1] or f"(kein {obj})")
+            # Delete
+            if action == 'delete' and obj in ('welcome', 'rules', 'farewell'):
+                globals()[f"delete_{obj}"](chat_id)
+                return await query.edit_message_text(f"✅ {obj.capitalize()} gelöscht.")
+            # Edit starten
+            if action == 'edit' and obj in ('welcome', 'rules', 'farewell'):
+                context.user_data['last_edit'] = (chat_id, f"{obj}_edit")
+                return await query.message.reply_text(
+                    t(chat_id, f'{obj.upper()}_PROMPT'),
+                    reply_markup=ForceReply(selective=True)
+                )
+        # RSS-Aktionen
+        if data.endswith('_rss_list'):
+            return await rss_list(query, context)
+        if data.endswith('_rss_add'):
+            return await rss_add(query, context)
+        if data.endswith('_rss_remove'):
+            return await rss_remove(query, context)
+        # Stats toggle
+        if data.endswith('_toggle_stats'):
+            return await toggle_stats(query, context)
+        # Mood edit
+        if data.endswith('_edit_mood'):
+            return await edit_mood(query, context)
+        # Links exceptions
+        if data.endswith('_links_exceptions'):
+            return await links_exceptions(query, context)
+        # Clean delete
+        if data.endswith('_clean_delete'):
+            return await clean_delete(query, context)
+        # Sprache
+        if '_setlang_' in data:
+            chat_id_str, lang = data.split('_setlang_')
+            set_group_language(int(chat_id_str), lang)
+            await query.answer(t(int(chat_id_str), 'LANGUAGE_SET').format(lang=lang), show_alert=True)
+            return await show_group_menu(query, context, int(chat_id_str))
+        # Hilfe
+        if data == 'help':
+            return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
 
-        # Delete
-        if action == "delete" and obj in ("welcome", "rules", "farewell"):
-            globals()[f"delete_{obj}"](chat_id)
-            await query.edit_message_text(f"✅ {obj.capitalize()} gelöscht.")
-            return
-
-        # Edit-Flow starten
-        if action == "edit" and obj in ("welcome", "rules", "farewell"):
-            context.user_data["last_edit"] = (chat_id, f"{obj}_edit")
-            await query.edit_message_text(f"✏️ Sende nun das neue {obj}.")
-            return
-        
-    # RSS-Menü-Aktionen
-    if obj == "rss":
-        # ruft dann eure importierten Funktionen rss_list, rss_add, rss_delete auf
-        return await globals()[f"rss_{action}"](query, context)
-        
-     # Klick auf "🗑 Gelöschte Accounts entfernen"
-    if data.endswith("_clean_delete"):
-        chat_id = int(data.split("_", 1)[0])
-        # 1) Callback sofort bestätigen, damit er nicht abläuft
-        await query.answer(text="⏳ Entferne gelöschte Accounts…")
-        # 2) Cleanup ausführen und Zahl der entfernten Accounts ermitteln
-        removed_count = await clean_delete_accounts_for_chat(chat_id, context.bot)
-        # 3) Ergebnis in der Message anzeigen (und Tastatur beibehalten)
-        await query.edit_message_text(
-            text=f"✅ In Gruppe {chat_id} wurden {removed_count} gelöschte Accounts entfernt.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
-            ])
-        )
-        return
-
-    # lang set
-    if "_setlang_" in data:
-        chat_id, lang = data.split("_setlang_")
-        set_group_language(int(chat_id), lang)
-        await query.answer(t(int(chat_id),'LANGUAGE_SET').format(lang=lang), show_alert=True)
-        return await show_group_menu(query, context, int(chat_id))
-
-    # Mood
-    if obj == "mood":
-        return await globals()[f"submenu_{obj}"](query, context)
-
-    # Links-Ausnahmen
-    if data.endswith("_links_exceptions"):
-        return await links_exceptions(query, context)
-
-    # 9) Hilfe
-    if data == 'help':
-        return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
-
+    # Fallback: nicht für Gruppendaten
+    logger.debug("Ignoriere Callback im group menu: %r", data)
 
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    # 1) /menu-Command im Privat-Chat startet den Gruppen-Auswahl-Flow
+    # 1) /menu im privaten Chat startet den Gruppen-Auswahl-Flow
     app.add_handler(
         CommandHandler(
             'menu',
@@ -547,9 +512,8 @@ def register_menu(app):
         group=1
     )
 
-    # 2) Alle CallbackQueries für Gruppen- und Submenus
-    #    (group_select, group_<id>, *_submenu_*, *_toggle_*, welcome_*, etc.)
+    # 2) CallbackQueries nur für Gruppendaten, keine Channel-Callbacks
     app.add_handler(
-        CallbackQueryHandler(menu_callback),
+        CallbackQueryHandler(menu_callback, pattern=r'^(?!ch_|channel_).+'),
         group=1
     )
