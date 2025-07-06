@@ -428,20 +428,26 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query:
-        return
-    data = query.data or ""
+    data = query.data
+    await query.answer()
 
-    # Gruppenauswahl
+    # Gruppen-Auswahl starten
     if data == 'group_select':
         return await _handle_group_select(update, context)
 
-    # Gruppenspezifische Menüs
-    if re.match(r'^\d+', data):
-        if data.startswith('group_'):
-            return await show_group_menu(query, context, int(data.split('_',1)[1]))
-        if '_submenu_' in data:
-            submenu = data.split('_submenu_',1)[1]
+    # 1) Auswahl einer Gruppe öffnen
+    if data.startswith('group_'):
+        group_id = int(data.split('_', 1)[1])
+        return await show_group_menu(query, context, group_id)
+
+    # 2) „Weiter zu Untermenüs / Toggles / Aktionen“ für eine geöffnete Gruppe
+    #    hier erkennen wir reinen Chat-ID-Prefix, z.B. "123_submenu_welcome"
+    if re.match(r'^\d+_', data):
+        chat_id_str, tail = data.split('_', 1)
+        chat_id = int(chat_id_str)
+    # Untermenü aufrufen
+        if tail.startswith('submenu_'):
+            submenu = tail.split('submenu_',1)[1]
             return await globals()[f"submenu_{submenu}"](query, context)
 
         parts = data.split('_', 2)
@@ -468,23 +474,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=ForceReply(selective=True)
                 )
         # RSS-Aktionen
-        if data.endswith('_rss_list'):
+        if tail.endswith('_rss_list'):
             return await rss_list(query, context)
-        if data.endswith('_rss_add'):
+        if tail.endswith('_rss_add'):
             return await rss_add(query, context)
-        if data.endswith('_rss_remove'):
+        if tail.endswith('_rss_remove'):
             return await rss_remove(query, context)
         # Stats toggle
-        if data.endswith('_toggle_stats'):
+        if tail.endswith('_toggle_stats'):
             return await toggle_stats(query, context)
         # Mood edit
-        if data.endswith('_edit_mood'):
+        if tail.endswith('_edit_mood'):
             return await edit_mood(query, context)
         # Links exceptions
-        if data.endswith('_links_exceptions'):
+        if tail.endswith('_links_exceptions'):
             return await links_exceptions(query, context)
         # Clean delete
-        if data.endswith('_clean_delete'):
+        if tail.endswith('_clean_delete'):
             return await clean_delete(query, context)
         # Sprache
         if '_setlang_' in data:
