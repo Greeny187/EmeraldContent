@@ -59,11 +59,14 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
     try:
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown")
+        await query.edit_message_text(
+            t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title),
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
     except BadRequest as e:
         if "Message is not modified" in e.message:
-            logger.info("channel_mgmt_menu: nothing changed, skip edit")
+            logger.info("Kein Unterschied: überspringe Edit")
         else:
             raise
 
