@@ -438,22 +438,7 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query or not query.data:
-        return
     data = query.data
-
-    # 1) Neue Channel-Submenus überspringen
-    if data.startswith("ch_"):
-        return
-
-    # 3) ID aus dem letzten Unterstrich ziehen
-    parts = data.rsplit("_", 1)
-    chat_id_str = parts[1]
-    try:
-        chat_id = int(chat_id_str)
-    except ValueError:
-        # falls doch mal etwas Unvorhergesehenes reinkommt
-        return
 
     if data == 'group_select':
         return await _handle_group_select(update, context)
