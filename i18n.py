@@ -24,6 +24,8 @@ TRANSLATIONS = {
         'CHANNEL_SCHEDULE_MENU': '🕒 Geplante Beiträge',
         'CHANNEL_SCHEDULE_HEADER': '🗓️ Geplante Beiträge:',
         'CHANNEL_SCHEDULE_ADD': '➕ Beitrag hinzufügen',
+        'CHANNEL_SCHEDULE_ADD_PROMPT': '✏️ Bitte sende den Cron-Ausdruck gefolgt vom Beitragstext, getrennt durch ein Leerzeichen.',
+        'CHANNEL_SCHEDULE_ADD_OK':     '✅ Geplanter Beitrag hinzugefügt.',
         'BACK':                  '🔙 Zurück',
         'ANTISPAM':              'Linksperre',
         'WELCOME_MENU':       '⚙ Begrüßung verwalten:',

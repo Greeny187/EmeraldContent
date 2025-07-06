@@ -4,13 +4,13 @@ from telegram import (
     InputMediaPhoto, Message)
 from telegram.ext import CallbackQueryHandler, ContextTypes, CommandHandler, filters
 from database import (
-    get_registered_groups, list_scheduled_posts,
-    get_welcome, set_welcome, delete_welcome,
-    get_rules, set_rules, delete_rules,
-    get_farewell, set_farewell, delete_farewell,
-    list_rss_feeds, add_rss_feed, remove_rss_feed, get_rss_topic,
+    get_registered_groups,
+    get_welcome, delete_welcome,
+    get_rules, delete_rules,
+    get_farewell, delete_farewell,
+    list_rss_feeds, remove_rss_feed, get_rss_topic,
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
-    set_group_language, get_group_setting, get_topic_owners)
+    set_group_language, get_topic_owners)
 from channel_menu import channel_mgmt_menu
 from handlers import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
@@ -183,6 +183,16 @@ async def submenu_language(query: CallbackQuery, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def submenu_mood(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[1])
+    current = get_mood_question(chat_id) or "(keine Frage gesetzt)"
+    kb = [
+        [InlineKeyboardButton("✏️ Bearbeiten", callback_data=f"{chat_id}_edit_mood")],
+        [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
+    ]
+    return await query.edit_message_text(current, reply_markup=InlineKeyboardMarkup(kb))
+
 async def submenu_links(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     chat_id = int(query.data.split('_submenu_links')[0])
@@ -272,6 +282,22 @@ async def welcome_show(query: CallbackQuery, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def welcome_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['last_edit'] = (chat_id, 'welcome_edit')
+    await query.message.reply_text(
+        t(chat_id, 'WELCOME_PROMPT'),
+        reply_markup=ForceReply(selective=True)
+    )
+
+async def welcome_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    delete_welcome(chat_id)
+    return await submenu_welcome(query, context)
+
+
 # mach’s analog für rules_show & farewell_show:
 async def rules_show(query: CallbackQuery, context):
     await query.answer()
@@ -289,6 +315,21 @@ async def rules_show(query: CallbackQuery, context):
     return await query.edit_message_media(
         media=media,
         reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def rules_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    delete_rules(chat_id)
+    return await submenu_rules(query, context)
+
+async def rules_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['last_edit'] = (chat_id, 'rules_edit')
+    await query.message.reply_text(
+        t(chat_id, 'RULES_PROMPT'),
+        reply_markup=ForceReply(selective=True)
     )
 
 async def farewell_show(query: CallbackQuery, context):
@@ -309,6 +350,20 @@ async def farewell_show(query: CallbackQuery, context):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+async def farewell_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    delete_farewell(chat_id)
+    return await submenu_farewell(query, context)
+
+async def farewell_edit(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
+    await query.answer()
+    chat_id = int(query.data.split('_')[0])
+    context.user_data['last_edit'] = (chat_id, 'farewell_edit')
+    await query.message.reply_text(
+        t(chat_id, 'FAREWELL_PROMPT'),
+        reply_markup=ForceReply(selective=True)
+    )
 
 # ‒‒‒ RSS-Actions ‒‒‒
 async def rss_list(query: CallbackQuery, context):
@@ -404,14 +459,60 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Einzel-Actions: welcome, rules, farewell und RSS
     parts = data.split("_", 2)
     if len(parts) == 3:
-        chat_id_str, obj_type, action = parts
-        # Begrüßung, Regeln, Abschied
-        if obj_type in ("welcome", "rules", "farewell"):
-            return await globals()[f"{obj_type}_{action}"](query, context)
-        # RSS-Menü-Aktionen
-        if obj_type == "rss":
-            return await globals()[f"rss_{action}"](query, context)
+        chat_id_str, obj, action = parts
+        chat_id = int(chat_id_str)
 
+        # Sub-Menüs öffnen
+        if obj == "submenu":
+            return await globals()[f"submenu_{action}"](query, context)
+
+        # Show
+        if action == "show" and obj in ("welcome", "rules", "farewell"):
+            rec = globals()[f"get_{obj}"](chat_id)
+            if not rec:
+                text = f"Keine {obj}-Nachricht gesetzt."
+                await query.edit_message_text(text)
+            else:
+                pid, txt = rec
+                if pid:
+                    media = InputMediaPhoto(pid, caption=txt or "")
+                    await query.edit_message_media(media)
+                else:
+                    await query.edit_message_text(txt or "(kein Text)")
+            return
+
+        # Delete
+        if action == "delete" and obj in ("welcome", "rules", "farewell"):
+            globals()[f"delete_{obj}"](chat_id)
+            await query.edit_message_text(f"✅ {obj.capitalize()} gelöscht.")
+            return
+
+        # Edit-Flow starten
+        if action == "edit" and obj in ("welcome", "rules", "farewell"):
+            context.user_data["last_edit"] = (chat_id, f"{obj}_edit")
+            await query.edit_message_text(f"✏️ Sende nun das neue {obj}.")
+            return
+        
+    # RSS-Menü-Aktionen
+    if obj == "rss":
+        # ruft dann eure importierten Funktionen rss_list, rss_add, rss_delete auf
+        return await globals()[f"rss_{action}"](query, context)
+        
+     # Klick auf "🗑 Gelöschte Accounts entfernen"
+    if data.endswith("_clean_delete"):
+        chat_id = int(data.split("_", 1)[0])
+        # 1) Callback sofort bestätigen, damit er nicht abläuft
+        await query.answer(text="⏳ Entferne gelöschte Accounts…")
+        # 2) Cleanup ausführen und Zahl der entfernten Accounts ermitteln
+        removed_count = await clean_delete_accounts_for_chat(chat_id, context.bot)
+        # 3) Ergebnis in der Message anzeigen (und Tastatur beibehalten)
+        await query.edit_message_text(
+            text=f"✅ In Gruppe {chat_id} wurden {removed_count} gelöschte Accounts entfernt.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
+            ])
+        )
+        return
 
     # lang set
     if "_setlang_" in data:
@@ -419,6 +520,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_group_language(int(chat_id), lang)
         await query.answer(t(int(chat_id),'LANGUAGE_SET').format(lang=lang), show_alert=True)
         return await show_group_menu(query, context, int(chat_id))
+
+    # Mood
+    if obj == "mood":
+        return await globals()[f"submenu_{obj}"](query, context)
 
     # Links-Ausnahmen
     if data.endswith("_links_exceptions"):

@@ -3,7 +3,7 @@ from telegram.error import BadRequest
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from access import get_visible_channels, get_visible_groups
-from database import get_registered_groups, get_all_channels
+from database import get_registered_groups, get_all_channels, list_scheduled_posts, add_scheduled_post
 from channel_handlers import channel_edit_reply
 from i18n import t
 
@@ -118,20 +118,40 @@ async def channel_schedule_menu(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     chan_id = int(query.data.rsplit("_", 1)[1])
-    # Annahme: list_scheduled_posts gibt List[Tuple[text, cron]]
-    from database import list_scheduled_posts
     schedules = list_scheduled_posts(chan_id)
     lines = [t(chan_id, 'CHANNEL_SCHEDULE_HEADER')]
-    for text, cron in schedules:
-        lines.append(f"• {cron} → «{text[:30]}…»")
+    for post_text, cron in schedules:
+        lines.append(f"• `{cron}` → «{post_text[:30]}…»")
     kb = [
         [InlineKeyboardButton(t(chan_id, 'CHANNEL_SCHEDULE_ADD'),
                               callback_data=f"ch_schedule_add_{chan_id}")],
         [InlineKeyboardButton(t(chan_id, 'BACK'),
                               callback_data=f"channel_{chan_id}")]
     ]
-    return await query.edit_message_text("\n".join(lines),
-                                         reply_markup=InlineKeyboardMarkup(kb))
+    await query.edit_message_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )
+
+async def channel_schedule_add_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chan_id = int(query.data.rsplit("_", 1)[1])
+    context.user_data["awaiting_schedule"] = chan_id
+    await query.message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
+
+async def handle_schedule_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "awaiting_schedule" not in context.user_data:
+        return
+    chan_id = context.user_data.pop("awaiting_schedule")
+    text = update.effective_message.text or ""
+    try:
+        cron, post_text = text.split(" ", 1)
+    except ValueError:
+        return await update.effective_message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
+    add_scheduled_post(chan_id, post_text, cron)
+    await update.effective_message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_OK'))
 
 async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -163,7 +183,9 @@ def register_channel_menu(app):
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_-?\d+$"))
     app.add_handler(CallbackQueryHandler(channel_pins_menu, pattern=r"^ch_pins_-?\d+$"))
     app.add_handler(CallbackQueryHandler(channel_schedule_menu, pattern=r"^ch_schedule_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r"^ch_schedule_add_-?\d+$"), group=0)
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$"))
     app.add_handler(CallbackQueryHandler(channel_settitle_menu, pattern=r"^ch_settitle_-?\d+$"), group=0)
     app.add_handler(CallbackQueryHandler(channel_setdesc_menu,  pattern=r"^ch_setdesc_-?\d+$"), group=0)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
