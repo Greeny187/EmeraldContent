@@ -497,6 +497,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_menu(app):
     # 1) /menu im privaten Chat startet den Gruppen-Auswahl-Flow
-    app.add_handler(CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE), group=1    )
+    app.add_handler(CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE), group=1)
     # 2) CallbackQueries nur für Gruppendaten, keine Channel-Callbacks
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!ch_|channel_).+'), group=1)
