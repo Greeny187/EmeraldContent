@@ -39,10 +39,10 @@ def main():
     # Deine Handler und Error-Handler registrieren
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
-    register_handlers(app)
-    register_channel_handlers(app)
     register_menu(app)
+    register_handlers(app)
     register_channel_menu(app)
+    register_channel_handlers(app)
     register_rss(app)
     register_mood(app)
     register_jobs(app)

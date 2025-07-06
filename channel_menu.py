@@ -1,7 +1,7 @@
 import logging
 from telegram.error import BadRequest
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ForceReply
-from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters 
+from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters, CommandHandler
 from access import get_visible_channels, get_visible_groups
 from database import get_registered_groups, get_all_channels, list_scheduled_posts, add_scheduled_post
 from channel_handlers import channel_edit_reply
@@ -217,7 +217,12 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 def register_channel_menu(app):
 
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r"^channel_-?\d+$"))
+    # 1) /channel startet dein Channel-Management
+    app.add_handler(
+        CommandHandler('channel', channel_mgmt_menu,
+                       filters=filters.ChatType.PRIVATE),
+        group=2)
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_).+'), group=2)
     app.add_handler(CallbackQueryHandler(channel_stats_menu, pattern=r"^ch_stats_-?\d+$"))
     app.add_handler(CallbackQueryHandler(channel_settings_menu, pattern=r"^ch_settings_-?\d+$"))
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu, pattern=r"^ch_broadcast_-?\d+$"))
