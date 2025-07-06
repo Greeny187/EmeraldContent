@@ -15,6 +15,7 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     await query.answer()
+    text = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title)
 
     # 1) Kanal-ID ermitteln und Chat-Infos holen
     chan_id = int(data.rsplit("_", 1)[1])
@@ -56,6 +57,15 @@ async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(t(chan_id, 'BACK'),
                                   callback_data=f"channel_{chan_id}_menu_back")],
         ]
+
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown")
+    except BadRequest as e:
+        if "Message is not modified" in e.message:
+            logger.info("channel_mgmt_menu: nothing changed, skip edit")
+        else:
+            raise
 
     # 3) Nachricht editieren
     await query.edit_message_text(

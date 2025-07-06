@@ -426,6 +426,7 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("menu_callback received callback_data=%r", data)
     query = update.callback_query
     data = query.data
     await query.answer()
