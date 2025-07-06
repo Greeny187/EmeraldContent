@@ -12,15 +12,16 @@ logger = logging.getLogger(__name__)
 
 # --- Kanal-Hauptmenü ---
 async def channel_mgmt_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
+    query    = update.callback_query
+    data     = query.data                         # ← Callback-Payload holen
     await query.answer()
-    text = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=title)
-
-    # 1) Kanal-ID ermitteln und Chat-Infos holen
-    chan_id = int(data.rsplit("_", 1)[1])
-    chat    = await context.bot.get_chat(chan_id)
-    title   = chat.title or str(chan_id)
+    # jetzt erst chan_id ermitteln
+    chan_id  = int(data.rsplit("_", 1)[1])
+    logger.info("🔄 Button empfangen für Channel %d: %r", chan_id, data)
+    chat     = await context.bot.get_chat(chan_id)
+    title    = chat.title or str(chan_id)
+    # z.B. Header-Text bauen
+    text     = t(chan_id, 'CHANNEL_MENU_HEADER').format(title=await context.bot.get_chat(chan_id).title)
 
     # 2) Keyboard je nach Button-Context bauen
     if re.match(r'^channel_(\d+)_menu_back$', data):
