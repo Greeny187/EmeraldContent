@@ -1,7 +1,7 @@
 import logging
 from telegram.error import BadRequest
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters, ForceReply
 from access import get_visible_channels, get_visible_groups
 from database import get_registered_groups, get_all_channels, list_scheduled_posts, add_scheduled_post
 from channel_handlers import channel_edit_reply
@@ -65,30 +65,38 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.rsplit("_",1)[1])
-    # Statt in der Gruppe zu antworten, schicke die Aufforderung als Privatchat
+    chan_id = int(query.data.rsplit("_", 2)[2])
+    # 1) Aufforderung per Privatchat
     await context.bot.send_message(
         chat_id=update.effective_user.id,
-        text=t(chan_id, 'CHANNEL_SET_TITLE_PROMPT')
+        text=t(chan_id, 'CHANNEL_SET_TITLE_PROMPT'),
+        reply_markup=ForceReply(selective=True)
     )
-    # Optional: feedback in der Gruppe, dass man die Antwort privat schickt
+    # 2) Optionale Bestätigung im Kanal-Menü
     await query.edit_message_text(
-        t(chan_id, 'CHANNEL_SET_TITLE_HEADING')
+        t(chan_id, 'CHANNEL_SET_TITLE_HEADING'),
+        reply_markup=query.message.reply_markup
     )
+    # 3) Merken, dass wir auf eine Titel-Antwort warten
+    context.user_data["awaiting_title"] = chan_id
 
 async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.rsplit("_",1)[1])
-    # sende die Aufforderung als Privatchat
+    chan_id = int(query.data.rsplit("_", 2)[2])
+    # 1) Aufforderung per Privatchat
     await context.bot.send_message(
         chat_id=update.effective_user.id,
-        text=t(chan_id, 'CHANNEL_SET_DESC_PROMPT')
+        text=t(chan_id, 'CHANNEL_SET_DESC_PROMPT'),
+        reply_markup=ForceReply(selective=True)
     )
-    # optional: Hinweis im Kanal-Menü
+    # 2) Optionale Bestätigung im Kanal-Menü
     await query.edit_message_text(
-        t(chan_id, 'CHANNEL_SET_DESC_HEADING')
+        t(chan_id, 'CHANNEL_SET_DESC_HEADING'),
+        reply_markup=query.message.reply_markup
     )
+    # 3) Merken, dass wir auf eine Beschreibung-Antwort warten
+    context.user_data["awaiting_desc"] = chan_id
 
 # --- Kanal-Submenus ---
 async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -156,19 +164,34 @@ async def channel_schedule_add_menu(update: Update, context: ContextTypes.DEFAUL
     await query.message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
 
 async def handle_schedule_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "awaiting_schedule" not in context.user_data:
-        return
     chan_id = context.user_data.pop("awaiting_schedule")
-    text = update.effective_message.text or ""
-    parts = text.split()
-    if len(parts) < 6:
-        return await update.effective_message.reply_text(
-            t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT')
-        )
-    cron      = " ".join(parts[:5])       # die fünf Cron-Felder
-    post_text = " ".join(parts[5:])       # alles danach
-    add_scheduled_post(chan_id, post_text, cron)
-    await update.effective_message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_OK'))
+    msg     = update.effective_message
+    # Foto-File-ID holen (falls vorhanden)
+    if msg.photo:
+        file_id = msg.photo[-1].file_id
+        raw     = msg.caption or ""
+    else:
+        file_id = None
+        raw     = msg.text or ""
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    if not lines:
+        return await msg.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
+    saved = 0
+    for line in lines:
+        parts = line.split()
+        # jede Zeile muss min. 6 Tokens haben
+        if len(parts) < 6:
+            continue
+        cron      = " ".join(parts[:5])
+        post_text = " ".join(parts[5:])
+        add_scheduled_post(chan_id, post_text, cron, file_id)
+        saved += 1
+    if saved == 0:
+        return await msg.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
+    # Rückmeldung mit Anzahl
+    await msg.reply_text(
+        t(chan_id, 'CHANNEL_SCHEDULE_ADD_OK_MULTI').format(count=saved)
+    )
 
 async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

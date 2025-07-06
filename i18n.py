@@ -24,10 +24,15 @@ TRANSLATIONS = {
         'CHANNEL_SCHEDULE_MENU': '🕒 Geplante Beiträge',
         'CHANNEL_SCHEDULE_HEADER': '🗓️ Geplante Beiträge:',
         'CHANNEL_SCHEDULE_ADD': '➕ Beitrag hinzufügen',
-        'CHANNEL_SCHEDULE_ADD_PROMPT': '✏️ Bitte sende den Cron-Ausdruck gefolgt vom Beitragstext, getrennt durch ein Leerzeichen.',
-        'CHANNEL_SCHEDULE_ADD_OK':     '✅ Geplanter Beitrag hinzugefügt.',
-        'CHANNEL_SET_DESC_HEADING': '✅ Ich habe Dir eine Nachricht geschickt. Bitte antworte dort mit der neuen Beschreibung.',
-        'CHANNEL_SET_TITLE_HEADING': '✅ Ich habe Dir eine Nachricht geschickt. Bitte antworte dort mit dem neuen Titel.',
+        'CHANNEL_SCHEDULE_ADD_PROMPT':      '✏️ Sende eine oder mehrere Zeilen mit je 5-Felder-Cron und Text, z.B.:\n\n'
+                                            '`0 9 * * * Guten Morgen`\n'
+                                            '`30 18 * * 1,3,5 Feierabend!`\n\n'
+                                            'Du kannst optional ein Bild mitsenden.',
+        'CHANNEL_SCHEDULE_ADD_OK_MULTI':     '✅ {count} geplante Beiträge hinzugefügt.',
+        'CHANNEL_SET_TITLE_PROMPT': '✏️ Bitte sende den neuen Titel für diesen Kanal per Privatchat.',
+        'CHANNEL_SET_TITLE_HEADING': '✅ Ich habe Dir eine Nachricht geschickt – antworte dort mit dem neuen Titel.',
+        'CHANNEL_SET_DESC_PROMPT': '✏️ Bitte sende die neue Beschreibung für diesen Kanal per Privatchat.',
+        'CHANNEL_SET_DESC_HEADING': '✅ Ich habe Dir eine Nachricht geschickt – antworte dort mit der neuen Beschreibung.',
         'BACK':                  '🔙 Zurück',
         'ANTISPAM':              'Linksperre',
         'WELCOME_MENU':       '⚙ Begrüßung verwalten:',

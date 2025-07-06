@@ -446,11 +446,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("ch_"):
         return
 
-    # 2) Nur noch Patterns "group_<id>" oder "channel_<id>" zulassen
-    #    (optional, wenn ihr das Parsing robuster machen wollt)
-    if not re.match(r"^(group|channel)_-?\d+$", data):
-        return
-
     # 3) ID aus dem letzten Unterstrich ziehen
     parts = data.rsplit("_", 1)
     chat_id_str = parts[1]
