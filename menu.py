@@ -15,7 +15,6 @@ from database import (
     is_daily_stats_enabled, set_daily_stats, get_mood_question,
     set_group_language, get_topic_owners
 )
-from channel_menu import channel_mgmt_menu
 from handlers import clean_delete_accounts_for_chat
 from user_manual import HELP_TEXT
 from access import get_visible_groups
@@ -498,17 +497,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_menu(app):
     # 1) /menu im privaten Chat startet den Gruppen-Auswahl-Flow
-    app.add_handler(
-        CommandHandler(
-            'menu',
-            menu_command,
-            filters=filters.ChatType.PRIVATE
-        ),
-        group=1
-    )
-
+    app.add_handler(CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE), group=1    )
     # 2) CallbackQueries nur für Gruppendaten, keine Channel-Callbacks
-    app.add_handler(
-        CallbackQueryHandler(menu_callback, pattern=r'^(?!ch_|channel_).+'),
-        group=1
-    )
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!ch_|channel_).+'), group=1)
