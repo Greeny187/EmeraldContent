@@ -26,6 +26,8 @@ TRANSLATIONS = {
         'CHANNEL_SCHEDULE_ADD': '➕ Beitrag hinzufügen',
         'CHANNEL_SCHEDULE_ADD_PROMPT': '✏️ Bitte sende den Cron-Ausdruck gefolgt vom Beitragstext, getrennt durch ein Leerzeichen.',
         'CHANNEL_SCHEDULE_ADD_OK':     '✅ Geplanter Beitrag hinzugefügt.',
+        'CHANNEL_SET_DESC_HEADING': '✅ Ich habe Dir eine Nachricht geschickt. Bitte antworte dort mit der neuen Beschreibung.',
+        'CHANNEL_SET_TITLE_HEADING': '✅ Ich habe Dir eine Nachricht geschickt. Bitte antworte dort mit dem neuen Titel.',
         'BACK':                  '🔙 Zurück',
         'ANTISPAM':              'Linksperre',
         'WELCOME_MENU':       '⚙ Begrüßung verwalten:',

@@ -65,16 +65,30 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def channel_settitle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.rsplit("_", 2)[2])
-    await query.message.reply_text(f"✏️ Bitte sende den neuen Titel für Kanal {chan_id}.")
-    context.user_data["awaiting_title"] = chan_id
+    chan_id = int(query.data.rsplit("_",1)[1])
+    # Statt in der Gruppe zu antworten, schicke die Aufforderung als Privatchat
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text=t(chan_id, 'CHANNEL_SET_TITLE_PROMPT')
+    )
+    # Optional: feedback in der Gruppe, dass man die Antwort privat schickt
+    await query.edit_message_text(
+        t(chan_id, 'CHANNEL_SET_TITLE_HEADING')
+    )
 
 async def channel_setdesc_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    chan_id = int(query.data.rsplit("_", 2)[2])
-    await query.message.reply_text(f"✏️ Bitte sende die neue Beschreibung für Kanal {chan_id}.")
-    context.user_data["awaiting_desc"] = chan_id
+    chan_id = int(query.data.rsplit("_",1)[1])
+    # sende die Aufforderung als Privatchat
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text=t(chan_id, 'CHANNEL_SET_DESC_PROMPT')
+    )
+    # optional: Hinweis im Kanal-Menü
+    await query.edit_message_text(
+        t(chan_id, 'CHANNEL_SET_DESC_HEADING')
+    )
 
 # --- Kanal-Submenus ---
 async def channel_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,10 +160,13 @@ async def handle_schedule_input(update: Update, context: ContextTypes.DEFAULT_TY
         return
     chan_id = context.user_data.pop("awaiting_schedule")
     text = update.effective_message.text or ""
-    try:
-        cron, post_text = text.split(" ", 1)
-    except ValueError:
-        return await update.effective_message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT'))
+    parts = text.split()
+    if len(parts) < 6:
+        return await update.effective_message.reply_text(
+            t(chan_id, 'CHANNEL_SCHEDULE_ADD_PROMPT')
+        )
+    cron      = " ".join(parts[:5])       # die fünf Cron-Felder
+    post_text = " ".join(parts[5:])       # alles danach
     add_scheduled_post(chan_id, post_text, cron)
     await update.effective_message.reply_text(t(chan_id, 'CHANNEL_SCHEDULE_ADD_OK'))
 
