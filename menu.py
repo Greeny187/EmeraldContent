@@ -565,11 +565,5 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    app.add_handler(
-        CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE),
-        group=1
-    )
-    app.add_handler(
-        CallbackQueryHandler(menu_callback, pattern=r'^grp_'),
-        group=1
-    )
+    app.add_handler(CommandHandler('menu', menu_command, filters=filters.ChatType.PRIVATE), group=1)
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^(?:group_\d+|group_select|\d+_submenu_.*|\d+_menu_back|help)$"), group=1,)
