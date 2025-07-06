@@ -1,3 +1,5 @@
+import logging
+import re
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     Update, ForceReply, CallbackQuery,
@@ -17,6 +19,7 @@ from user_manual import HELP_TEXT
 from access import get_visible_groups
 from i18n import t
 
+logger = logging.getLogger(__name__)
 
 # ‒‒‒ Hauptmenü für eine Gruppe ‒‒‒
 async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
@@ -438,7 +441,24 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query or not query.data:
         return
     data = query.data
-    await query.answer()
+
+    # 1) Neue Channel-Submenus überspringen
+    if data.startswith("ch_"):
+        return
+
+    # 2) Nur noch Patterns "group_<id>" oder "channel_<id>" zulassen
+    #    (optional, wenn ihr das Parsing robuster machen wollt)
+    if not re.match(r"^(group|channel)_-?\d+$", data):
+        return
+
+    # 3) ID aus dem letzten Unterstrich ziehen
+    parts = data.rsplit("_", 1)
+    chat_id_str = parts[1]
+    try:
+        chat_id = int(chat_id_str)
+    except ValueError:
+        # falls doch mal etwas Unvorhergesehenes reinkommt
+        return
 
     if data == 'group_select':
         return await _handle_group_select(update, context)
