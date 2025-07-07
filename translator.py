@@ -1,16 +1,16 @@
 import logging
-from googletrans import Translator as GoogleTranslator
+from google.cloud import translate_v2 as cloud_translate
 from database import get_cached_translation, set_cached_translation
 
-# Google Translator-Client initialisieren
-_google_translator = GoogleTranslator()
+# Google Cloud Translate-Client initialisieren
+_translate_client = cloud_translate.Client()
 
 
 def translate_hybrid(source_text: str, target_lang: str) -> str:
     """
     Übersetzt einen Text in die Zielsprache `target_lang`.
     1) Prüft den Cache (translations_cache).
-    2) Falls nicht im Cache, ruft Google Translate auf und speichert Ergebnis im Cache.
+    2) Falls nicht im Cache, ruft Google Cloud Translate auf und speichert das Ergebnis im Cache.
     3) Gibt bei Fehlern den Originaltext zurück.
     """
     # Cache-Abfrage
@@ -20,12 +20,16 @@ def translate_hybrid(source_text: str, target_lang: str) -> str:
             return cached
     except Exception as e:
         logging.warning(f"Cache-Abfrage fehlgeschlagen: {e}")
-    
-    # Google Translate
+
+    # Google Cloud Translate
     try:
-        res = _google_translator.translate(source_text, dest=target_lang)
-        translated = res.text
-        # Ergebnis speichern (nicht überschreiben existierender Overrides)
+        result = _translate_client.translate(
+            source_text,
+            target_language=target_lang,
+            format_="text"
+        )
+        translated = result.get('translatedText')
+        # Ergebnis im Cache speichern (ohne bestehende Overrides zu überschreiben)
         try:
             set_cached_translation(source_text, target_lang, translated, override=False)
         except Exception as e:
