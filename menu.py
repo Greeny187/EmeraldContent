@@ -23,36 +23,34 @@ logger = logging.getLogger(__name__)
 # ‒‒‒ Hauptmenü für eine Gruppe ‒‒‒
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Hier implementieren: Gruppen- und Kanalliste zurückgeben
-    await update.message.reply_text('Start Kommando')
+    text = "Wähle eine Gruppe oder einen Kanal aus:"  # anpassen nach Übersetzung
+    groups = await get_visible_groups(update.effective_user.id, context.bot, get_registered_groups())
+    channels = await get_visible_channels(update.effective_user.id, context.bot, get_all_channels())
+    kb = []
+    for gid, title in groups:
+        kb.append([InlineKeyboardButton(title, callback_data=f"group_{gid}")])
+    for cid, title in channels:
+        kb.append([InlineKeyboardButton(title, callback_data=f"channel_{cid}")])
+    return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
+# --- /menu COMMAND ---
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
+    # identisch zu /start, aber nur Gruppen
     return await show_group_select(update, context)
 
-# --- GROUP SELECT ---
+# --- SHOW GROUP SELECT ---
 async def show_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Unabhängig ob Callback oder Command
+    if update.callback_query:
+        await update.callback_query.answer()
     user = update.effective_user
-    all_groups = get_registered_groups()
-    visible = await get_visible_groups(user.id, context.bot, all_groups)
+    visible = await get_visible_groups(user.id, context.bot, get_registered_groups())
     if not visible:
         return await update.effective_message.reply_text("Keine sichtbaren Gruppen gefunden.")
-
-    kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
+    kb = [[InlineKeyboardButton(title, callback_data=f"group_{gid}")] for gid, title in visible]
     return await update.effective_message.reply_text(
         "Bitte wähle eine Gruppe:",
         reply_markup=InlineKeyboardMarkup(kb)
     )
-
-    # Inline-Keyboard bauen
-    kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
-    return await target.reply_text(
-        "Bitte wähle eine Gruppe:",
-        reply_markup=InlineKeyboardMarkup(kb),
-    )
-
 
 async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     stats_label = 'Statistiken aus' if is_daily_stats_enabled(chat_id) else 'Statistiken an'
@@ -650,19 +648,23 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ‒‒‒ Dispatcher ‒‒‒
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+    query: CallbackQuery = update.callback_query
     data = query.data
-    # Gruppenauswahl
+    await query.answer()
+    # Gruppen-Auswahl
     if data.startswith('group_'):
-        chat_id = int(data.split('_',1)[1])
-        return await show_group_menu(query, context, chat_id)
-    # Help
-    if data == 'help':
-        return await query.edit_message_text(t('HELP_TEXT'))
-    # Back to group select
+        gid = int(data.split('_',1)[1])
+        return await show_group_menu(query, context, gid)
+    # Kanal-Auswahl
+    if data.startswith('channel_'):
+        return await channel_mgmt_menu(update, context)
+    # In Gruppen-Menü zurück
     if data == 'group_select':
         return await show_group_select(update, context)
-
+    # Hilfe-Text
+    if data == 'help':
+        return await query.edit_message_text(HELP_TEXT, parse_mode="Markdown")
+    
     # Untermenüs: welcome, rules, farewell, rss, exceptions
     m_section = re.match(r'^(?P<gid>\d+)_(?P<section>welcome|rules|farewell|rss|exceptions)$', data)
     if m_section:
@@ -828,6 +830,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_daily_stats(gid, not enabled)
         await query.answer(f"Tagesstatistik {'aktiviert' if not enabled else 'deaktiviert'}", show_alert=True)
         return await show_group_menu(query, context, gid)
+
+    # Cleanup
+    m_clean = re.match(r'^(\d+)_clean_delete$', data)
+    if m_clean:
+        gid = int(m_clean.group(1))
+        count = await clean_delete_accounts_for_chat(gid, context.bot)
+        return await query.edit_message_text(f"✅ Entfernt: {count} gelöschte Accounts.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅ Zurück', callback_data=f'group_{gid}')]]))
 
     # Hilfetext
     if data == 'help':
