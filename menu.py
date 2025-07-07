@@ -49,22 +49,23 @@ async def show_group_menu(query: Update, context: ContextTypes.DEFAULT_TYPE, cha
         "Statistiken aus" if is_daily_stats_enabled(chat_id) else "Statistiken an"
     )
     kb = [
-        [InlineKeyboardButton("Begrüßung", callback_data=f"{chat_id}_submenu_welcome")],
-        [InlineKeyboardButton("Regeln",    callback_data=f"{chat_id}_submenu_rules")],
-        [InlineKeyboardButton("Farewell",  callback_data=f"{chat_id}_submenu_farewell")],
-        [InlineKeyboardButton("RSS",       callback_data=f"{chat_id}_submenu_rss")],
-        [InlineKeyboardButton("Linkschutz", callback_data=f"{chat_id}_submenu_links")],
+        [InlineKeyboardButton("Begrüßung", callback_data=f"{chat_id}_welcome")],
+        [InlineKeyboardButton("Regeln",    callback_data=f"{chat_id}_rules")],
+        [InlineKeyboardButton("Farewell",  callback_data=f"{chat_id}_farewell")],
+        [InlineKeyboardButton("RSS",       callback_data=f"{chat_id}_rss")],
+        [InlineKeyboardButton("Linkschutz", callback_data=f"{chat_id}_exceptions")],
         [InlineKeyboardButton(stats_label,    callback_data=f"{chat_id}_toggle_stats")],
-        [InlineKeyboardButton("Mood",       callback_data=f"{chat_id}_edit_mood")],
-        [InlineKeyboardButton("Sprache",    callback_data=f"{chat_id}_submenu_language")],
+        [InlineKeyboardButton("Stimmung",  callback_data=f"{chat_id}_mood")],
         [InlineKeyboardButton("Cleanup",    callback_data=f"{chat_id}_clean_delete")],
         [InlineKeyboardButton("Hilfe",      callback_data="help")],
+        [InlineKeyboardButton("Sprache",   callback_data=f"{chat_id}_language")],
         [InlineKeyboardButton("Gruppen-Auswahl", callback_data="group_select")]
     ]
     await query.edit_message_text(
         "Gruppen-Menü:",
         reply_markup=InlineKeyboardMarkup(kb),
     )
+
 
 # ‒‒‒ Submenus ‒‒‒
 async def submenu_welcome(query: CallbackQuery, context):
@@ -880,7 +881,11 @@ def register_menu(app):
 
     # Kanal-Menü
     app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=2)
-    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_\d+$'), group=2)
+    # Channel-Auswahl führt nun direkt ins Kanal-Management
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=2)
+    # Back-to-channel-list
+    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=2)
+
     # ch_ Submenus
     app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r'^ch_stats_-?\d+$'),      group=2)
     app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r'^ch_settings_-?\d+$'),   group=2)
@@ -888,10 +893,9 @@ def register_menu(app):
     app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r'^ch_schedule_-?\d+$'),   group=2)
     app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r'^ch_schedule_add_-?\d+$'), group=2)
     app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r'^ch_pins_-?\d+$'),       group=2)
-    # Back-to-main
-    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=2)
     # Fallback Kanal-Callback
     app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_)'), group=2)
+
     # Freitext für Titel/Beschreibung & Zeitplan
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=2)
