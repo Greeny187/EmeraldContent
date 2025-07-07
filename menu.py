@@ -47,8 +47,10 @@ async def show_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Bitte wähle eine Gruppe:"
     # Callback vs. Message
     if update.callback_query:
+        # GEÄNDERT: edit_message_text statt reply_text, um Duplikate zu vermeiden
         await update.callback_query.answer()
         return await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    # unverändert: bei Direktaufruf per /menu
     return await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -653,14 +655,14 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    # Gruppen-Auswahl
+    await query.answer()
+
+    # GEÄNDERT: Muster für CallbackQueryHandler und hier spezifisch abgedeckt
     m = re.match(r'^group_(\d+)$', data)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
-    # Zurück zur Gruppen-Auswahl
     if data == 'group_select':
         return await show_group_select(update, context)
-    # Submenus
     m = re.match(r'^(\d+)_welcome$', data)
     if m:
         return await submenu_welcome(query, int(m.group(1)))
@@ -670,27 +672,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = re.match(r'^(\d+)_farewell$', data)
     if m:
         return await submenu_farewell(query, int(m.group(1)))
-    # Kanal
     if data.startswith('channel_'):
         return await channel_mgmt_menu(update, context)
-    # Hilfe
     if data == 'help':
         return await query.edit_message_text(HELP_TEXT, parse_mode='Markdown')
-    # Stats Toggle
     m = re.match(r'^(\d+)_toggle_stats$', data)
     if m:
         chat_id = int(m.group(1))
-        # Toggle-Logik hier
         await query.answer('Tagesstatistiken umgeschaltet', show_alert=True)
         return await show_group_menu(query, context, chat_id)
-    # Cleanup
     m = re.match(r'^(\d+)_clean_delete$', data)
     if m:
         chat_id = int(m.group(1))
         count = await clean_delete_accounts_for_chat(chat_id, context.bot)
         return await query.edit_message_text(f"✅ Entfernt: {count} Accounts.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅ Zurück', callback_data=f'group_{chat_id}')]]))
-    # Fallback
-    await query.answer('Unbekannte Aktion', show_alert=True)
+
+    # Fallback bleibt, wenn wirklich unhandled
+    return await query.answer('Unbekannte Aktion', show_alert=True)
 
     # === Kanal-Callbackdaten ===
     # Kanal-Hauptmenü
