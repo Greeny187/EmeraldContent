@@ -7,7 +7,6 @@ from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
 from channel_handlers import register_channel_handlers
-from channel_menu import register_channel_menu
 from database import init_db
 from logger import setup_logging
 from mood import register_mood
@@ -40,7 +39,6 @@ def main():
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
     register_menu(app)
-    register_channel_menu(app)
     register_handlers(app)
     register_channel_handlers(app)
     register_rss(app)
