@@ -20,23 +20,23 @@ from i18n import t
 
 logger = logging.getLogger(__name__)
 
-# --- Core Commands ---
+# --- Command Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt das Gruppenauswahl-Menü bei /start"""
+    """/start – Zeigt die Gruppenauswahl"""
     await show_group_select(update, context)
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt das Gruppenauswahl-Menü bei /menu"""
+    """/menu – Zeigt die Gruppenauswahl"""
     await show_group_select(update, context)
 
 async def channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt das Kanalauswahl-Menü bei /channel"""
+    """/channel – Zeigt die Kanalauswahl"""
     await show_channel_select(update, context)
 
 # --- Auswahl-Menüs ---
 async def show_group_select(update: Update|CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     groups = get_registered_groups()
-    text = t(None, 'SELECT_GROUP_PROMPT')  # Schlüssel ohne chat_id
+    text = t(None, 'SELECT_GROUP_PROMPT')
     if not groups:
         text = t(None, 'NO_GROUPS')
         if isinstance(update, CallbackQuery):
@@ -70,51 +70,40 @@ async def show_channel_select(update: Update|CallbackQuery, context: ContextType
     else:
         await update.message.reply_text(text, reply_markup=markup)
 
-# --- Haupt-Callback-Router ---
+# --- Callback Router ---
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data
     await query.answer()
+    data = query.data
 
     # Gruppen-Auswahl
-    if data in ('group_select', 'group'):  # 'group' alias
+    if data in ('group_select',):
         return await show_group_select(query, context)
     m = re.match(r'^group_(\d+)$', data)
     if m:
         return await show_group_menu(query, context, int(m.group(1)))
 
     # Kanäle-Auswahl
-    if data in ('channel_select', 'channel'):
+    if data == 'channel_select':
         return await show_channel_select(query, context)
     if data.startswith('channel_'):
         return await channel_mgmt_menu(update, context)
 
-    # Gruppen-Submenus
-    action_map = {
-        'welcome': submenu_welcome,
-        'rules': submenu_rules,
-        'farewell': submenu_farewell,
-        'rss': submenu_rss,
-        'exceptions': submenu_links,
-        'mood': submenu_mood,
-        'language': submenu_language,
-        'clean_delete': clean_delete,
-    }
-    for key, handler in action_map.items():
-        m = re.match(rf'^(\d+)_{key}$', data)
-        if m:
-            return await handler(query, context)
+    # Gruppen-Untermenüs
+    m = re.match(r'^(\d+)_(welcome|rules|farewell|rss|exceptions|mood|language|clean_delete)$', data)
+    if m:
+        gid, action = int(m.group(1)), m.group(2)
+        return await globals()[f"submenu_{action}"](query, context)
+    # Toggle Stats
     m = re.match(r'^(\d+)_toggle_stats$', data)
     if m:
         gid = int(m.group(1))
         set_daily_stats(gid, not is_daily_stats_enabled(gid))
         return await show_group_menu(query, context, gid)
     # RSS-Aktionen
-    rss_map = {'rss_add': rss_add, 'rss_list': rss_list, 'rss_remove': rss_remove}
-    for key, handler in rss_map.items():
-        m = re.match(rf'^(\d+)_{key}$', data)
-        if m:
-            return await handler(query, context)
+    m = re.match(r'^(\d+)_(rss_add|rss_list|rss_remove)$', data)
+    if m:
+        return await globals()[m.group(2)](query, context)
     # Sprachwechsel
     m = re.match(r'^(\d+)_setlang_([a-z]{2})$', data)
     if m:
@@ -127,9 +116,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.debug(f"Unhandled callback_data: {data}")
 
-
+# --- Gruppen-Menü ---
 async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Zeigt das Hauptmenü für eine Gruppe."""
     await query.answer()
     stats_label = 'Statistiken aus' if t('daily_stats_enabled', chat_id) else 'Statistiken an'
     buttons = [
@@ -145,10 +133,9 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         InlineKeyboardButton('Hilfe', callback_data='help'),
         InlineKeyboardButton('Gruppen-Auswahl', callback_data='group_select')
     ]
-    # Zwei Spalten
     kb = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
-    return await query.edit_message_text('Gruppen-Menü:', reply_markup=InlineKeyboardMarkup(kb))
-
+    await query.edit_message_text('Gruppen-Menü:', reply_markup=InlineKeyboardMarkup(kb))
+    
 
 # --- Submenus ---
 async def submenu_welcome(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
@@ -474,16 +461,10 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    # /start, /menu, /channel
     app.add_handler(CommandHandler('start', start_command), group=1)
     app.add_handler(CommandHandler('menu', menu_command), group=1)
     app.add_handler(CommandHandler('channel', channel_command), group=1)
-
-    # Callback Router
     app.add_handler(CallbackQueryHandler(menu_callback), group=1)
-
-    # Kanal-spezifische Handler
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
-
     logging.info("Menu handlers registered")
