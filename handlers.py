@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_group_setting, 
-get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, set_group_language)
+get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, set_group_language, add_channel, list_channels)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
@@ -20,48 +20,76 @@ async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"/start in Chat {update.effective_chat.id} (type={update.effective_chat.type})")
+async def start_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
-    chat_id = chat.id
+    register_group(chat.id, chat.title)
+    logger.info(f"Registered group {chat.id} - {chat.title}")
+    await update.message.reply_text(t(chat.id, 'GROUP_REGISTERED'))
+
+# --- Start in Kanälen: Registrierung mit Erfolgskontrolle ---
+async def start_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    # Versuch, den Kanal anzulegen
+    add_channel(chat.id, chat.id, chat.username or None, chat.title or None)
+    # Kontrolle über die Datenbank
+    try:
+        channels = list_channels(chat.id)
+        if any(cid == chat.id for cid, _, _ in channels):
+            logger.info(f"Registered channel {chat.id} - {chat.title}")
+            await update.message.reply_text(t(chat.id, 'CHANNEL_REGISTERED'))
+        else:
+            logger.error(f"Failed to register channel in DB: {chat.id}")
+            await update.message.reply_text("❌ Kanal konnte nicht registriert werden.")
+    except Exception as e:
+        logger.exception("Error checking channel registration")
+        await update.message.reply_text("❌ Fehler bei der Kanalregistrierung.")
+
+# --- Start in privatem Chat: Auswahlmenü für Gruppen und Kanäle ---
+async def start_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
     user = update.effective_user
+    all_groups = get_registered_groups()       # [(chat_id, title), …]
+    all_channels = get_all_channels()         # [(parent_chat_id, channel_id, username, title), …]
 
-    # 1) Gruppe registrieren
-    if chat.type in ("group", "supergroup"):
-        register_group(chat.id, chat.title)
-        await update.message.reply_text(t(chat_id, 'WELCOME_SET'))
+    # Filter sichtbare Gruppen und Kanäle
+    visible_groups = []
+    for gid, title in all_groups:
+        try:
+            member = await context.bot.get_chat_member(gid, user.id)
+            if member.status in ('administrator', 'creator'):
+                visible_groups.append((gid, title))
+        except:
+            continue
 
-    # 2) Kanal registrieren
-    if chat.type == "channel" or chat.type == "supergroup":
-        from database import add_channel
-        add_channel(chat.id, chat.id, chat.username, chat.title)
-        return await update.effective_message.reply_text(
-            "✅ Kanal registriert! Wechsle in deinen privaten Bot-Chat und sende /start."
+    visible_channels = []
+    for parent_id, cid, username, title in all_channels:
+        try:
+            member = await context.bot.get_chat_member(cid, user.id)
+            if member.status in ('administrator', 'creator'):
+                visible_channels.append((parent_id, cid, title))
+        except:
+            continue
+
+    if not visible_groups and not visible_channels:
+        await update.message.reply_text(
+            t(chat.id, 'NO_ADMIN_RIGHTS')
         )
-    
-    if update.effective_chat.type == "private":
-        user = update.effective_user
+        return
 
-        all_groups    = get_registered_groups()    # [(chat_id, title), …]
-        visible_groups   = await get_visible_groups(user.id, context.bot, all_groups)
+    keyboard = []
+    for gid, title in visible_groups:
+        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
+    for parent_id, cid, title in visible_channels:
+        keyboard.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
 
-        all_channels = get_all_channels()  # [(parent_chat_id, channel_id, username, title), …]
-        visible_channels    = await get_visible_channels(user.id, context.bot, all_channels)
+    await update.message.reply_text(
+        t(chat.id, 'SELECT_CHAT'),
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-        if not visible_groups and not visible_channels:
-            return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe oder keinem Kanal Admin, in dem der Bot aktiv ist."
-            )
-
-        keyboard = []
-        for gid, title in visible_groups:
-            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
-        for cid, title in visible_channels:
-            keyboard.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
-
-        return await update.message.reply_text(
-            "🔧 Wähle eine Gruppe oder einen Kanal:", reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+# --- Hilfs- und Help-Handler ---
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(t(update.effective_chat.id, 'HELP_TEXT'))
 
 async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Wenn der Bot einer Gruppe beitritt, zeige Erst-Sprachauswahl."""
@@ -491,12 +519,11 @@ async def dashboard_command(update, context):
 
 def register_handlers(app):
 
-    # 1) /start in Kanälen (als Channel-Post)
-    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.Regex(r"^/start(@\w+)?$"), start), group=-2)
     # 2) /start in Gruppen (group & supergroup)
-    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.GROUPS), group=0)
-    # 3) /start im privaten Chat
-    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE), group=1)
+    app.add_handler(CommandHandler('start', start_group, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler('start', start_private, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler('startchannel', start_channel, filters=filters.ChatType.CHANNELS))
+    app.add_handler(CommandHandler('help', help_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))

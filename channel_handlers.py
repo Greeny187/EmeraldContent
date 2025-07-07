@@ -3,6 +3,14 @@ from telegram.ext import ContextTypes, CommandHandler, filters, MessageHandler, 
 from database import add_channel, remove_channel, list_channels
 from i18n import t
 
+async def channel_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Pong from channel')
+
+
+def register_channel_handlers(app):
+    # Beispiel: /startchannel hier entfernen (ist in handler.py)
+    app.add_handler(CommandHandler('ping', channel_ping, filters=filters.ChatType.CHANNELS))
+
 async def add_channel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup"):
