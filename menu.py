@@ -55,8 +55,7 @@ async def show_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    await query.answer()
-    stats_label = ('Statistiken aus' if context.bot_data.get(f'daily_stats_{chat_id}') else 'Statistiken an')
+    stats_label = 'Statistiken aus' if is_daily_stats_enabled(chat_id) else 'Statistiken an'
     kb = [
         [InlineKeyboardButton('Begrüßung', callback_data=f"{chat_id}_welcome")],
         [InlineKeyboardButton('Regeln', callback_data=f"{chat_id}_rules")],
@@ -70,10 +69,7 @@ async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton('Hilfe', callback_data='help')],
         [InlineKeyboardButton('Gruppen-Auswahl', callback_data='group_select')]
     ]
-    return await query.edit_message_text(
-        "Gruppen-Menü:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    return await query.edit_message_text("Gruppen-Menü:", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -890,15 +886,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    
-    # /start zeigt Gruppen und Kanäle
-    app.add_handler(CommandHandler('start', start_command), group=1)
-    app.add_handler(CallbackQueryHandler(start_callback, pattern='^(?:group_|channel_)'), group=1)
-    # /menu Kommando
-    app.add_handler(CommandHandler('menu', menu_command), group=2)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=2)
 
-    # Kanal-Handler Gruppe 1 bleibt wie gehabt
+    # Basis /start und /menu
+    app.add_handler(CommandHandler('start', start_command), group=1)
+    app.add_handler(CommandHandler('menu', menu_command), group=1)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
+    # Kanal-Menü bleibt Gruppe1
     app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=1)
     app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=1)
@@ -911,3 +904,5 @@ def register_menu(app):
     app.add_handler(CallbackQueryHandler(channel_mgmt_menu,       pattern=r'^(?:ch_|channel_)'),      group=1)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
+
+    logger.info("Menu handlers registered")
