@@ -22,26 +22,29 @@ logger = logging.getLogger(__name__)
 
 # ‒‒‒ Hauptmenü für eine Gruppe ‒‒‒
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Hier implementieren: Gruppen- und Kanalliste zurückgeben
+    await update.message.reply_text('Start Kommando')
+
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _handle_group_select(update, context)
+    if update.callback_query:
+        await update.callback_query.answer()
+    return await show_group_select(update, context)
 
-async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    callback: CallbackQuery = update.callback_query
-    if callback:
-        # CallbackQuery: antworten und die Nachricht als Ziel nutzen
-        await callback.answer()
-        user_id = callback.from_user.id
-        target = callback.message
-    else:
-        # Direktes Kommando: Update.message ist Message
-        message: Message = update.message
-        user_id = message.from_user.id
-        target = message
-
+# --- GROUP SELECT ---
+async def show_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Unabhängig ob Callback oder Command
+    user = update.effective_user
     all_groups = get_registered_groups()
-    visible = await get_visible_groups(user_id, context.bot, all_groups)
+    visible = await get_visible_groups(user.id, context.bot, all_groups)
     if not visible:
-        return await target.reply_text("Keine sichtbaren Gruppen gefunden.")
+        return await update.effective_message.reply_text("Keine sichtbaren Gruppen gefunden.")
+
+    kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
+    return await update.effective_message.reply_text(
+        "Bitte wähle eine Gruppe:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
     # Inline-Keyboard bauen
     kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
@@ -51,29 +54,35 @@ async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def show_group_menu(query: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+async def show_group_menu(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await query.answer()
-    stats_label = (
-        "Statistiken aus" if is_daily_stats_enabled(chat_id) else "Statistiken an"
-    )
+    stats_label = ('Statistiken aus' if context.bot_data.get(f'daily_stats_{chat_id}') else 'Statistiken an')
     kb = [
-        [InlineKeyboardButton("Begrüßung", callback_data=f"{chat_id}_welcome")],
-        [InlineKeyboardButton("Regeln",    callback_data=f"{chat_id}_rules")],
-        [InlineKeyboardButton("Farewell",  callback_data=f"{chat_id}_farewell")],
-        [InlineKeyboardButton("RSS",       callback_data=f"{chat_id}_rss")],
-        [InlineKeyboardButton("Linkschutz", callback_data=f"{chat_id}_exceptions")],
-        [InlineKeyboardButton(stats_label,    callback_data=f"{chat_id}_toggle_stats")],
-        [InlineKeyboardButton("Stimmung",  callback_data=f"{chat_id}_mood")],
-        [InlineKeyboardButton("Cleanup",    callback_data=f"{chat_id}_clean_delete")],
-        [InlineKeyboardButton("Hilfe",      callback_data="help")],
-        [InlineKeyboardButton("Sprache",   callback_data=f"{chat_id}_language")],
-        [InlineKeyboardButton("Gruppen-Auswahl", callback_data="group_select")]
+        [InlineKeyboardButton('Begrüßung', callback_data=f"{chat_id}_welcome")],
+        [InlineKeyboardButton('Regeln', callback_data=f"{chat_id}_rules")],
+        [InlineKeyboardButton('Farewell', callback_data=f"{chat_id}_farewell")],
+        [InlineKeyboardButton('RSS', callback_data=f"{chat_id}_rss")],
+        [InlineKeyboardButton('Linkschutz', callback_data=f"{chat_id}_exceptions")],
+        [InlineKeyboardButton(stats_label, callback_data=f"{chat_id}_toggle_stats")],
+        [InlineKeyboardButton('Stimmung', callback_data=f"{chat_id}_mood")],
+        [InlineKeyboardButton('Sprache', callback_data=f"{chat_id}_language")],
+        [InlineKeyboardButton('Cleanup', callback_data=f"{chat_id}_clean_delete")],
+        [InlineKeyboardButton('Hilfe', callback_data='help')],
+        [InlineKeyboardButton('Gruppen-Auswahl', callback_data='group_select')]
     ]
-    await query.edit_message_text(
+    return await query.edit_message_text(
         "Gruppen-Menü:",
-        reply_markup=InlineKeyboardMarkup(kb),
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
+
+async def start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    data = update.callback_query.data
+    if data.startswith('group_'):
+        return await show_group_menu(update.callback_query, context, int(data.split('_',1)[1]))
+    if data.startswith('channel_'):
+        return await channel_mgmt_menu(update.callback_query, context)
 
 # ‒‒‒ Submenus ‒‒‒
 async def submenu_welcome(query: CallbackQuery, context):
@@ -644,20 +653,19 @@ async def channel_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ‒‒‒ Dispatcher ‒‒‒
-async def menu_callback(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     data = query.data
-
-    # === Gruppen-Callbackdaten ===
+    # Gruppenauswahl
+    if data.startswith('group_'):
+        chat_id = int(data.split('_',1)[1])
+        return await show_group_menu(query, context, chat_id)
+    # Help
+    if data == 'help':
+        return await query.edit_message_text(t('HELP_TEXT'))
+    # Back to group select
     if data == 'group_select':
-        return await _handle_group_select(update, context)
-
-    # Haupt-Gruppenmenü öffnen
-    m_group = re.match(r'^group_(\d+)$', data)
-    if m_group:
-        group_id = int(m_group.group(1))
-        return await show_group_menu(query, context, group_id)
+        return await show_group_select(update, context)
 
     # Untermenüs: welcome, rules, farewell, rss, exceptions
     m_section = re.match(r'^(?P<gid>\d+)_(?P<section>welcome|rules|farewell|rss|exceptions)$', data)
@@ -882,31 +890,24 @@ async def menu_callback(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-    # Gruppen-Menü
-    app.add_handler(CommandHandler('menu', menu_command), group=1)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
     
-    # Kanal-Menü
-    app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=1)
-    # Channel-Auswahl führt nun direkt ins Kanal-Management
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=1)
-    # Back-to-channel-list
-    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=1)
+    # /start zeigt Gruppen und Kanäle
+    app.add_handler(CommandHandler('start', start_command), group=1)
+    app.add_handler(CallbackQueryHandler(start_callback, pattern='^(?:group_|channel_)'), group=1)
+    # /menu Kommando
+    app.add_handler(CommandHandler('menu', menu_command), group=2)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=2)
 
-    # ch_ Submenus
+    # Kanal-Handler Gruppe 1 bleibt wie gehabt
+    app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=1)
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=1)
+    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=1)
     app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r'^ch_stats_-?\d+$'),      group=1)
     app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r'^ch_settings_-?\d+$'),   group=1)
     app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r'^ch_broadcast_-?\d+$'),  group=1)
     app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r'^ch_schedule_-?\d+$'),   group=1)
     app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r'^ch_schedule_add_-?\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r'^ch_pins_-?\d+$'),       group=1)
-    # Fallback Kanal-Callback
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_)'), group=1)
-
-    # Freitext für Titel/Beschreibung & Zeitplan
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu,       pattern=r'^(?:ch_|channel_)'),      group=1)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
-
-    # Hauptmenü und Callback-Handler müssen in Gruppe 2 liegen, sonst werden Untermenüs nicht angezeigt:
-    app.add_handler(CommandHandler('menu', menu_command), group=2)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=2)
