@@ -50,8 +50,10 @@ async def start_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
 
     # Sichtbare Gruppen und Kanäle über Access-Module
-    visible_groups = await get_visible_groups(user.id, context.bot)
-    visible_channels = await get_visible_channels(user.id, context.bot)
+    all_groups       = get_registered_groups()
+    visible_groups   = await get_visible_groups(user.id, context.bot, all_groups)
+    all_channels     = get_all_channels()
+    visible_channels = await get_visible_channels(user.id, context.bot, all_channels)
 
     if not visible_groups and not visible_channels:
         await msg.reply_text(t(chat.id, 'NO_ADMIN_RIGHTS'))
