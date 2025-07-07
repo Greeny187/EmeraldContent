@@ -874,28 +874,31 @@ async def menu_callback(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes
 # --- Registrierung der Handler ---
 
 def register_menu(app):
-
     # Gruppen-Menü
-    app.add_handler(CommandHandler('menu', menu_command), group=2)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=2)
-
+    app.add_handler(CommandHandler('menu', menu_command), group=1)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=1)
+    
     # Kanal-Menü
-    app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=2)
+    app.add_handler(CommandHandler('channel', show_main_menu, filters=filters.ChatType.PRIVATE), group=1)
     # Channel-Auswahl führt nun direkt ins Kanal-Management
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=2)
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^channel_\d+$'), group=1)
     # Back-to-channel-list
-    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=2)
+    app.add_handler(CallbackQueryHandler(show_main_menu, pattern=r'^channel_main_menu$'), group=1)
 
     # ch_ Submenus
-    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r'^ch_stats_-?\d+$'),      group=2)
-    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r'^ch_settings_-?\d+$'),   group=2)
-    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r'^ch_broadcast_-?\d+$'),  group=2)
-    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r'^ch_schedule_-?\d+$'),   group=2)
-    app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r'^ch_schedule_add_-?\d+$'), group=2)
-    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r'^ch_pins_-?\d+$'),       group=2)
+    app.add_handler(CallbackQueryHandler(channel_stats_menu,      pattern=r'^ch_stats_-?\d+$'),      group=1)
+    app.add_handler(CallbackQueryHandler(channel_settings_menu,   pattern=r'^ch_settings_-?\d+$'),   group=1)
+    app.add_handler(CallbackQueryHandler(channel_broadcast_menu,  pattern=r'^ch_broadcast_-?\d+$'),  group=1)
+    app.add_handler(CallbackQueryHandler(channel_schedule_menu,   pattern=r'^ch_schedule_-?\d+$'),   group=1)
+    app.add_handler(CallbackQueryHandler(channel_schedule_add_menu, pattern=r'^ch_schedule_add_-?\d+$'), group=1)
+    app.add_handler(CallbackQueryHandler(channel_pins_menu,       pattern=r'^ch_pins_-?\d+$'),       group=1)
     # Fallback Kanal-Callback
-    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_)'), group=2)
+    app.add_handler(CallbackQueryHandler(channel_mgmt_menu, pattern=r'^(?:ch_|channel_)'), group=1)
 
     # Freitext für Titel/Beschreibung & Zeitplan
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=2)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, channel_edit_reply), group=1)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_schedule_input), group=1)
+
+    # Hauptmenü und Callback-Handler müssen in Gruppe 2 liegen, sonst werden Untermenüs nicht angezeigt:
+    app.add_handler(CommandHandler('menu', menu_command), group=2)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=2)
