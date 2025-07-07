@@ -10,7 +10,7 @@ from database import (register_group, get_registered_groups, get_rules, set_welc
 remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
 get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat, is_deleted_account
+from utils import clean_delete_accounts_for_chat, is_deleted_account, tr
 from user_manual import help_handler
 from menu import show_group_menu
 from access import get_visible_groups

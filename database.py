@@ -65,11 +65,12 @@ def init_db(cur):
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS translations_cache (
-            source_text   TEXT    NOT NULL,
-            language_code TEXT    NOT NULL,
-            translated    TEXT    NOT NULL,
-            is_override   BOOLEAN NOT NULL DEFAULT FALSE,
-            PRIMARY KEY (source_text, language_code)
+            id SERIAL PRIMARY KEY,
+            source_text TEXT NOT NULL,
+            target_lang VARCHAR(10) NOT NULL,
+            translated_text TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            UNIQUE (source_text, target_lang)
         );
         """
     )
@@ -485,7 +486,7 @@ def set_cached_translation(cur, source_text: str, lang: str,
         """,
         (source_text, lang, translated, override)
     )
-    
+
 # --- Legacy Migration Utility ---
 def migrate_db():
     import psycopg2

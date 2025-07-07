@@ -1,9 +1,12 @@
 import logging
 from database import list_active_members, mark_member_deleted
 from telegram.error import BadRequest
-logger = logging.getLogger(__name__)
+from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
+
+def tr(text: str, lang: str) -> str:
+    return translate_hybrid(text, lang)
 
 def is_deleted_account(member) -> bool:
     """

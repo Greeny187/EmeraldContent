@@ -12,7 +12,7 @@ from database import (
     set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
 )
-from utils import clean_delete_accounts_for_chat
+from utils import clean_delete_accounts_for_chat, tr
 from user_manual import HELP_TEXT
 from access import get_visible_groups
 import logging

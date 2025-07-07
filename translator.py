@@ -1,32 +1,36 @@
+import logging
+from googletrans import Translator as GoogleTranslator
 from database import get_cached_translation, set_cached_translation
-from googletrans import Translator  # oder DeepL-Client deiner Wahl
 
-translator = Translator()
+# Google Translator-Client initialisieren
+_google_translator = GoogleTranslator()
 
-DEFAULT_LANG = 'de'
 
-def t(source_text: str, lang: str = DEFAULT_LANG) -> str:
+def translate_hybrid(source_text: str, target_lang: str) -> str:
     """
-    Übersetzt source_text in die Zielsprache lang.
-    Rückt den Original-Text zurück, wenn lang == DEFAULT_LANG.
-    Nutzt Cache + Übersetzungs-API.
+    Übersetzt einen Text in die Zielsprache `target_lang`.
+    1) Prüft den Cache (translations_cache).
+    2) Falls nicht im Cache, ruft Google Translate auf und speichert Ergebnis im Cache.
+    3) Gibt bei Fehlern den Originaltext zurück.
     """
-    # 1. Wenn Deutsch (Standard), Original zurückgeben
-    if lang == DEFAULT_LANG:
-        return source_text
-
-    # 2. Aus Cache holen
-    cached = get_cached_translation(source_text, lang)
-    if cached:
-        return cached
-
-    # 3. Übersetzen
+    # Cache-Abfrage
     try:
-        result = translator.translate(source_text, dest=lang).text
-    except Exception:
-        # Bei Fehlschlag immer noch Original-Text zurückgeben
+        cached = get_cached_translation(source_text, target_lang)
+        if cached:
+            return cached
+    except Exception as e:
+        logging.warning(f"Cache-Abfrage fehlgeschlagen: {e}")
+    
+    # Google Translate
+    try:
+        res = _google_translator.translate(source_text, dest=target_lang)
+        translated = res.text
+        # Ergebnis speichern (nicht überschreiben existierender Overrides)
+        try:
+            set_cached_translation(source_text, target_lang, translated, override=False)
+        except Exception as e:
+            logging.warning(f"Cache-Speicherung fehlgeschlagen: {e}")
+        return translated
+    except Exception as e:
+        logging.error(f"Übersetzung fehlgeschlagen ({source_text}→{target_lang}): {e}")
         return source_text
-
-    # 4. In Cache speichern
-    set_cached_translation(source_text, lang, result, override=False)
-    return result
