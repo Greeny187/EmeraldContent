@@ -1,7 +1,5 @@
 from telegram import Update, Chat
 from telegram.ext import ContextTypes, CommandHandler, filters, MessageHandler, CallbackQueryHandler
-from database import add_channel, remove_channel, list_channels
-from i18n import t
 
 async def channel_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Pong from channel')
