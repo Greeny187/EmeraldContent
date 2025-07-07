@@ -26,22 +26,30 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _handle_group_select(update, context)
 
 async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query or update.message
-    if hasattr(query, "answer"):
-        await query.answer()
+    callback: CallbackQuery = update.callback_query
+    if callback:
+        # CallbackQuery: antworten und die Nachricht als Ziel nutzen
+        await callback.answer()
+        user_id = callback.from_user.id
+        target = callback.message
+    else:
+        # Direktes Kommando: Update.message ist Message
+        message: Message = update.message
+        user_id = message.from_user.id
+        target = message
 
     all_groups = get_registered_groups()
-    visible    = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
-    target     = query.message if isinstance(query, Message) else query
-
+    visible = await get_visible_groups(user_id, context.bot, all_groups)
     if not visible:
         return await target.reply_text("Keine sichtbaren Gruppen gefunden.")
 
+    # Inline-Keyboard bauen
     kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
     return await target.reply_text(
         "Bitte wähle eine Gruppe:",
         reply_markup=InlineKeyboardMarkup(kb),
     )
+
 
 async def show_group_menu(query: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await query.answer()
