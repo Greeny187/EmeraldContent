@@ -522,7 +522,7 @@ def register_handlers(app):
     # 2) /start in Gruppen (group & supergroup)
     app.add_handler(CommandHandler('start', start_group, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler('start', start_private, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler('startchannel', start_channel, filters=filters.ChatType.CHANNELS))
+    app.add_handler(CommandHandler('startchannel', start_channel, filters=filters.ChatType.CHANNEL))
     app.add_handler(CommandHandler('help', help_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
