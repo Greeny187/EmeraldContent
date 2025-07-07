@@ -64,6 +64,17 @@ def init_db(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS translations_cache (
+            source_text   TEXT    NOT NULL,
+            language_code TEXT    NOT NULL,
+            translated    TEXT    NOT NULL,
+            is_override   BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (source_text, language_code)
+        );
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS group_settings (
             chat_id BIGINT PRIMARY KEY,
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -448,6 +459,33 @@ def add_posted_link(cur, chat_id: int, link: str):
         (chat_id, link)
     )
 
+# Mulitlanguage
+
+@_with_cursor
+def get_cached_translation(cur, source_text: str, lang: str) -> Optional[str]:
+    cur.execute(
+        "SELECT translated FROM translations_cache "
+        "WHERE source_text=%s AND language_code=%s;",
+        (source_text, lang)
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+@_with_cursor
+def set_cached_translation(cur, source_text: str, lang: str,
+                           translated: str, override: bool=False):
+    cur.execute(
+        """
+        INSERT INTO translations_cache
+          (source_text, language_code, translated, is_override)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (source_text, language_code) DO UPDATE
+          SET translated = EXCLUDED.translated,
+              is_override = EXCLUDED.is_override;
+        """,
+        (source_text, lang, translated, override)
+    )
+    
 # --- Legacy Migration Utility ---
 def migrate_db():
     import psycopg2
