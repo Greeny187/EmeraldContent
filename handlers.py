@@ -4,15 +4,16 @@ import re
 import logging
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
+from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
-remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, get_group_setting, 
-get_rss_feeds, count_members, get_farewell, get_welcome, get_all_channels, set_group_language, add_channel, list_channels)
+remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
+get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account
 from user_manual import help_handler
-from access import get_visible_groups, get_visible_channels
-from i18n import t, TRANSLATIONS
+from menu import show_group_menu
+from access import get_visible_groups
 
 logger = logging.getLogger(__name__)
 
@@ -20,84 +21,55 @@ async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
-async def start_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat = update.effective_chat
-    register_group(chat.id, chat.title)
-    logger.info(f"Registered group {chat.id} - {chat.title}")
-    await update.message.reply_text(t(chat.id, 'GROUP_REGISTERED'))
-
-# --- Start in Kanälen: Registrierung mit Erfolgskontrolle ---
-async def start_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.effective_message
-    chat = update.effective_chat
-    add_channel(chat.id, chat.id, chat.username or None, chat.title or None)
-    try:
-        channels = list_channels(chat.id)
-        if any(cid == chat.id for cid, _, _ in channels):
-            logger.info(f"Registered channel {chat.id} - {chat.title}")
-            await msg.reply_text(t(chat.id, 'CHANNEL_REGISTERED'))
-        else:
-            logger.error(f"Failed to register channel in DB: {chat.id}")
-            await msg.reply_text("❌ Kanal konnte nicht registriert werden.")
-    except Exception:
-        logger.exception("Error checking channel registration")
-        await msg.reply_text("❌ Fehler bei der Kanalregistrierung.")
-
-# --- Start in privatem Chat: Auswahlmenü für Gruppen und Kanäle ---
-async def start_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.effective_message
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
-    # Sichtbare Gruppen und Kanäle über Access-Module
-    all_groups       = get_registered_groups()
-    visible_groups   = await get_visible_groups(user.id, context.bot, all_groups)
-    all_channels     = get_all_channels()
-    visible_channels = await get_visible_channels(user.id, context.bot, all_channels)
+    if chat.type in ("group", "supergroup"):
+        register_group(chat.id, chat.title)
+        return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
 
-    if not visible_groups and not visible_channels:
-        await msg.reply_text(t(chat.id, 'NO_ADMIN_RIGHTS'))
-        return
+    if chat.type == "private":
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
 
-    keyboard = []
-    for gid, title in visible_groups:
-        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
-    for cid, title in visible_channels:
-        keyboard.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
-
-    await msg.reply_text(
-        t(chat.id, 'SELECT_CHAT'),
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# --- Hilfs- und Help-Handler ---
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(t(update.effective_chat.id, 'HELP_TEXT'))
-
-async def on_bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Wenn der Bot einer Gruppe beitritt, zeige Erst-Sprachauswahl."""
-    # update.my_chat_member enthält alten und neuen Status
-    new_status = update.my_chat_member.new_chat_member.status
-    chat_id    = update.effective_chat.id
-
-    # Wenn wir frisch hinzugefügt wurden…
-    if new_status in ("member", "administrator"):
-        # …und noch keine Gruppeneinstellungen existieren:
-        if not get_group_setting(chat_id):
-            kb = [
-                InlineKeyboardButton("Deutsch 🇩🇪", callback_data=f"{chat_id}_setlang_de"),
-                InlineKeyboardButton("English 🇬🇧", callback_data=f"{chat_id}_setlang_en"),
-            ]
-            kb.append([
-                InlineKeyboardButton("Français 🇫🇷", callback_data=f"{chat_id}_setlang_fr"),
-                InlineKeyboardButton("Русский 🇷🇺",   callback_data=f"{chat_id}_setlang_ru"),
-            ])
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=t(chat_id, 'LANGUAGE_FIRST_PROMPT'),
-                reply_markup=InlineKeyboardMarkup(kb)
+        if not visible_groups:
+            return await update.message.reply_text(
+                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
             )
-    
+
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+        markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # show_group_menu now only needs update & context
+    await show_group_menu(update, context)
+
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat.type != "private":
+        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
+
+    chat_id = context.user_data.get("selected_chat_id")
+
+    if not chat_id:
+        # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
+        all_groups = get_registered_groups()
+        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+
+        if not visible_groups:
+            return await update.message.reply_text(
+                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+            )
+
+        keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+        markup = InlineKeyboardMarkup(keyboard)
+        return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
+    await show_group_menu(update, chat_id)
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
@@ -183,27 +155,7 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]])
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
 
-async def set_language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-    if chat.type not in ('group', 'supergroup'):
-        return await update.message.reply_text(t(chat.id, 'ERROR_PRIV_CMD'))
-    # Admin-Prüfung
-    admins = await context.bot.get_chat_administrators(chat.id)
-    if user.id not in {adm.user.id for adm in admins}:
-        return await update.message.reply_text(t(chat.id, 'ERROR_ADMIN_CMD'))
-    # Argument-Prüfung
-    if not context.args or context.args[0] not in ('de', 'en', 'fr', 'ru'):
-        return await update.message.reply_text(t(chat.id, 'ERROR_USAGE_LANG'))
-    lang = context.args[0]
-    set_group_language(chat.id, lang)
-    return await update.message.reply_text(t(chat.id, 'LANGUAGE_SET').format(lang=lang))
-
 async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Sicherstellen, dass context.user_data existiert
-    if not hasattr(context, "user_data") or not context.user_data:
-        return
-    
     # Prüfen, ob wir auf eine Mood-Frage warten
     if not context.user_data.get("awaiting_mood_question"):
         return  # nichts tun, zurück an den normalen Handler
@@ -326,36 +278,39 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cm = update.chat_member
+    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
+    user = cm.new_chat_member.user
+    status = cm.new_chat_member.status
     cm = update.chat_member or update.my_chat_member
-    if cm is None or cm.new_chat_member is None:
-        return
-
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    user    = cm.new_chat_member.user
-    status  = cm.new_chat_member.status
-
-    logger.info(f"🏷️ track_members aufgerufen: chat={chat_id}, user={user.id}, status={status}")
+    chat_id = cm.chat.id
 
     # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
         rec = get_welcome(chat_id)
-        logger.info(f"    → get_welcome({chat_id}) returned: {rec!r}")
         if rec:
             photo_id, text = rec
-            text = (text or "").replace("{user}",
-                      f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
-            logger.info("    → sende Welcome-Nachricht")
+            # Nutzer direkt ansprechen:
+            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
             if photo_id:
-                await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_id,
+                    caption=text,
+                    parse_mode="HTML"
+                )
             else:
-                await context.bot.send_message(chat_id, text, parse_mode="HTML")
-        else:
-            logger.info("    → keine Welcome-Nachricht gesetzt, breche ab")
-        # Mitglied in DB aufnehmen
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="HTML"
+                )
+  
         try:
             add_member(chat_id, user.id)
+            logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
         except Exception as e:
-            logger.error(f"    → Fehler beim add_member: {e}")
+            logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
         return
 
     # 2) Abschied verschicken
@@ -379,56 +334,6 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         remove_member(chat_id, user.id)
         return
-
-async def service_member_events(update, context):
-    """Fängt new_chat_members & left_chat_member in Gruppen/Themen ab."""
-    msg = update.effective_message
-    chat_id = update.effective_chat.id
-
-    # 1) Neue Mitglieder
-    if msg.new_chat_members:
-        for user in msg.new_chat_members:
-            rec = get_welcome(chat_id)
-            if rec:
-                photo_id, text = rec
-                text = (text or "").replace(
-                    "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-                )
-                if photo_id:
-                    await context.bot.send_photo(
-                        chat_id, photo_id, caption=text, parse_mode="HTML"
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id, text, parse_mode="HTML"
-                    )
-            # Mitglied in DB aufnehmen
-            try:
-                add_member(chat_id, user.id)
-            except Exception as e:
-                logger.error(f"add_member error in service_member_events: {e}")
-    # 2) Ausgetretene / gekickte Mitglieder
-    if msg.left_chat_member:
-        user = msg.left_chat_member
-        rec = get_farewell(chat_id)
-        if rec:
-            photo_id, text = rec
-            text = (text or "").replace(
-                "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-            )
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id, photo_id, caption=text, parse_mode="HTML"
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id, text, parse_mode="HTML"
-                )
-        # Mitglied als gelöscht markieren / entfernen
-        try:
-            remove_member(chat_id, user.id)
-        except Exception as e:
-            logger.error(f"remove_member error in service_member_events: {e}")
 
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -483,30 +388,26 @@ async def dashboard_command(update, context):
         return await update.message.reply_text("❌ Zugriff verweigert.")
 
     # Metriken sammeln
-    total_groups   = len(get_registered_groups())
-    total_rss      = len(get_rss_feeds())
-    total_users    = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
-    total_channels = len(get_all_channels())
-    uptime         = datetime.datetime.now() - context.bot_data['start_time']
+    total_groups = len(get_registered_groups())
+    total_rss = len(get_rss_feeds())
+    total_users  = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
+    uptime = datetime.datetime.now() - context.bot_data.get('start_time', datetime.datetime.now())
 
     msg = (
         f"🤖 *Bot Dashboard*\n"
-        f"\n• Startzeit: `{context.bot_data['start_time']}`"
+        f"\n• Startzeit: `{context.bot_data.get('start_time')}`"
         f"\n• Uptime: `{str(uptime).split('.')[0]}`"
         f"\n• Gruppen: `{total_groups}`"
-        f"\n• Kanäle: `{total_channels}`"               # neu
         f"\n• RSS-Feeds: `{total_rss}`"
         f"\n• Gesamt-Mitglieder: `{total_users}`"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+
 def register_handlers(app):
 
-    # 2) /start in Gruppen (group & supergroup)
-    app.add_handler(CommandHandler('start', start_group, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler('start', start_private, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler('startchannel', start_channel, filters=filters.ChatType.CHANNEL))
-    app.add_handler(CommandHandler('help', help_command))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))
@@ -515,16 +416,13 @@ def register_handlers(app):
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("setlanguage", set_language_cmd, filters=filters.ChatType.GROUPS))
 
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content), group=-1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=2)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
-
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
 
     app.add_handler(help_handler)
-    
-    app.add_handler(ChatMemberHandler(on_bot_added, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
+
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))

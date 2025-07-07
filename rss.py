@@ -69,17 +69,17 @@ async def fetch_rss_feed(context: CallbackContext):
             add_posted_link(chat_id, entry.link)
 
 async def rss_url_reply(update, context):
-    logger.info(f"🕵️ rss_url_reply: user_data={context.user_data}, text={update.message.text!r}")
+    # Prüfen, ob wir gerade auf eine RSS-URL warten
     if not context.user_data.get("awaiting_rss_url"):
         return
-
     url = update.message.text.strip()
     chat_id = context.user_data.pop("rss_group_id")
     context.user_data.pop("awaiting_rss_url", None)
-
+    # Bestes Topic ermitteln (Forum-Thread oder Default aus DB)
     topic_id = get_rss_topic(chat_id) or None
+    # Feed speichern
     add_rss_feed(chat_id, url, topic_id)
-
+    # Bestätigung senden
     dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
     await update.message.reply_text(
         f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}"
@@ -89,5 +89,7 @@ def register_rss(app):
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE& filters.Regex(r'https?://')& ~filters.COMMAND,rss_url_reply), group=1)
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)
+
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)

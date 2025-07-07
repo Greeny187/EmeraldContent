@@ -1,12 +1,10 @@
 import os
 import datetime
 import logging
-import asyncio
 from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
-from channel_handlers import register_channel_handlers
 from database import init_db
 from logger import setup_logging
 from mood import register_mood
@@ -38,28 +36,11 @@ def main():
     # Deine Handler und Error-Handler registrieren
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
-    register_menu(app)
     register_handlers(app)
-    register_channel_handlers(app)
     register_rss(app)
     register_mood(app)
+    register_menu(app)
     register_jobs(app)
-
-    # 1) Hole dir den aktuellen Loop (oder erstelle einen)
-    loop = asyncio.get_event_loop()
-
-    # 2) Setze Webhook im gleichen Loop
-    loop.run_until_complete(app.bot.delete_webhook())
-    loop.run_until_complete(app.bot.set_webhook(
-        url=WEBHOOK_URL,
-        allowed_updates=[
-            "message",
-            "edited_message",
-            "channel_post",
-            "edited_channel_post",
-            "callback_query"
-        ]
-    ))
 
     # Startzeit merken (optional)
     app.bot_data['start_time'] = datetime.datetime.now()

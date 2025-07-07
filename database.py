@@ -3,7 +3,8 @@ import logging
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
-from types import SimpleNamespace
+
+import psycopg2
 from psycopg2 import pool
 
 # Logger setup
@@ -65,7 +66,6 @@ def init_db(cur):
         """
         CREATE TABLE IF NOT EXISTS group_settings (
             chat_id BIGINT PRIMARY KEY,
-            language TEXT NOT NULL DEFAULT 'de',
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
@@ -163,29 +163,6 @@ def init_db(cur):
         );
         """
     )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS channels (
-            id            SERIAL PRIMARY KEY,
-            parent_chat_id   BIGINT   NOT NULL,
-            channel_id    BIGINT   NOT NULL,
-            channel_username TEXT,
-            channel_title TEXT,
-            created_at    TIMESTAMP NOT NULL DEFAULT NOW()
-        );
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS channel_schedules (
-            channel_id   BIGINT,
-            post_text    TEXT,
-            schedule_cron TEXT,
-            photo_id      TEXT,
-            PRIMARY KEY (channel_id, post_text)
-        );
-        """
-    )
 
 # --- Group Management ---
 @_with_cursor
@@ -204,115 +181,6 @@ def get_registered_groups(cur) -> List[Tuple[int, str]]:
 @_with_cursor
 def unregister_group(cur, chat_id: int):
     cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
-
-@_with_cursor
-def get_group_setting(cur, chat_id: int) -> Optional[SimpleNamespace]:
-    cur.execute("SELECT chat_id, daily_stats_enabled, rss_topic_id, mood_question, language FROM group_settings WHERE chat_id = %s;", (chat_id,))
-    row = cur.fetchone()
-    if not row:
-        return None
-    # z.B. return ein kleines Objekt oder NamedTuple
-    
-    return SimpleNamespace(
-        chat_id=row[0],
-        daily_stats_enabled=row[1],
-        rss_topic_id=row[2],
-        mood_question=row[3],
-        language=row[4]
-    )
-
-@_with_cursor
-def set_group_language(cur, chat_id: int, language: str):
-    cur.execute(
-        "INSERT INTO group_settings (chat_id, language) VALUES (%s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET language = EXCLUDED.language;",
-        (chat_id, language)
-    )
-
-#Channel Management
-
-@_with_cursor
-def add_channel(cur, parent_chat_id: int, channel_id: int,
-                channel_username: Optional[str] = None,
-                channel_title: Optional[str] = None):
-    """
-    Fügt einen Kanal zur Verwaltung hinzu.
-    Ignoriert Einträge, die schon existieren.
-    """
-    cur.execute(
-        """
-        INSERT INTO channels (parent_chat_id, channel_id, channel_username, channel_title)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT DO NOTHING;
-        """,
-        (parent_chat_id, channel_id, channel_username, channel_title)
-    )
-
-@_with_cursor
-def remove_channel(cur, parent_chat_id: int, channel_id: int):
-    """
-    Entfernt einen Kanal aus der Verwaltung.
-    """
-    cur.execute(
-        "DELETE FROM channels WHERE parent_chat_id = %s AND channel_id = %s;",
-        (parent_chat_id, channel_id)
-    )
-
-@_with_cursor
-def list_channels(cur, parent_chat_id: int) -> List[Tuple[int, Optional[str], Optional[str]]]:
-    """
-    Gibt alle Kanäle zurück, die in der Gruppe (chat_id) registriert sind.
-    Liefert Tuples: (channel_id, channel_username, channel_title).
-    """
-    cur.execute(
-        """
-        SELECT channel_id, channel_username, channel_title
-        FROM channels
-        WHERE parent_chat_id = %s;
-        """,
-        (parent_chat_id,)
-    )
-    return cur.fetchall()
-
-@_with_cursor
-def get_all_channels(cur) -> List[Tuple[int, Optional[str], Optional[str]]]:
-    """
-    Liefert eine Liste aller in der Datenbank registrierten Kanäle.
-    """
-    cur.execute(
-        """
-        SELECT parent_chat_id, channel_id, channel_username, channel_title
-        FROM channels;
-        """
-    )
-    return cur.fetchall()
-
-# ─── Geplante Kanal-Beiträge ─────────────────────────────────────────
-@_with_cursor
-def add_scheduled_post(cur, channel_id: int, post_text: str, schedule_cron: str, photo_id: Optional[str] = None):
-    """
-    Speichert einen geplanten Beitrag für einen Kanal.
-    `schedule_cron` z.B. "0 9 * * *" für täglich 9:00 Uhr.
-    """
-
-    cur.execute(
-        """
-        INSERT INTO channel_schedules (channel_id, post_text, schedule_cron)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (channel_id, post_text) DO UPDATE
-            SET schedule_cron = EXCLUDED.schedule_cron,
-            photo_id     = EXCLUDED.photo_id;
-        """,
-        (channel_id, post_text, schedule_cron)
-    )
-
-@_with_cursor
-def list_scheduled_posts(cur, channel_id: int) -> List[Tuple[str, str, Optional[str]]]:
-    cur.execute(
-        "SELECT post_text, schedule_cron, photo_id FROM channel_schedules WHERE channel_id = %s;",
-        (channel_id,)
-    )
-    return cur.fetchall()
 
 # --- Member Management ---
 @_with_cursor
@@ -500,7 +368,8 @@ def set_rules(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     cur.execute(
         "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text))
+        (chat_id, photo_id, text)
+    )
 
 @_with_cursor
 def get_rules(cur, chat_id: int) -> Optional[Tuple[str, str]]:
