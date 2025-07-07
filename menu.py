@@ -41,7 +41,7 @@ async def _handle_group_select(update: Update, context: ContextTypes.DEFAULT_TYP
         return await target.reply_text(t(0, "NO_VISIBLE_GROUPS"))
 
     kb = [
-        [InlineKeyboardButton(title, callback_data=f"grp_group_{cid}")]
+        [InlineKeyboardButton(title, callback_data=f"group_{cid}")]
         for cid, title in visible
     ]
     return await target.reply_text(
@@ -425,11 +425,14 @@ async def clean_delete(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ‒‒‒ Dispatcher ‒‒‒
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query               # ← zuerst die Query holen
-    data  = query.data                           # ← dann die Callback-Daten
-    logger.info("menu_callback received callback_data=%r", data)
-    await query.answer()                         # ← erst anschließend beantworten
+async def menu_callback(update: ContextTypes.DEFAULT_TYPE, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    # Auswahl aus privatmenü: Gruppe öffnen
+    if data.startswith('group_'):
+        _, gid = data.split('_', 1)
+        chat_id = int(gid)
 
     # 0) Gruppen-Auswahl neu starten
     if data == 'group_select':

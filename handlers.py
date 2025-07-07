@@ -28,61 +28,42 @@ async def start_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # --- Start in Kanälen: Registrierung mit Erfolgskontrolle ---
 async def start_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
     chat = update.effective_chat
-    # Versuch, den Kanal anzulegen
     add_channel(chat.id, chat.id, chat.username or None, chat.title or None)
-    # Kontrolle über die Datenbank
     try:
         channels = list_channels(chat.id)
         if any(cid == chat.id for cid, _, _ in channels):
             logger.info(f"Registered channel {chat.id} - {chat.title}")
-            await update.message.reply_text(t(chat.id, 'CHANNEL_REGISTERED'))
+            await msg.reply_text(t(chat.id, 'CHANNEL_REGISTERED'))
         else:
             logger.error(f"Failed to register channel in DB: {chat.id}")
-            await update.message.reply_text("❌ Kanal konnte nicht registriert werden.")
-    except Exception as e:
+            await msg.reply_text("❌ Kanal konnte nicht registriert werden.")
+    except Exception:
         logger.exception("Error checking channel registration")
-        await update.message.reply_text("❌ Fehler bei der Kanalregistrierung.")
+        await msg.reply_text("❌ Fehler bei der Kanalregistrierung.")
 
 # --- Start in privatem Chat: Auswahlmenü für Gruppen und Kanäle ---
 async def start_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-    all_groups = get_registered_groups()       # [(chat_id, title), …]
-    all_channels = get_all_channels()         # [(parent_chat_id, channel_id, username, title), …]
 
-    # Filter sichtbare Gruppen und Kanäle
-    visible_groups = []
-    for gid, title in all_groups:
-        try:
-            member = await context.bot.get_chat_member(gid, user.id)
-            if member.status in ('administrator', 'creator'):
-                visible_groups.append((gid, title))
-        except:
-            continue
-
-    visible_channels = []
-    for parent_id, cid, username, title in all_channels:
-        try:
-            member = await context.bot.get_chat_member(cid, user.id)
-            if member.status in ('administrator', 'creator'):
-                visible_channels.append((parent_id, cid, title))
-        except:
-            continue
+    # Sichtbare Gruppen und Kanäle über Access-Module
+    visible_groups = await get_visible_groups(user.id, context.bot)
+    visible_channels = await get_visible_channels(user.id, context.bot)
 
     if not visible_groups and not visible_channels:
-        await update.message.reply_text(
-            t(chat.id, 'NO_ADMIN_RIGHTS')
-        )
+        await msg.reply_text(t(chat.id, 'NO_ADMIN_RIGHTS'))
         return
 
     keyboard = []
     for gid, title in visible_groups:
         keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"group_{gid}")])
-    for parent_id, cid, title in visible_channels:
+    for cid, title in visible_channels:
         keyboard.append([InlineKeyboardButton(f"📺 {title}", callback_data=f"channel_{cid}")])
 
-    await update.message.reply_text(
+    await msg.reply_text(
         t(chat.id, 'SELECT_CHAT'),
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
