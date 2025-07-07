@@ -496,8 +496,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Registrierung der Handler ---
 
-def register_menu_handlers(app):
-    
+def register_menu(app):
+
     # /menu überall (Gruppen und privat)
     app.add_handler(CommandHandler('menu', menu_command))
     # CallbackQuery-Handler für Menü-Buttons
