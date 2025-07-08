@@ -1,10 +1,10 @@
 import os
 import logging
+import psycopg2
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
-
-import psycopg2
+from dataclasses import dataclass
 from psycopg2 import pool
 
 # Logger setup
@@ -65,12 +65,11 @@ def init_db(cur):
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS translations_cache (
-            id SERIAL PRIMARY KEY,
-            source_text TEXT NOT NULL,
-            target_lang VARCHAR(10) NOT NULL,
-            translated_text TEXT NOT NULL,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-            UNIQUE (source_text, target_lang)
+            source_text   TEXT    NOT NULL,
+            language_code TEXT    NOT NULL,
+            translated    TEXT    NOT NULL,
+            is_override   BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (source_text, language_code)
         );
         """
     )

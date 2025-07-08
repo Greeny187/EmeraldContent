@@ -6,7 +6,12 @@ from translator import translate_hybrid
 logger = logging.getLogger(__name__)
 
 def tr(text: str, lang: str) -> str:
-    return translate_hybrid(text, lang)
+    """Übersetze 'text' nach 'lang' mittels hybridem LibreTranslate."""
+    try:
+        return translate_hybrid(text, lang)
+    except Exception as e:
+        logger.error(f"Fehler in tr(): {e}")
+        return text
 
 def is_deleted_account(member) -> bool:
     """
