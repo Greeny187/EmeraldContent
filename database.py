@@ -80,6 +80,7 @@ def init_db(cur):
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
+            language_code TEXT NOT NULL DEFAULT 'de';
         );
         """
     )
@@ -484,6 +485,23 @@ def set_cached_translation(cur, source_text: str, lang: str,
               is_override = EXCLUDED.is_override;
         """,
         (source_text, lang, translated, override)
+    )
+
+@_with_cursor
+def get_group_language(cur, chat_id: int) -> str:
+    cur.execute(
+        "SELECT language_code FROM group_settings WHERE chat_id = %s;",
+        (chat_id,)
+    )
+    row = cur.fetchone()
+    return row[0] if row else 'de'
+
+@_with_cursor
+def set_group_language(cur, chat_id: int, lang: str):
+    cur.execute(
+        "INSERT INTO group_settings (chat_id, language_code) VALUES (%s, %s) "
+        "ON CONFLICT (chat_id) DO UPDATE SET language_code = EXCLUDED.language_code;",
+        (chat_id, lang)
     )
 
 # --- Legacy Migration Utility ---

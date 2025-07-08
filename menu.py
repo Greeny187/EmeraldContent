@@ -3,7 +3,7 @@ from telegram.ext import CallbackQueryHandler
 from database import (
     get_registered_groups,
     get_welcome, set_welcome, delete_welcome,
-    list_members,
+    list_members, set_group_language, get_group_language,
     get_rules, set_rules, delete_rules,
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
@@ -19,35 +19,50 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def show_group_menu(query_or_update, chat_id: int):
+# Sprachoptionen
+LANGUAGES = {
+    'de': 'Deutsch',
+    'en': 'English',
+    'es': 'Español',
+    'fr': 'Français'
+}
+
+async def show_group_menu(query_or_update, context, chat_id: int):
     question = get_mood_question(chat_id)
-    keyboard = [
-        [InlineKeyboardButton("Begrüßung",    callback_data=f"{chat_id}_welcome")],
-        [InlineKeyboardButton("Regeln",       callback_data=f"{chat_id}_rules")],
-        [InlineKeyboardButton("Farewell",     callback_data=f"{chat_id}_farewell")],
-        [InlineKeyboardButton("Linksperre",   callback_data=f"{chat_id}_exceptions")],
-        [InlineKeyboardButton("RSS",          callback_data=f"{chat_id}_rss")],
-        [InlineKeyboardButton("🗑 Gelöschte Accounts entfernen", callback_data=f"{chat_id}_clean_delete")],
-        [InlineKeyboardButton(
-            "📊 Tagesstatistik " + ("Aktiv" if is_daily_stats_enabled(chat_id) else "Inaktiv"),
-            callback_data=f"{chat_id}_toggle_stats"
-        )],
-        [InlineKeyboardButton("✍️ Mood-Frage ändern", callback_data=f"{chat_id}_edit_mood_q")],
-        [InlineKeyboardButton("📖 Handbuch",  callback_data="help")],
-        [InlineKeyboardButton("🔄 Gruppe wechseln", callback_data="group_select")]
+    # Aktuelle Gruppensprache oder Standard 'de'
+    lang = get_group_language(chat_id) or 'de'
+    # Tasten-Definition
+    buttons = [
+        ("Begrüßung",    f"{chat_id}_welcome"),
+        ("Regeln",       f"{chat_id}_rules"),
+        ("Farewell",     f"{chat_id}_farewell"),
+        ("Linksperre",   f"{chat_id}_exceptions"),
+        ("RSS",          f"{chat_id}_rss"),
+        ("🗑 Gelöschte Accounts entfernen", f"{chat_id}_clean_delete"),
+        (f"📊 Tagesstatistik {'Aktiv' if is_daily_stats_enabled(chat_id) else 'Inaktiv'}", f"{chat_id}_toggle_stats"),
+        ("✍️ Mood-Frage ändern", f"{chat_id}_edit_mood_q"),
+        ("🌐 Sprache", f"{chat_id}_language"),
+        ("📖 Handbuch",  "help"),
+        ("🔄 Gruppe wechseln", "group_select")
     ]
-    text = "🔧 Gruppe verwalten – wähle eine Funktion:"
+    # Beschriftung übersetzen
+    title = tr("🔧 Gruppe verwalten – wähle eine Funktion:", lang)
+    # Buttons übersetzen
+    keyboard = [
+        [InlineKeyboardButton(tr(text, lang), callback_data=cd)]
+        for text, cd in buttons
+    ]
     markup = InlineKeyboardMarkup(keyboard)
 
     # Universelle Behandlung je nach Typ
     if hasattr(query_or_update, "edit_message_text"):
-        await query_or_update.edit_message_text(text, reply_markup=markup)
+        await query_or_update.edit_message_text(title, reply_markup=markup)
     elif getattr(query_or_update, "callback_query", None) is not None:
-        await query_or_update.callback_query.edit_message_text(text, reply_markup=markup)
+        await query_or_update.callback_query.edit_message_text(title, reply_markup=markup)
     elif hasattr(query_or_update, "reply_text"):  # plain Message-Objekt
-        await query_or_update.reply_text(text, reply_markup=markup)
+        await query_or_update.reply_text(title, reply_markup=markup)
     elif hasattr(query_or_update, "message"):  # plain Update mit Message
-        await query_or_update.message.reply_text(text, reply_markup=markup)
+        await query_or_update.message.reply_text(title, reply_markup=markup)
     else:
         raise TypeError("❌ Ungültiger Objekttyp für show_group_menu()")
 
@@ -261,6 +276,32 @@ async def menu_callback(update, context):
                 ])
             )
             return
+        
+        # Sprache-Menü anzeigen
+        if data.endswith("_language"):
+            chat_id = int(data.split("_",1)[0])
+            current = get_group_language(chat_id) or 'de'
+            kb = [
+                [InlineKeyboardButton(
+                    f"{'✅ ' if code==current else ''}{name}",
+                    callback_data=f"{chat_id}_setlang_{code}"
+                )]
+                for code, name in LANGUAGES.items()
+            ]
+            kb.append([InlineKeyboardButton(tr("↩️ Zurück", current), callback_data=f"group_{chat_id}")])
+            await query.edit_message_text(tr("🌐 Wähle Sprache:", current), reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        # Sprache setzen
+        if "_setlang_" in data:
+            parts = data.split("_")
+            chat_id = int(parts[0])
+            lang = parts[-1]
+            # In der DB speichern
+            set_group_language(chat_id, lang)
+            language_name = LANGUAGES.get(lang, lang)
+            await query.answer(f"Gruppensprache gesetzt: {language_name}", show_alert=True)
+            return await show_group_menu(query, context, chat_id)
     
 # /menu 
 
