@@ -18,7 +18,7 @@ def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> 
     """
     Übersetzt 'text' ins Zielsprachformat 'target_lang' mit:
     1) Cache-Abfrage
-    2) OpenAI API-Call
+    2) OpenAI API-Call (neues Interface openai.chat.completions.create)
     3) Nur echte Übersetzungen cachen
 
     Fällt die API aus oder liefert keinen neuen Text, wird der Originaltext zurückgegeben.
@@ -28,10 +28,10 @@ def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> 
     if cached:
         return cached
 
-    # 2) Anfrage an OpenAI
+    # 2) Anfrage an OpenAI mit neuer Schnittstelle
     try:
         prompt = f"Bitte übersetze den folgenden Text von {source_lang} nach {target_lang}: \"{text}\""
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model=TRANSLATION_MODEL,
             messages=[
                 {"role": "system", "content": "Du bist ein hilfreicher Übersetzungsassistent."},
