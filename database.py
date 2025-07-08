@@ -79,7 +79,7 @@ def init_db(cur):
             chat_id BIGINT PRIMARY KEY,
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
-            mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?'
+            mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?',
             language_code TEXT NOT NULL DEFAULT 'de'
         );
         """
