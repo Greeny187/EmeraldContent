@@ -72,18 +72,13 @@ async def menu_callback(update, context):
     data = query.data
 
     if data == "group_select":
+        context.user_data.pop("selected_chat_id", None)
         all_groups = get_registered_groups()
-        user_id = update.effective_user.id
-        visible = await get_visible_groups(user_id, context.bot, all_groups)
-
+        visible = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
         if not visible:
-            return await query.message.reply_text("🚫 Keine Gruppen sichtbar.")
-
-        context.user_data.pop("selected_chat_id", None)  # vorherige Auswahl entfernen
-
+            return await query.message.reply_text(tr("🚫 Keine Gruppen sichtbar.", 'de'))
         kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible]
-        markup = InlineKeyboardMarkup(kb)
-        return await query.message.reply_text("🔧 Wähle eine andere Gruppe:", reply_markup=markup)
+        return await query.message.reply_text(tr("🔧 Wähle eine andere Gruppe:", 'de'), reply_markup=InlineKeyboardMarkup(kb))
 
     if data.startswith("group_"):
         chat_id = int(data.split("_",1)[1])
