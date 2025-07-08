@@ -27,6 +27,23 @@ LANGUAGES = {
     'fr': 'Français'
 }
 
+# Manuelle Übersetzungs-Overrides für Menü-Labels
+MENU_OVERRIDES = {
+    'Linksperre': {
+        'en': 'Link restrictions',
+        'es': 'Bloqueo de enlaces',
+        'fr': 'Blocage des liens'
+    }
+}
+
+def translate_label(text: str, lang: str) -> str:
+    """
+    Übersetzt Menü-Label: nutzt manuelle Overrides, ansonsten tr().
+    """
+    if text in MENU_OVERRIDES and lang in MENU_OVERRIDES[text]:
+        return MENU_OVERRIDES[text][lang]
+    return tr(text, lang)
+
 async def show_group_menu(query_or_update, chat_id: int):
     # Sprache der Gruppe
     lang = get_group_language(chat_id) or 'de'
