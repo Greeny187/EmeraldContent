@@ -82,6 +82,9 @@ async def menu_callback(update, context):
     await query.answer()
     data = query.data
 
+    # EINMALIG: Gruppensprache abrufen
+    lang = get_group_language(chat_id) or 'de'
+    
     # Gruppenauswahl
     if data == 'group_select':
         context.user_data.pop('selected_chat_id', None)
@@ -95,9 +98,6 @@ async def menu_callback(update, context):
         chat_id = int(data.split('_')[1])
         context.user_data['selected_chat_id'] = chat_id
         return await show_group_menu(query, chat_id)
-
-    # EINMALIG: Gruppensprache abrufen
-    lang = get_group_language(chat_id) or 'de'
 
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
