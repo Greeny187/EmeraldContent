@@ -1,43 +1,48 @@
 import os
 import logging
-import requests
+import openai
 from database import get_cached_translation, set_cached_translation
 
 logger = logging.getLogger(__name__)
 
-# LibreTranslate-Endpunkt und API-Key
-LIBRE_URL     = os.getenv('LIBRE_URL', 'https://libretranslate.com')
-LIBRE_API_KEY = os.getenv('LIBRE_API_KEY', None)
+# OpenAI API-Key setzen
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY ist nicht gesetzt. Bitte in den Umgebungsvariablen hinterlegen.")
+openai.api_key = OPENAI_API_KEY
+
+# Optional: Modell-Konfiguration über Umgebungsvariable
+TRANSLATION_MODEL = "gpt-3.5-turbo"
+
 
 def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> str:
     """
     Übersetzt 'text' ins Zielsprachformat 'target_lang' mit:
     1) Cache-Abfrage
-    2) API-Call zu LibreTranslate
+    2) API-Call zu OpenAI ChatCompletion
     3) Zwischenspeichern im Cache
 
-    Fällt die API aus, wird der Originaltext zurückgegeben.
+    Fällt die OpenAI-API aus, wird der Originaltext zurückgegeben.
     """
     # 1) Cache abfragen
     cached = get_cached_translation(text, target_lang)
     if cached:
         return cached
 
-    # 2) Anfrage an LibreTranslate
-    payload = {
-        'q': text,
-        'source': source_lang,
-        'target': target_lang
-    }
-    if LIBRE_API_KEY:
-        payload['api_key'] = LIBRE_API_KEY
-
+    # 2) Anfrage an OpenAI
     try:
-        resp = requests.post(f"{LIBRE_URL}/translate", data=payload, timeout=10)
-        resp.raise_for_status()
-        translated = resp.json().get('translatedText', text)
+        prompt = f"Bitte übersetze den folgenden Text von {source_lang} nach {target_lang}: \"{text}\""
+        response = openai.ChatCompletion.create(
+            model=TRANSLATION_MODEL,
+            messages=[
+                {"role": "system", "content": "Du bist ein hilfreicher Übersetzungsassistent."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
+        translated = response.choices[0].message.content.strip()
     except Exception as e:
-        logger.warning(f"Übersetzung fehlgeschlagen, fallback auf Originaltext: {e}")
+        logger.warning(f"OpenAI-Übersetzung fehlgeschlagen, Fallback auf Originaltext: {e}")
         translated = text
 
     # 3) In Cache speichern
