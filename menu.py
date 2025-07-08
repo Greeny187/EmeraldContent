@@ -302,6 +302,12 @@ async def menu_callback(update, context):
             language_name = LANGUAGES.get(lang, lang)
             await query.answer(f"Gruppensprache gesetzt: {language_name}", show_alert=True)
             return await show_group_menu(query, context, chat_id)
+        
+        # Fallback: Wenn Callback nur die Chat-ID mit Prefix enthält
+        if data.startswith("group_"):
+            chat_id = int(data.split("_", 1)[1])
+            context.user_data["selected_chat_id"] = chat_id
+            return await show_group_menu(query, context, chat_id)
     
 # /menu 
 
