@@ -40,6 +40,8 @@ def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> 
             temperature=0
         )
         translated = response.choices[0].message.content.strip()
+        # Falls die API den String in Anführungszeichen zurückgibt, abschneiden:
+        translated = translated.strip().strip('"').strip("'")
     except Exception as e:
         logger.warning(f"OpenAI-Übersetzung fehlgeschlagen, Fallback auf Originaltext: {e}")
         translated = text
