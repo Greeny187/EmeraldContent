@@ -51,7 +51,7 @@ async def show_group_menu(query_or_update, chat_id: int):
     keyboard = [
         [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome")],
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{chat_id}_rules")],
-        [InlineKeyboardButton(tr('Farewell', lang), callback_data=f"{chat_id}_farewell")],
+        [InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{chat_id}_farewell")],
         [InlineKeyboardButton(tr('Linksperre', lang), callback_data=f"{chat_id}_exceptions")],
         [InlineKeyboardButton(tr('RSS', lang), callback_data=f"{chat_id}_rss")],
         [InlineKeyboardButton(tr('🗑 Gelöschte Accounts entfernen', lang), callback_data=f"{chat_id}_clean_delete")],
