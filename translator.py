@@ -11,18 +11,17 @@ if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY ist nicht gesetzt. Bitte in den Umgebungsvariablen hinterlegen.")
 openai.api_key = OPENAI_API_KEY
 
-# Optional: Modell-Konfiguration über Umgebungsvariable
+# Festes Modell für Übersetzung
 TRANSLATION_MODEL = "gpt-3.5-turbo"
-
 
 def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> str:
     """
     Übersetzt 'text' ins Zielsprachformat 'target_lang' mit:
     1) Cache-Abfrage
-    2) API-Call zu OpenAI ChatCompletion
-    3) Zwischenspeichern im Cache
+    2) OpenAI API-Call
+    3) Nur echte Übersetzungen cachen
 
-    Fällt die OpenAI-API aus, wird der Originaltext zurückgegeben.
+    Fällt die API aus oder liefert keinen neuen Text, wird der Originaltext zurückgegeben.
     """
     # 1) Cache abfragen
     cached = get_cached_translation(text, target_lang)
@@ -45,10 +44,11 @@ def translate_hybrid(text: str, target_lang: str, source_lang: str = 'auto') -> 
         logger.warning(f"OpenAI-Übersetzung fehlgeschlagen, Fallback auf Originaltext: {e}")
         translated = text
 
-    # 3) In Cache speichern
-    try:
-        set_cached_translation(text, target_lang, translated)
-    except Exception as e:
-        logger.error(f"Konnte Übersetzung nicht cachen: {e}")
+    # 3) Nur echte Übersetzungen ins Cache schreiben
+    if translated and translated != text:
+        try:
+            set_cached_translation(text, target_lang, translated)
+        except Exception as e:
+            logger.error(f"Konnte Übersetzung nicht cachen: {e}")
 
     return translated
