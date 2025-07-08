@@ -515,7 +515,9 @@ def migrate_db():
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
         )
-        # Weitere ALTER-Befehle hier...
+        cur.execute(
+            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS language_code TEXT NOT NULL DEFAULT 'de';"
+        )
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
     except Exception as e:
