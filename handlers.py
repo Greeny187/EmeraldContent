@@ -43,17 +43,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
 
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # show_group_menu now only needs update & context
-    await show_group_menu(update, context)
-
-    chat = update.effective_chat
+async def menu_command(update, context):
     user = update.effective_user
-
-    if chat.type != "private":
-        return await update.message.reply_text("⚠️ Bitte nutze /menu nur im privaten Chat.")
-
     chat_id = context.user_data.get("selected_chat_id")
+    if not chat_id:
+        # noch keine Gruppe ausgewählt → in die Auswahl springen
+        await update.message.reply_text("🚧 Keine Gruppe ausgewählt. Bitte zuerst /menu in einer Gruppe nutzen.")
+        return
+    await show_group_menu(update, chat_id)
 
     if not chat_id:
         # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik

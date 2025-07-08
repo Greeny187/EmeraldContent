@@ -24,7 +24,9 @@ LANGUAGES = {
     'de': 'Deutsch',
     'en': 'English',
     'es': 'Español',
-    'fr': 'Français'
+    'fr': 'Français',
+    'it': 'Italiano',
+    'ru': 'Русский'
 }
 
 # Manuelle Übersetzungs-Overrides für Menü-Labels
@@ -121,12 +123,12 @@ async def menu_callback(update, context):
 
         if func in ("welcome", "rules", "farewell"):
             kb = [
-                [InlineKeyboardButton("Bearbeiten", callback_data=f"{chat_id}_{func}_edit")],
-                [InlineKeyboardButton("Anzeigen",   callback_data=f"{chat_id}_{func}_show")],
-                [InlineKeyboardButton("Löschen",    callback_data=f"{chat_id}_{func}_delete")],
-                [InlineKeyboardButton("⬅ Hauptmenü", callback_data=f"group_{chat_id}")],
+                [InlineKeyboardButton(translate_label('Bearbeiten', lang), callback_data=f"{chat_id}_{func}_edit")],
+                [InlineKeyboardButton(translate_label('Anzeigen', lang), callback_data=f"{chat_id}_{func}_show")],
+                [InlineKeyboardButton(translate_label('Löschen', lang), callback_data=f"{chat_id}_{func}_delete")],
+                [InlineKeyboardButton(translate_label('⬅ Hauptmenü', lang), callback_data=f"group_{chat_id}")]
             ]
-            text = f"⚙ {func.capitalize()} verwalten:"
+            text = tr(f"⚙ {func.capitalize()} verwalten:", lang)
             markup = InlineKeyboardMarkup(kb)
             if query.message.photo or query.message.caption:
                 await query.edit_message_caption(text, reply_markup=markup)
@@ -136,12 +138,12 @@ async def menu_callback(update, context):
 
         if func == "rss":
             kb = [
-                [InlineKeyboardButton("Auflisten", callback_data=f"{chat_id}_rss_list")],
-                [InlineKeyboardButton("Feed hinzufügen", callback_data=f"{chat_id}_rss_setrss")],
-                [InlineKeyboardButton("Stoppen",   callback_data=f"{chat_id}_rss_stop")],
-                [InlineKeyboardButton("⬅ Hauptmenü", callback_data=f"group_{chat_id}")],
+                [InlineKeyboardButton(translate_label('Auflisten', lang),    callback_data=f"{chat_id}_rss_list")],
+                [InlineKeyboardButton(translate_label('Feed hinzufügen', lang), callback_data=f"{chat_id}_rss_setrss")],
+                [InlineKeyboardButton(translate_label('Stoppen', lang),      callback_data=f"{chat_id}_rss_stop")],
+                [InlineKeyboardButton(translate_label('⬅ Hauptmenü', lang),   callback_data=f"group_{chat_id}")]
             ]
-            text = "📰 RSS verwalten"
+            text = tr('📰 RSS verwalten', lang)
             markup = InlineKeyboardMarkup(kb)
             if query.message.photo or query.message.caption:
                 await query.edit_message_caption(text, reply_markup=markup)
