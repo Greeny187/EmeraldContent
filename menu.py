@@ -2,8 +2,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import CallbackQueryHandler
 from database import (
     get_registered_groups,
-    get_welcome, set_welcome, delete_welcome,
-    list_members, set_group_language, get_group_language,
+    get_welcome, set_welcome, delete_welcome, get_rss_topic, set_group_language, get_group_language,
     get_rules, set_rules, delete_rules,
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
@@ -237,11 +236,17 @@ async def menu_callback(update, context):
 
         # RSS «Feed hinzufügen» aus Menü
         if func == "rss" and action == "setrss":
+            # Prüfen, ob ein RSS-Topic gesetzt ist
+            topic_id = get_rss_topic(chat_id)
+            if not topic_id:
+                return await query.message.reply_text(
+                    "⚠️ Kein RSS-Topic gesetzt. Bitte setze zuerst ein RSS-Topic im Gruppenchat-Thema."
+                )
             # Kennzeichnen, dass wir auf die URL warten
             context.user_data["awaiting_rss_url"] = True
-            context.user_data["rss_group_id"] = int(chat_id)
+            context.user_data["rss_group_id"] = chat_id
             return await query.message.reply_text(
-                "➡ Bitte sende jetzt die RSS-URL für diese Gruppe:",
+                "➡ Bitte sende jetzt die RSS-URL für das festgelegte Thema:",
                 reply_markup=ForceReply(selective=True)
             )
 
