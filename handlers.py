@@ -275,11 +275,6 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cm = update.chat_member or update.my_chat_member
-    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
-    user = cm.new_chat_member.user
-    status = cm.new_chat_member.status
-    chat_id = cm.chat.id
 
     # 0) Service-Messages behandeln: new_chat_members / left_chat_member
     msg = update.message
@@ -308,7 +303,8 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if rec:
                 photo_id, text = rec
                 text = (text or "").replace(
-                    "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+                    "{user}", 
+                    f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
                 )
                 if photo_id:
                     await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
@@ -366,6 +362,14 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         remove_member(chat_id, user.id)
         return
+    
+    cm = update.chat_member or update.my_chat_member
+    if not cm:
+        return
+    chat_id = cm.chat.id
+    user = cm.new_chat_member.user
+    status = cm.new_chat_member.status
+    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
 
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
