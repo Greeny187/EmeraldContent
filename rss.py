@@ -1,18 +1,42 @@
 import feedparser
 import logging
 from telegram import Update
-from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters
+from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
 from database import (
     add_rss_feed,
     list_rss_feeds as db_list_rss_feeds,
     remove_rss_feed as db_remove_rss_feed,
-    get_rss_feeds,
+    get_rss_feeds, set_rss_topic, 
     get_posted_links,
     add_posted_link,
     get_rss_topic,
 )
 
 logger = logging.getLogger(__name__)
+
+async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+
+    # Nur in Gruppen/Supergruppen zulassen
+    if chat.type not in ("group", "supergroup"):
+        return await msg.reply_text("❌ `/settopicrss` nur in Gruppen möglich.")
+
+    # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
+    topic_id = msg.message_thread_id or None
+    # 2) Oder, falls als Reply in einem Thema
+    if not topic_id and msg.reply_to_message:
+        topic_id = msg.reply_to_message.message_thread_id
+
+    if not topic_id:
+        return await msg.reply_text(
+            "⚠️ Bitte führe `/settopicrss` in dem gewünschten Forum-Thema aus "
+            "oder antworte auf eine Nachricht darin."
+        )
+
+    # In DB speichern
+    set_rss_topic(chat.id, topic_id)
+    await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
 
 async def set_rss_feed(update: Update, context: CallbackContext):
     chat = update.effective_chat
@@ -89,6 +113,7 @@ def register_rss(app):
     app.add_handler(CommandHandler("setrss", set_rss_feed))
     app.add_handler(CommandHandler("listrss", list_rss_feeds))
     app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+    app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)
 

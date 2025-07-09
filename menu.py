@@ -236,17 +236,20 @@ async def menu_callback(update, context):
 
         # RSS «Feed hinzufügen» aus Menü
         if func == "rss" and action == "setrss":
-            # Prüfen, ob ein RSS-Topic gesetzt ist
+        # prüfen, ob ein RSS-Topic gesetzt ist
             topic_id = get_rss_topic(chat_id)
             if not topic_id:
-                return await query.message.reply_text(
-                    "⚠️ Kein RSS-Topic gesetzt. Bitte setze zuerst ein RSS-Topic im Gruppenchat-Thema."
+                # kein Topic → Fehlermeldung und zurück zum Menü
+                await query.answer(
+                    "❗ Kein RSS-Topic gesetzt. Bitte setze zuerst ein Thema.", 
+                    show_alert=True
                 )
-            # Kennzeichnen, dass wir auf die URL warten
+                return await show_group_menu(query, chat_id)
+            # Topic vorhanden → URL-Eingabe anfordern
             context.user_data["awaiting_rss_url"] = True
-            context.user_data["rss_group_id"] = chat_id
+            context.user_data["rss_group_id"] = int(chat_id)
             return await query.message.reply_text(
-                "➡ Bitte sende jetzt die RSS-URL für das festgelegte Thema:",
+                "➡ Bitte sende jetzt die RSS-URL für dieses Thema:",
                 reply_markup=ForceReply(selective=True)
             )
 

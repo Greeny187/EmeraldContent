@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
-remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, set_rss_topic, 
+remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question,
 get_rss_feeds, count_members, get_farewell, get_welcome)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account, tr
@@ -233,7 +233,7 @@ async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg    = update.effective_message
     chat   = update.effective_chat
     sender = update.effective_user
-    
+
     # 0) Nur Admins dürfen
     admins = await context.bot.get_chat_administrators(chat.id)
     if sender.id not in [admin.user.id for admin in admins]:
@@ -397,30 +397,6 @@ async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Gelöschte Accounts entfernt: {count}"
     )
 
-async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    msg  = update.effective_message
-
-    # Nur in Gruppen/Supergruppen zulassen
-    if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("❌ `/settopicrss` nur in Gruppen möglich.")
-
-    # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
-    topic_id = msg.message_thread_id or None
-    # 2) Oder, falls als Reply in einem Thema
-    if not topic_id and msg.reply_to_message:
-        topic_id = msg.reply_to_message.message_thread_id
-
-    if not topic_id:
-        return await msg.reply_text(
-            "⚠️ Bitte führe `/settopicrss` in dem gewünschten Forum-Thema aus "
-            "oder antworte auf eine Nachricht darin."
-        )
-
-    # In DB speichern
-    set_rss_topic(chat.id, topic_id)
-    await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
-
 async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dev = os.getenv("DEVELOPER_CHAT_ID")
     if str(update.effective_user.id) != dev:
@@ -466,7 +442,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))
-    app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
+    
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
