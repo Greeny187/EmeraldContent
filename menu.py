@@ -248,10 +248,11 @@ async def menu_callback(update, context):
             # Topic vorhanden → URL-Eingabe anfordern
             context.user_data["awaiting_rss_url"] = True
             context.user_data["rss_group_id"] = int(chat_id)
-            return await query.message.reply_text(
+            await query.edit_message_text(
                 "➡ Bitte sende jetzt die RSS-URL für dieses Thema:",
                 reply_markup=ForceReply(selective=True)
             )
+            return
 
         # RSS List
         if func == "rss" and action == "list":

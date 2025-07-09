@@ -77,6 +77,7 @@ def init_db(cur):
         """
         CREATE TABLE IF NOT EXISTS group_settings (
             chat_id BIGINT PRIMARY KEY,
+            title TEXT NOT NULL,
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?',
@@ -145,6 +146,7 @@ def init_db(cur):
         """
         CREATE TABLE IF NOT EXISTS members (
             chat_id BIGINT,
+            title TEXT NOT NULL,
             user_id BIGINT,
             joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -198,7 +200,7 @@ def unregister_group(cur, chat_id: int):
 @_with_cursor
 def add_member(cur, chat_id: int, user_id: int):
     cur.execute(
-        "INSERT INTO members (chat_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
+        "INSERT INTO members (chat_id, title, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
         (chat_id, user_id)
     )
     logger.info(f"✅ add_member: user {user_id} zu chat {chat_id} hinzugefügt")
