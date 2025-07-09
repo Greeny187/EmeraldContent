@@ -323,4 +323,4 @@ async def menu_callback(update, context):
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=0)
