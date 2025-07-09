@@ -282,6 +282,42 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cm = update.chat_member or update.my_chat_member
     chat_id = cm.chat.id
 
+    # 0) Service-Messages behandeln: new_chat_members / left_chat_member
+    msg = update.message
+    if msg:
+        chat_id = msg.chat.id
+        # a) Neue Mitglieder
+        if msg.new_chat_members:
+            for user in msg.new_chat_members:
+                # Willkommen wie unten
+                rec = get_welcome(chat_id)
+                if rec:
+                    photo_id, text = rec
+                    text = (text or "").replace(
+                        "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+                    )
+                    if photo_id:
+                        await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
+                    else:
+                        await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+                add_member(chat_id, user.id)
+            return
+        # b) Verlassene Mitglieder
+        if msg.left_chat_member:
+            user = msg.left_chat_member
+            rec = get_farewell(chat_id)
+            if rec:
+                photo_id, text = rec
+                text = (text or "").replace(
+                    "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+                )
+                if photo_id:
+                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
+                else:
+                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+            remove_member(chat_id, user.id)
+            return
+
     # 1) Willkommen verschicken
     if status in ("member", "administrator", "creator"):
         rec = get_welcome(chat_id)
