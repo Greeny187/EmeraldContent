@@ -230,23 +230,55 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args or not context.args[0].startswith('@'):
-        await update.message.reply_text("⚠️ Beispiel: /removetopic @alex")
-        return
-    username = context.args[0][1:]
-    chat = update.effective_chat
+    msg    = update.effective_message
+    chat   = update.effective_chat
     sender = update.effective_user
+    
+    # 0) Nur Admins dürfen
     admins = await context.bot.get_chat_administrators(chat.id)
     if sender.id not in [admin.user.id for admin in admins]:
-        await update.message.reply_text("Nur Admins dürfen Themen entfernen.")
-        return
-    try:
-        member = await context.bot.get_chat_member(chat.id, username)
-        remove_topic(chat.id, member.user.id)
-        await update.message.reply_text(f"🚫 @{username} wurde das Thema entzogen.")
-    except Exception as e:
-        logger.error(f"/removetopic error: {e}")
-        await update.message.reply_text("⚠️ Fehler beim Entfernen des Themas.")
+        return await msg.reply_text("❌ Nur Admins dürfen Themen entfernen.")
+    
+    # 1) Reply-Fallback (wenn per Reply getippt wird):
+    target = None
+    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
+        target = msg.reply_to_message.from_user
+
+    # 2) Text-Mention aus Menü (ent.user ist direkt verfügbar):
+    if not target and msg.entities:
+        for ent in msg.entities:
+            if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, 'user', None):
+                target = ent.user
+                break
+            # Inline-Link-Mention: tg://user?id=…
+            if ent.type == MessageEntity.TEXT_LINK and ent.url.startswith("tg://user?id="):
+                uid = int(ent.url.split("tg://user?id=")[1])
+                target = await context.bot.get_chat_member(chat.id, uid)
+                target = target.user
+                break
+
+    # 3) @username-Mention (für alle, nicht nur Admins):
+    if not target and context.args:
+        text = context.args[0]
+        name = text.lstrip('@')
+        # suche in Chat-Admins und -Mitgliedern
+        try:
+            member = await context.bot.get_chat_member(chat.id, name)
+            target = member.user
+        except BadRequest:
+            target = None
+
+    # 4) Wenn immer noch kein Ziel → Usage-Hinweis
+    if not target:
+        return await msg.reply_text(
+            "⚠️ Ich konnte keinen User finden. Bitte antworte auf seine Nachricht "
+            "oder nutze eine Mention (z.B. aus dem Menü)."
+        )
+
+    # 5) In DB löschen und Bestätigung
+    remove_topic(chat.id, target.id)
+    display = f"@{target.username}" if target.username else target.first_name
+    await msg.reply_text(f"🚫 {display} wurde als Themenbesitzer entfernt.")
 
 
 async def show_rules_cmd(update, context):
