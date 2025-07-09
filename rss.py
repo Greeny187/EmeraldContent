@@ -102,6 +102,7 @@ async def rss_url_reply(update, context):
     """
     Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
     """
+    logger.info(f"➜ rss_url_reply: awaiting_rss_url={context.user_data.get('awaiting_rss_url')}")
     if not context.user_data.pop("awaiting_rss_url", False):
         return
     url = update.message.text.strip()
@@ -125,6 +126,7 @@ def register_rss(app):
     app.add_handler(CommandHandler("listrss",  list_rss_feeds))
     app.add_handler(CommandHandler("stoprss",  stop_rss_feed))
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=0)
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)

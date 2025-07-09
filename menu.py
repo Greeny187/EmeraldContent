@@ -11,7 +11,6 @@ from database import (
     set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
     get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
 )
-from rss import rss_url_reply
 from utils import clean_delete_accounts_for_chat, tr
 from user_manual import HELP_TEXT
 from access import get_visible_groups
@@ -323,4 +322,3 @@ async def menu_callback(update, context):
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=0)
