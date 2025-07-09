@@ -275,11 +275,10 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cm = update.chat_member
+    cm = update.chat_member or update.my_chat_member
     logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
     user = cm.new_chat_member.user
     status = cm.new_chat_member.status
-    cm = update.chat_member or update.my_chat_member
     chat_id = cm.chat.id
 
     # 0) Service-Messages behandeln: new_chat_members / left_chat_member
@@ -457,5 +456,6 @@ def register_handlers(app):
 
     app.add_handler(help_handler)
 
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=1)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
