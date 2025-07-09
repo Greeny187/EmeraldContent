@@ -1,16 +1,9 @@
 import feedparser
 import logging
-from telegram import Update
+from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
-from database import (
-    add_rss_feed,
-    list_rss_feeds as db_list_rss_feeds,
-    remove_rss_feed as db_remove_rss_feed,
-    get_rss_feeds, set_rss_topic, 
-    get_posted_links,
-    add_posted_link,
-    get_rss_topic,
-)
+from database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed,
+    get_rss_feeds, set_rss_topic, get_posted_links, add_posted_link, get_rss_topic)
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +32,33 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
 
 async def set_rss_feed(update: Update, context: CallbackContext):
-    chat = update.effective_chat
-    if chat.type not in ("group", "supergroup"):
-        await update.message.reply_text("Bitte im Gruppenchat-Thema ausführen.")
-        return
-    topic_id = update.message.message_thread_id or get_rss_topic(chat.id) or None
+    """ 
+    /setrss <URL>  oder  Menü-Flow via ForceReply
+    Funktioniert im Privat-Chat wie in Gruppen, solange  ein RSS-Topic gesetzt ist.
+    """
+    chat_id = update.effective_chat.id
+    # prüfen, ob ein Topic existiert
+    topic_id = get_rss_topic(chat_id)
     if not topic_id:
-        await update.message.reply_text("Bitte führe den Befehl in einem Thema im Gruppenchat aus.")
-        return
-    if not context.args:
-        await update.message.reply_text("Verwendung: /setrss <RSS-URL>")
-        return
-    url = context.args[0]
-    add_rss_feed(chat.id, url, topic_id)
-    await update.message.reply_text(f"RSS-Feed hinzugefügt für Thema {topic_id}:\n{url}")
+        return await update.message.reply_text(
+            "❗ Kein RSS-Topic gesetzt. Bitte erst mit /settopicrss im Gruppen-Thread ein Thema festlegen."
+        )
+
+    # 1) Kommando-Flow: /setrss <url>
+    if context.args:
+        url = context.args[0]
+        add_rss_feed(chat_id, url, topic_id)
+        return await update.message.reply_text(
+            f"✅ RSS-Feed hinzugefügt für Topic {topic_id}:\n{url}"
+        )
+
+    # 2) Menü-Flow: URL per ForceReply abholen
+    context.user_data["awaiting_rss_url"] = True
+    context.user_data["rss_group_id"] = chat_id
+    return await update.message.reply_text(
+        "➡ Bitte sende jetzt die RSS-URL für dieses Thema:",
+        reply_markup=ForceReply(selective=True)
+    )
 
 async def list_rss_feeds(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
@@ -93,28 +99,35 @@ async def fetch_rss_feed(context: CallbackContext):
             add_posted_link(chat_id, entry.link)
 
 async def rss_url_reply(update, context):
-    # Prüfen, ob wir gerade auf eine RSS-URL warten
-    if not context.user_data.get("awaiting_rss_url"):
+    """
+    Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
+    """
+    if not context.user_data.pop("awaiting_rss_url", False):
         return
     url = update.message.text.strip()
     chat_id = context.user_data.pop("rss_group_id")
-    context.user_data.pop("awaiting_rss_url", None)
-    # Bestes Topic ermitteln (Forum-Thread oder Default aus DB)
-    topic_id = get_rss_topic(chat_id) or None
-    # Feed speichern
+
+    # Safety-Check: Topic darf nicht verschwunden sein
+    topic_id = get_rss_topic(chat_id)
+    if not topic_id:
+        return await update.message.reply_text(
+            "❗ Dein RSS-Topic wurde zwischenzeitlich entfernt. Bitte zuerst /settopicrss ausführen."
+        )
     add_rss_feed(chat_id, url, topic_id)
-    # Bestätigung senden
-    dest = "Hauptchat" if topic_id is None else f"Thema {topic_id}"
     await update.message.reply_text(
-        f"✅ RSS-Feed hinzugefügt für {dest}:\n{url}"
+        f"✅ RSS-Feed erfolgreich hinzugefügt für Topic {topic_id}:\n{url}"
     )
 
 def register_rss(app):
-    app.add_handler(CommandHandler("setrss", set_rss_feed))
-    app.add_handler(CommandHandler("listrss", list_rss_feeds))
-    app.add_handler(CommandHandler("stoprss", stop_rss_feed))
+
+    # RSS-Befehle
+    app.add_handler(CommandHandler("setrss",   set_rss_feed))
+    app.add_handler(CommandHandler("listrss",  list_rss_feeds))
+    app.add_handler(CommandHandler("stoprss",  stop_rss_feed))
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)
-
+    # Menü-Flow für URL-Antwort (muss in Gruppe 0 laufen, damit es zuverlässig ausgelöst wird)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply))
+    
+    # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)
