@@ -192,9 +192,8 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     target = None
-    # 1) Reply-Fallback: vorrangig Replied-User (forward_from oder from_user)
-    if msg.reply_to_message:
-        # sicher auf forward_from prüfen
+    # 1) Reply-Fallback, nur wenn es kein Bot ist
+    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
         original_author = getattr(msg.reply_to_message, 'forward_from', None)
         target = original_author or msg.reply_to_message.from_user
 
@@ -217,27 +216,15 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
                 break
 
-    # 4) Wenn immer noch kein Ziel – Fehlermeldung
-    if not target:
-        # WARN: Entities inspect – nur echte User-Objekte auslesen
-        entity_info = [
-            (ent.type, ent.user.id)
-            for ent in (msg.entities or [])
-            if getattr(ent, 'user', None)
-        ]
-        logger.warning(
-            "❌ set_topic: kein target – args=%s, entities=%s, reply=%s",
-            context.args,
-            entity_info,
-            bool(msg.reply_to_message)
-        )
-        return await msg.reply_text(
-            "⚠️ Ich konnte keinen User finden. "
-            "Bitte antworte auf eine Nachricht desjenigen oder verwende eine Text-Mention aus dem Menü.",
-            parse_mode="Markdown"
-        )
+    # 4) Fallback: im Thread ohne Reply → Ausführenden User nehmen
+    if not target and topic_id:
+        target = msg.from_user
 
-    # 5) In DB speichern und Bestätigung
+    # 5) Wenn immer noch kein Ziel – Fehlermeldung
+    if not target:
+        return await msg.reply_text("⚠️ Ich konnte keinen gültigen User finden. Bitte antworte auf seine Nachricht oder nutze eine Mention.")
+
+    # 6) In DB speichern und Bestätigung
     assign_topic(chat.id, target.id, topic_id or 0, topic_name)
     name = f"@{target.username}" if target.username else target.first_name
     await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
