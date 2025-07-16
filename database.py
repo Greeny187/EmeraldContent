@@ -162,6 +162,8 @@ def init_db(cur):
             stat_date DATE,
             user_id BIGINT,
             messages INT DEFAULT 0,
+            members INT,
+            admins INT,
             PRIMARY KEY (chat_id, stat_date, user_id)
         );
         """
