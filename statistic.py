@@ -147,14 +147,14 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args or []
-    params = {}
-    for arg in args:
-        if '=' in arg:
-            k, v = arg.split('=', 1)
-            params[k.lower()] = v
 
-    group_id = int(params.get('group', update.effective_chat.id))
+    # 1) Prüfen, ob Menü-Callback die Gruppe vorgibt
+    group_id = context.user_data.pop("stats_group_id", None)
+    # 2) Fallback auf /stats-Argument oder aktuelle Chat-ID
+    args = context.args or []
+    params = {k: v for arg in args if "=" in arg for k, v in [arg.split("=",1)]}
+    if group_id is None:
+        group_id = int(params.get("group", update.effective_chat.id))
     range_str = params.get('range', '7d')
     is_dev = update.effective_user.id in DEVELOPER_IDS
 

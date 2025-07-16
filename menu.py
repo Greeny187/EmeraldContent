@@ -103,10 +103,13 @@ async def menu_callback(update, context):
     
     # 4) Gruppensprache einmalig laden
     lang = get_group_language(chat_id) or 'de'
-
     
     # Statistik-Button: nur Gruppen-Stats
     if query.data and query.data.endswith("_stats"):
+        # Beispiel: data = "-1001234567890_stats"
+        group_id_str, _ = query.data.split("_", 1)
+        # Temporär in context.params speichern
+        context.user_data["stats_group_id"] = int(group_id_str)
         return await stats_command(update, context)
 
     if data.endswith("_toggle_stats"):
