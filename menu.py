@@ -104,10 +104,6 @@ async def menu_callback(update, context):
     # 4) Gruppensprache einmalig laden
     lang = get_group_language(chat_id) or 'de'
 
-    # neuer Menüpunkt: ausführliche Statistiken anzeigen
-    if func == 'stats':
-        return await stats_command(update, context)
-
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
         current = is_daily_stats_enabled(chat_id)
