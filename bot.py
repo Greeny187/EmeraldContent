@@ -1,6 +1,7 @@
 import os
 import datetime
 import logging
+import statistic
 from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
@@ -24,7 +25,7 @@ def main():
 
     setup_logging()
     init_db()
-
+    statistic.init_stats_db()
     BOT_TOKEN   = os.getenv("BOT_TOKEN")
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     PORT        = int(os.getenv("PORT", 8443))
@@ -37,6 +38,7 @@ def main():
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
     register_handlers(app)
+    statistic.register_statistics_handlers(app)
     register_rss(app)
     register_mood(app)
     register_menu(app)
