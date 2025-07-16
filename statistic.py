@@ -93,9 +93,11 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
 
 # --- Command-Handler für /stats und /statistik ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Absichern, falls context.args None ist
+    args = context.args or []
     # Parameter parsen: group=<id> range=<Nd|Nw>
     params = {}
-    for arg in context.args:
+    for arg in args:
         if '=' in arg:
             k, v = arg.split('=', 1)
             params[k.lower()] = v
@@ -104,7 +106,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = int(params.get('group', update.effective_chat.id))
     range_str = params.get('range', '7d')
 
-    # Intervall bestimmen
+    # Intervall bestimmen (Tage oder Wochen)
     m = re.match(r"(\d+)([dw])", range_str)
     days = 7
     if m:
