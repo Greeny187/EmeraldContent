@@ -1,11 +1,36 @@
 import re
+import os
 import logging
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from telethon import TelegramClient
+from telethon.tl.functions.channels import GetFullChannelRequest
 from database import _with_cursor
 
 logger = logging.getLogger(__name__)
+
+api_id = os.getenv("API_ID")
+api_hash = os.getenv("API_HASH")
+session_name = 'userbot_session'  # Leg dir eine Session-Datei an
+client = TelegramClient(session_name, api_id, api_hash)
+
+async def fetch_stats(chat_username):
+    await client.start()
+    full = await client(GetFullChannelRequest(chat_username))
+    stats = {
+        'title': full.chats[0].title,
+        'members': full.full_chat.participants_count,
+        'banned': full.full_chat.kicked_count,
+        # weitere Felder je nach Verfügbarkeit
+    }
+    print(f"{datetime.utcnow()}: {stats}")
+    # → Hier in deine DB schreiben
+    await client.disconnect()
+
+if __name__ == '__main__':
+    import asyncio
+    asyncio.run(fetch_stats('deinChannelUsername'))
 
 # --- Schema-Migration für neue Spalten und Log-Tabelle ---
 @_with_cursor
@@ -104,6 +129,16 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Standardwerte
     group_id = int(params.get('group', update.effective_chat.id))
     range_str = params.get('range', '7d')
+
+    # oben in stats_command:
+    DEVELOPER_IDS = {12345678, 87654321}  # deine Telegram-User-IDs
+
+    # Zugriffsprüfung
+    if update.effective_user.id not in DEVELOPER_IDS:
+    # entferne alle globalen Metriken
+        top_groups = []
+    else:
+        top_groups = get_top_groups(start_dt, end_dt)
 
     # Intervall bestimmen (Tage oder Wochen)
     m = re.match(r"(\d+)([dw])", range_str)
