@@ -106,7 +106,7 @@ async def menu_callback(update, context):
 
     # neuer Menüpunkt: ausführliche Statistiken anzeigen
     if func == 'stats':
-        return await stats_command(query, context)
+        return await stats_command(update, context)
 
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
