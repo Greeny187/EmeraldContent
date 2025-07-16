@@ -42,7 +42,6 @@ def log_command(cur, chat_id: int, user_id: int, command: str):
         "INSERT INTO command_logs (chat_id, user_id, command) VALUES (%s, %s, %s);",
         (chat_id, user_id, command)
     )
-    # Aktualisiere letzte Aktivität in group_settings
     cur.execute(
         "UPDATE group_settings SET last_command = %s, last_active = CURRENT_TIMESTAMP WHERE chat_id = %s;",
         (command, chat_id)
@@ -138,7 +137,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for cid, total in top_groups:
         text += f"   – {cid}: {int(total)} Nachrichten\n"
 
-    await update.message.reply_text(text, parse_mode='Markdown')
+    # Verwende effective_message so dass reply_text immer existiert
+    msg = update.effective_message
+    await msg.reply_text(text, parse_mode='Markdown')
 
 # --- Registrierung der Handler ---
 def register_statistics_handlers(app):
