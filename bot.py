@@ -2,6 +2,7 @@ import os
 import datetime
 import logging
 import statistic
+from telegram import request
 from telegram.ext import ApplicationBuilder, filters, MessageHandler
 from handlers import register_handlers, error_handler
 from menu import register_menu
@@ -31,7 +32,12 @@ def main():
     PORT        = int(os.getenv("PORT", 8443))
 
     PORT = int(os.getenv("PORT", 8443))
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # HTTPX-Request mit größerem Pool und längeren Timeouts
+    request = request(
+        con_pool_size=50,     # erlaubt bis zu 50 gleichzeitige Verbindungen
+        pool_timeout=20.0     # wartet bis zu 20 Sekunden auf freie Connection
+    )
+    app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
 
     # Deine Handler und Error-Handler registrieren

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from database import list_active_members, mark_member_deleted
 from telegram.error import BadRequest
 from translator import translate_hybrid
@@ -31,18 +32,26 @@ def is_deleted_account(member) -> bool:
 
 async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
     removed = []
-    for user_id in list_active_members(chat_id):
-        try:
-            member = await bot.get_chat_member(chat_id, user_id)
-            if is_deleted_account(member):
-                # Ban & Unban, um den Deleted-Account aus der Gruppe zu entfernen
-                await bot.ban_chat_member(chat_id, user_id)
-                await bot.unban_chat_member(chat_id, user_id)
-                # Flag in der DB setzen
-                mark_member_deleted(chat_id, user_id)
-                removed.append(user_id)
-                logger.debug(f"Markiert gelöscht: {user_id}")
-        except BadRequest as e:
-            logger.error(f"Cleanup-Error für {user_id}: {e.message}")
+    semaphore = asyncio.Semaphore(10)
+
+    async def process(user_id):
+        async with semaphore:
+            try:
+                member = await bot.get_chat_member(chat_id, user_id)
+                if is_deleted_account(member):
+                    # Ban & Unban zum Entfernen
+                    await bot.ban_chat_member(chat_id, user_id)
+                    await bot.unban_chat_member(chat_id, user_id)
+                    # Flag in DB setzen
+                    mark_member_deleted(chat_id, user_id)
+                    removed.append(user_id)
+                    logger.debug(f"Markiert gelöscht: {user_id}")
+            except BadRequest as e:
+                logger.error(f"Cleanup-Error für {user_id}: {e.message}")
+
+    # Alle IDs sammeln und parallel abarbeiten (max. 10 gleichzeitig)
+    tasks = [process(uid) for uid in list_active_members(chat_id)]
+    await asyncio.gather(*tasks)
+
     logger.info(f"clean_delete: insgesamt {len(removed)} entfernt.")
     return len(removed)
