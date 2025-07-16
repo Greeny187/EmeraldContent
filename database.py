@@ -521,7 +521,7 @@ def migrate_db():
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS language_code TEXT NOT NULL DEFAULT 'de';"
         )
         cur.execute(
-            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS title TEXT NOT NULL,;"
+            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS title TEXT NOT NULL;"
         )
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
