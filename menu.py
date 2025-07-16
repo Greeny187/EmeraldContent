@@ -105,8 +105,8 @@ async def menu_callback(update, context):
     lang = get_group_language(chat_id) or 'de'
 
     
-    if query.data.endswith("_stats"):
-        from statistic import stats_command
+    # Statistik-Button: nur Gruppen-Stats
+    if query.data and query.data.endswith("_stats"):
         return await stats_command(update, context)
 
     if data.endswith("_toggle_stats"):

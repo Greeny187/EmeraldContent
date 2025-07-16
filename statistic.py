@@ -164,23 +164,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_dt = end_dt - timedelta(days=days)
 
     active_users = get_active_users_count(group_id, start_dt, end_dt)
-    top_cmds = get_command_usage(group_id, start_dt, end_dt)
     weekday_activity = get_activity_by_weekday(group_id, start_dt, end_dt)
-    top_groups = get_top_groups(start_dt, end_dt) if is_dev else []
 
     text = f"📊 *Statistiken für Gruppe {group_id}*\n"
     text += f"🗓 Zeitraum: {start_dt.date()} bis {end_dt.date()}\n"
     text += f"• Aktive Nutzer: `{active_users}`\n"
-    text += "• Top Befehle:\n"
-    for cmd, cnt in top_cmds:
-        text += f"   – `{cmd}`: {cnt}\n"
     text += "• Aktivität pro Wochentag (0=So):\n"
     for wd, total in weekday_activity:
         text += f"   – {int(wd)}: {int(total)} Nachrichten\n"
-    if is_dev and top_groups:
-        text += "• Top 5 Gruppen (Nachrichten gesamt):\n"
-        for cid, total in top_groups:
-            text += f"   – {cid}: {int(total)} Nachrichten\n"
 
     await update.effective_message.reply_text(text, parse_mode='Markdown')
 
