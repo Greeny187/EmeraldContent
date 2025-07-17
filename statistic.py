@@ -389,16 +389,34 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
 
     # 1) Basis-Stats
-    msg_stats = await fetch_message_stats(chat_id, days) if telethon_client else {
-        "total": 0, "by_user": Counter(), "by_type": Counter(), "by_hour": Counter(), "hashtags": Counter()
-    }
-    resp_times = await compute_response_times(chat_id, days)
+    msg_stats   = await fetch_message_stats(chat_id, days)
+    resp_times  = await compute_response_times(chat_id, days)
     media_stats = await fetch_media_and_poll_stats(chat_id, days)
+    sentiment   = await analyze_sentiment([...])  # bleibt wie gehabt
 
-    # 2) Sentiment (nur kurze Beispiele, limitiert auf Top 10 Texte)
-    texts = list(next(iter(msg_stats["by_user"]), []) )  # Platzhalter
-    sentiment = await analyze_sentiment(texts[:10])
+    # 1) Fallbacks für fehlende Response-Times
+    avg = resp_times.get('average_response_s')
+    med = resp_times.get('median_response_s')
+    avg_str = f"{avg:.1f}s" if avg is not None else "Keine Daten verfügbar"
+    med_str = f"{med:.1f}s" if med is not None else "Keine Daten verfügbar"
 
+    # 2) Einheitlichen Text-Baustein erstellen
+    text = [
+        f"*Letzte {days} Tage:*",
+        f"• Nachrichten gesamt: {msg_stats['total']}",
+        f"• Top 3 Absender: " + ", ".join(
+            str(u) for u, _ in msg_stats["by_user"].most_common(3)
+        ),
+        f"• Reaktionszeit Ø/Med: {avg_str} / {med_str}",
+        f"• Medien: " + ", ".join(f"{k}={v}" for k, v in media_stats.items()),
+        f"• Stimmung (GPT): {sentiment}"
+    ]
+
+    # 3) Antwort senden
+    await update.effective_message.reply_text(
+        "\n".join(text),
+        parse_mode="Markdown"
+    )
     # 3) Ausgabe zusammenbauen
     text = [
         f"*Letzte {days} Tage:*",
