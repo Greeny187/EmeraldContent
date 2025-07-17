@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler
 from database import (
     get_registered_groups,
@@ -16,6 +16,7 @@ from utils import clean_delete_accounts_for_chat, tr
 from user_manual import HELP_TEXT
 from access import get_visible_groups
 import logging
+import statistic
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def show_group_menu(query_or_update, chat_id: int):
         [InlineKeyboardButton(tr('RSS', lang), callback_data=f"{chat_id}_rss")],
         [InlineKeyboardButton(tr('🗑 Gelöschte Accounts entfernen', lang), callback_data=f"{chat_id}_clean_delete")],
         [InlineKeyboardButton(tr('📊 Statistiken anzeigen', lang), callback_data=f"{chat_id}_stats")],
+        [InlineKeyboardButton(tr('📥 Export CSV', lang),    callback_data=f"{chat_id}_stats_export")],
         [InlineKeyboardButton(
             tr('📊 Tagesstatistik {status}', lang).format(status=tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)),
             callback_data=f"{chat_id}_toggle_stats"
@@ -111,7 +113,13 @@ async def menu_callback(update, context):
         # Temporär in context.params speichern
         context.user_data["stats_group_id"] = int(group_id_str)
         return await stats_command(update, context)
+    
+    if data.endswith("_stats_export"):
+        return await statistic.export_stats_csv_command(update, context)
 
+    if data.endswith("_stats_dev"):
+        return await statistic.stats_dev_command(update, context)
+    
     if data.endswith("_toggle_stats"):
         chat_id = int(data.split("_",1)[0])
         current = is_daily_stats_enabled(chat_id)

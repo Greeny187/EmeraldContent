@@ -1,13 +1,15 @@
 import os
 import asyncio
 import logging
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import date, time
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, JobQueue
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
-from database import _with_cursor, _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members
+from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
+from statistic import fetch_and_store_stats
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         try:
             top3 = []
             # Annahme: get_group_stats liefert List[Tuple[user_id, count]]
-            top3 = get_registered_groups(chat_id)  # Passe Funktion an
+            top3 = get_group_stats(chat_id, today)
             if not top3:
                 continue
             lines = [
@@ -85,6 +87,15 @@ async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Purge von gelöschten Mitgliedern abgeschlossen.")
     except Exception as e:
         logger.error(f"Fehler beim Purgen von Mitgliedern: {e}")
+
+def schedule_daily_stats(chat_ids: list[int], hour: int = 3):
+    sched = AsyncIOScheduler()
+    for cid in chat_ids:
+        sched.add_job(
+            lambda c=cid: asyncio.create_task(fetch_and_store_stats(c)),
+            trigger='cron', hour=hour, minute=0
+        )
+    sched.start()
 
 # === Scheduler Registration ===
 def register_jobs(app):

@@ -1,27 +1,26 @@
 import re
 import os
+import csv
 import logging
 import asyncio
+import openai
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from telethon import TelegramClient
-from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantsRequest
+from telethon.tl.types import ChannelParticipantsRecent, InputMessagesFilterPoll, InputMessagesFilterPhotos
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from database import _with_cursor, _db_pool
+from database import _with_cursor, _db_pool, get_db_connection
 
 logger = logging.getLogger(__name__)
 
-API_ID     = int(os.getenv("API_ID", "0"))
-API_HASH   = os.getenv("API_HASH", "")
-SESSION_NAME = 'userbot_session'
-
-# Neuen Event-Loop für Telethon anlegen und setzen
-_loop = asyncio.new_event_loop()
-asyncio.set_event_loop(_loop)
-
-# Client mit eigenem Loop erstellen
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH, loop=_loop)
+openai.api_key = os.getenv("OPENAI_API_KEY")
+API_ID   = int(os.getenv("TG_API_ID", 0))
+API_HASH = os.getenv("TG_API_HASH", "")
+SESSION  = "userbot_session"
+telethon_client = TelegramClient(SESSION, API_ID, API_HASH)
 
 # Hilfsfunktion für rohe DB-Verbindung
 def get_db_connection():
@@ -35,28 +34,27 @@ DEVELOPER_IDS = {int(x) for x in raw.split(",") if x.strip().isdigit()}
 
 # --- Telethon-Daten abrufen und speichern ---
 async def fetch_and_store_stats(chat_username: str):
-    await client.start()
-    full = await client(GetFullChannelRequest(chat_username))
+    """Fragt via Telethon ab und speichert Mitglieder+Admins in daily_stats."""
+    await telethon_client.start()
+    full = await telethon_client(GetFullChannelRequest(chat_username))
     conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO daily_stats (chat_id, stat_date, members, admins)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (chat_id, stat_date)
-                DO UPDATE SET members = EXCLUDED.members, admins = EXCLUDED.admins;
-                """,
-                (
-                    full.chats[0].id,
-                    datetime.utcnow().date(),
-                    full.full_chat.participants_count,
-                    len(full.full_chat.admin_rights or [])
-                )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO daily_stats (chat_id, stat_date, members, admins)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (chat_id, stat_date)
+            DO UPDATE SET members = EXCLUDED.members, admins = EXCLUDED.admins;
+            """,
+            (
+                full.chats[0].id,
+                datetime.utcnow().date(),
+                full.full_chat.participants_count,
+                len(full.full_chat.admin_rights or [])
             )
-    finally:
-        _db_pool.putconn(conn)
-    await client.disconnect()
+        )
+    _db_pool.putconn(conn)
+    await telethon_client.disconnect()
 
 # Scheduler für nächtliche Abfragen
 def schedule_telethon_jobs(chat_usernames: list[str]):
@@ -162,8 +160,188 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
     )
     return cur.fetchall()
 
+async def fetch_message_stats(chat_id: int, days: int = 7):
+    since = datetime.utcnow() - timedelta(days=days)
+    stats = {
+        "total": 0,
+        "by_user": Counter(),
+        "by_type": Counter(),
+        "by_hour": Counter(),
+        "hashtags": Counter(),
+    }
+
+    async for msg in telethon_client.iter_messages(chat_id, offset_date=since):
+        stats["total"] += 1
+        # Nutzer
+        if msg.from_id:
+            uid = msg.from_id.user_id or msg.from_id.chat_id
+            stats["by_user"][uid] += 1
+
+        # Typ
+        kind = ("text" if msg.text else
+                "photo" if msg.photo else
+                "video" if msg.video else
+                "sticker" if msg.sticker else
+                "voice" if msg.voice else
+                "location" if msg.location else
+                "other")
+        stats["by_type"][kind] += 1
+
+        # Stunde
+        stats["by_hour"][msg.date.hour] += 1
+
+        # Hashtags
+        if msg.text:
+            for tag in re.findall(r"#\w+", msg.text):
+                stats["hashtags"][tag.lower()] += 1
+
+    return stats
+
+def rolling_window_trend(data: list[int], window: int = 7) -> list[float]:
+    """Gleitender Durchschnitt über das Zeitfenster."""
+    if len(data) < window:
+        return []
+    return [
+        sum(data[i-window:i]) / window
+        for i in range(window, len(data)+1)
+    ]
+
+def heatmap_matrix(by_hour: Counter, days: int = 7):
+    """
+    Erstellt eine matrix [Wochentag][Stunde] mit Nachrichtenzahlen.
+    Beispiel-Rückgabe: dict{0: Counter({0:5,1:2,...}), ..., 6: Counter(...)}
+    """
+    matrix = {d: Counter() for d in range(7)}
+    # befüllen: in fetch_message_stats pro msg zusätzlich matrix[msg.date.weekday()][msg.date.hour] += 1
+    return matrix
+
+async def compute_response_times(chat_id: int, days: int = 7):
+    """
+    Misst Zeitdifferenz zwischen jeder Erstnachricht und erster Antwort im Thread.
+    Gibt Durchschnitt und Median zurück.
+    """
+    from statistics import mean, median
+
+    since = datetime.utcnow() - timedelta(days=days)
+    diffs = []
+
+    # einfacher Ansatz: jede Nachricht, die reply_to_message hat
+    async for msg in telethon_client.iter_messages(chat_id, offset_date=since):
+        if msg.reply_to_msg_id:
+            orig = await telethon_client.get_messages(chat_id, ids=msg.reply_to_msg_id)
+            diff = (msg.date - orig.date).total_seconds()
+            diffs.append(diff)
+
+    return {
+        "average_response_s": mean(diffs) if diffs else None,
+        "median_response_s": median(diffs) if diffs else None,
+    }
+
+async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
+    since = datetime.utcnow() - timedelta(days=days)
+    media = {
+        "photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0
+    }
+    # Polls
+    async for _ in telethon_client.iter_messages(chat_id,
+                      filter=InputMessagesFilterPoll, offset_date=since):
+        media["polls"] += 1
+
+    # Fotos
+    async for _ in telethon_client.iter_messages(chat_id,
+                      filter=InputMessagesFilterPhotos, offset_date=since):
+        media["photos"] += 1
+    # Weitere Filter analog: InputMessagesFilterVideo, InputMessagesFilterVoice, etc.
+
+    return media
+
+async def analyze_sentiment(texts: list[str]):
+    """
+    Rückgabe: {'positive': x, 'neutral': y, 'negative': z}
+    """
+    prompt = (
+        "Analysiere folgende Texte und gib für jeden positiven, neutralen "
+        "oder negativen Sentiment an:\n\n" + "\n\n".join(texts)
+    )
+    resp = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0
+    )
+    # parse resp.choices[0].message.content → dict
+    return resp.choices[0].message.content
+
+async def summarize_conversation(chat_id: int, days: int = 1):
+    """
+    Holt letzte Nachrichten und fasst sie kurz zusammen.
+    """
+    msgs = []
+    async for msg in telethon_client.iter_messages(chat_id, limit=50):
+        if msg.text:
+            msgs.append(msg.text)
+    prompt = "Fasse die folgenden Konversationen in max. 5 Sätzen zusammen:\n\n" + "\n\n".join(msgs)
+    resp = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3
+    )
+    return resp.choices[0].message.content
+
+async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exportiere alle relevanten Metriken als CSV und sende die Datei."""
+    chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
+    # Beispiel: hole Basis-Stats
+    active = get_active_users_count(chat_id, datetime.utcnow()-timedelta(days=7), datetime.utcnow())
+    cmds   = get_command_usage(chat_id, datetime.utcnow()-timedelta(days=7), datetime.utcnow())
+    # CSV schreiben
+    fname = f"/tmp/stats_{chat_id}.csv"
+    with open(fname, "w", encoding="utf-8") as f:
+        f.write("Metrik;Wert\n")
+        f.write(f"aktive_nutzer;{active}\n")
+        for cmd, cnt in cmds:
+            f.write(f"cmd_{cmd};{cnt}\n")
+    await update.effective_message.reply_document(open(fname, "rb"))
+
+async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Zeige globale Top-Gruppen (nur für Developer)."""
+    end = datetime.utcnow()
+    start = end - timedelta(days=7)
+    top = get_top_groups(start, end, limit=5)
+    text = "🏆 *Top 5 Gruppen (7 Tage)*\n"
+    for i, (gid, tot) in enumerate(top, 1):
+        text += f"{i}. {gid}: {tot} Nachrichten\n"
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
+
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    chat_id = update.effective_chat.id
+    days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
+
+    # Telethon starten, falls nicht bereits geschehen
+    if not telethon_client.is_connected():
+        await telethon_client.start()
+
+    # 1) Basis-Stats
+    msg_stats = await fetch_message_stats(chat_id, days)
+    resp_times = await compute_response_times(chat_id, days)
+    media_stats = await fetch_media_and_poll_stats(chat_id, days)
+
+    # 2) Sentiment (nur kurze Beispiele, limitiert auf Top 10 Texte)
+    texts = list(next(iter(msg_stats["by_user"]), []) )  # Platzhalter
+    sentiment = await analyze_sentiment(texts[:10])
+
+    # 3) Ausgabe zusammenbauen
+    text = [
+        f"*Letzte {days} Tage:*",
+        f"• Nachrichten gesamt: {msg_stats['total']}",
+        f"• Top 3 Absender: " + ", ".join(
+            str(u) for u,_ in msg_stats["by_user"].most_common(3)),
+        f"• Reaktionszeit Ø/Med: {resp_times['average_response_s']:.1f}/{resp_times['median_response_s']:.1f}s",
+        f"• Medien: " + ", ".join(f"{k}={v}" for k,v in media_stats.items()),
+        f"• Stimmung (GPT): {sentiment}"
+    ]
+    await update.effective_message.reply_text("\n".join(text), parse_mode="Markdown")
 
     # 1) Prüfen, ob Menü-Callback die Gruppe vorgibt
     group_id = context.user_data.pop("stats_group_id", None)

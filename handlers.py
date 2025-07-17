@@ -417,22 +417,13 @@ async def dashboard_command(update, context):
     dev_id = os.getenv("DEVELOPER_CHAT_ID")
     if str(user_id) != str(dev_id):
         return await update.message.reply_text("❌ Zugriff verweigert.")
+    
+    # --- Developer-Metriken ergänzen ---
+    # Importiere Dev-Stats-Funktion
+    from statistic import stats_dev_command
+    # Leite direkt an stats_dev_command weiter
+    return await stats_dev_command(update, context)
 
-    # Metriken sammeln
-    total_groups = len(get_registered_groups())
-    total_rss = len(get_rss_feeds())
-    total_users  = sum(count_members(chat_id) for chat_id, _ in get_registered_groups())
-    uptime = datetime.datetime.now() - context.bot_data.get('start_time', datetime.datetime.now())
-
-    msg = (
-        f"🤖 *Bot Dashboard*\n"
-        f"\n• Startzeit: `{context.bot_data.get('start_time')}`"
-        f"\n• Uptime: `{str(uptime).split('.')[0]}`"
-        f"\n• Gruppen: `{total_groups}`"
-        f"\n• RSS-Feeds: `{total_rss}`"
-        f"\n• Gesamt-Mitglieder: `{total_users}`"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 def register_handlers(app):
