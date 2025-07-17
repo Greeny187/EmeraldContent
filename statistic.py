@@ -1,7 +1,6 @@
 import re
 import os
 import logging
-from bot import telethon_client
 from openai import OpenAI
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -34,6 +33,7 @@ DEVELOPER_IDS = {int(x) for x in raw.split(",") if x.strip().isdigit()}
 
 # --- Telethon-Daten abrufen und speichern ---
 async def fetch_and_store_stats(chat_username: str):
+    from bot import telethon_client
     """Fragt via Telethon ab und speichert Mitglieder+Admins in daily_stats."""
     full = await telethon_client(GetFullChannelRequest(chat_username))
     conn = get_db_connection()
@@ -159,6 +159,7 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
     return cur.fetchall()
 
 async def fetch_message_stats(chat_id: int, days: int = 7):
+    from bot import telethon_client
     if telethon_client is None:
         # keine Telethon-Stats möglich → leere Struktur zurückgeben
         return {
@@ -225,11 +226,11 @@ def heatmap_matrix(by_hour: Counter, days: int = 7):
 
 async def compute_response_times(chat_id: int, days: int = 7):
     
-    # Guard: Telethon nur nutzen, wenn Client existiert
     """
     Misst Zeitdifferenz zwischen jeder Erstnachricht und erster Antwort im Thread.
     Gibt Durchschnitt und Median zurück.
     """
+    from bot import telethon_client
     from statistics import mean, median
 
     since = datetime.utcnow() - timedelta(days=days)
@@ -248,7 +249,7 @@ async def compute_response_times(chat_id: int, days: int = 7):
     }
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
-       
+    from bot import telethon_client
     since = datetime.utcnow() - timedelta(days=days)
     media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 
@@ -296,6 +297,7 @@ async def analyze_sentiment(texts: list[str]):
     return resp.choices[0].message.content
 
 async def summarize_conversation(chat_id: int, days: int = 1):
+    from bot import telethon_client
     """
     Holt die letzten Chat-Nachrichten und fasst sie in bis zu 5 Sätzen zusammen.
     """
@@ -352,6 +354,7 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from bot import telethon_client
     # Guards
     if not openai_client:
         print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")
