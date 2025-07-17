@@ -10,9 +10,8 @@ from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantsRequest
-from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterPool
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from database import _with_cursor, _db_pool, get_db_connection
+from database import _with_cursor, _db_pool
 
 logger = logging.getLogger(__name__)
 
@@ -239,19 +238,29 @@ async def compute_response_times(chat_id: int, days: int = 7):
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
     since = datetime.utcnow() - timedelta(days=days)
-    media = {
-        "photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0
-    }
-    # Polls
-    async for _ in telethon_client.iter_messages(chat_id,
-                      filter=InputMessagesFilterPoll, offset_date=since):
-        media["polls"] += 1
+    media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 
-    # Fotos
-    async for _ in telethon_client.iter_messages(chat_id,
-                      filter=InputMessagesFilterPhotos, offset_date=since):
-        media["photos"] += 1
-    # Weitere Filter analog: InputMessagesFilterVideo, InputMessagesFilterVoice, etc.
+    async for msg in telethon_client.iter_messages(chat_id, offset_date=since):
+        # Polls
+        if hasattr(msg, "poll") and msg.poll is not None:
+            media["polls"] += 1
+        # Fotos
+        if msg.photo:
+            media["photos"] += 1
+        # Videos
+        if msg.video:
+            media["videos"] += 1
+        # Voice
+        if msg.voice:
+            media["voices"] += 1
+        # Dokumente (inkl. GIFs)
+        if msg.document:
+            # GIFs erkennt man z.B. an msg.document.mime_type
+            mt = getattr(msg.document, "mime_type", "")
+            if "gif" in mt:
+                media["gifs"] += 1
+            else:
+                media["docs"] += 1
 
     return media
 
