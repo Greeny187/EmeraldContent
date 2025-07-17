@@ -7,7 +7,7 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 # Erlaube deine GitHub-Pages-Domain (z.B. https://username.github.io)
-CORS(app, resources={r"/api/*": {"origins": "https://greeny187.github.io"}}, supports_credentials=True)
+CORS(app, resources={r"/api/*": {"origins": "https://greeny187.github.io/GreenyManagementBots/"}}, supports_credentials=True)
 
 # Dashboard-Token aus Umgebungsvariable
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN")
