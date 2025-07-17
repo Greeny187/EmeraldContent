@@ -2,7 +2,9 @@ import os
 import datetime
 import logging
 import statistic
+import asyncio
 from telegram.ext import ApplicationBuilder, filters, MessageHandler
+from telethon import TelegramClient
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
@@ -10,6 +12,16 @@ from database import init_db
 from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
+
+# 1. Telegram-API-Zugangsdaten prüfen
+API_ID   = os.getenv("TG_API_ID")
+API_HASH = os.getenv("TG_API_HASH")
+if not API_ID or not API_HASH:
+    raise RuntimeError("Bitte TG_API_ID und TG_API_HASH als Umgebungsvariablen setzen!")
+
+# 2. Client instanziieren und synchron starten
+telethon_client = TelegramClient('userbot_session', int(API_ID), API_HASH)
+asyncio.get_event_loop().run_until_complete(telethon_client.start())
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:

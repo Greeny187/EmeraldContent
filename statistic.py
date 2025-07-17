@@ -1,8 +1,7 @@
 import re
 import os
-import csv
 import logging
-import asyncio
+from bot import telethon_client
 from openai import OpenAI
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -22,20 +21,6 @@ if OPENAI_KEY:
 else:
     openai_client = None
     print("[Warnung] OPENAI_API_KEY nicht gesetzt – Sentiment/Summary deaktiviert.")
-API_ID   = os.getenv("TG_API_ID")
-API_HASH = os.getenv("TG_API_HASH")
-SESSION  = "userbot_session"
-
-## Telethon-Client anlegen (oder None, wenn API-Creds fehlen)
-if API_ID and API_HASH:
-    try:
-        telethon_client = TelegramClient(SESSION, int(API_ID), API_HASH)
-    except Exception as e:
-        telethon_client = None
-        print(f"[Warnung] TelethonClient konnte nicht erstellt werden: {e}")
-else:
-    telethon_client = None
-    print("[Warnung] TG_API_ID oder TG_API_HASH nicht gesetzt – Telethon-Statistiken deaktiviert.")
 
 # Hilfsfunktion für rohe DB-Verbindung
 def get_db_connection():
@@ -50,7 +35,6 @@ DEVELOPER_IDS = {int(x) for x in raw.split(",") if x.strip().isdigit()}
 # --- Telethon-Daten abrufen und speichern ---
 async def fetch_and_store_stats(chat_username: str):
     """Fragt via Telethon ab und speichert Mitglieder+Admins in daily_stats."""
-    await telethon_client.start()
     full = await telethon_client(GetFullChannelRequest(chat_username))
     conn = get_db_connection()
     with conn.cursor() as cur:
@@ -69,7 +53,6 @@ async def fetch_and_store_stats(chat_username: str):
             )
         )
     _db_pool.putconn(conn)
-    await telethon_client.disconnect()
 
 # Scheduler für nächtliche Abfragen
 def schedule_telethon_jobs(chat_usernames: list[str]):
@@ -243,8 +226,6 @@ def heatmap_matrix(by_hour: Counter, days: int = 7):
 async def compute_response_times(chat_id: int, days: int = 7):
     
     # Guard: Telethon nur nutzen, wenn Client existiert
-    if telethon_client is None:
-        return {"average_response_s": None, "median_response_s": None}
     """
     Misst Zeitdifferenz zwischen jeder Erstnachricht und erster Antwort im Thread.
     Gibt Durchschnitt und Median zurück.
@@ -267,9 +248,7 @@ async def compute_response_times(chat_id: int, days: int = 7):
     }
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
-    if telethon_client is None:
-        return {"photos":0, "videos":0, "voices":0, "docs":0, "gifs":0, "polls":0}
-    
+       
     since = datetime.utcnow() - timedelta(days=days)
     media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 
@@ -377,14 +356,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not openai_client:
         print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")
     
+    # Telethon starten, falls vorhanden
     if telethon_client:
-        # nur starten, wenn nicht schon verbunden
         if not telethon_client.is_connected():
             await telethon_client.start()
     else:
-        # Telethon down – Du kannst hier evtl. Bot-API-Stats einsetzen oder überspringen
-        print("[Info] stats_command: Telethon-Client nicht verfügbar, skippt Telethon-Stats")
-        
+        # Telethon nicht verfügbar → wir skippen alle Aufrufe
+        print("[Info] Telethon-Client nicht verfügbar, überspringe Telethon-Statistiken")
+
     chat_id = update.effective_chat.id
     days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
 
