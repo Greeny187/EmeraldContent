@@ -10,7 +10,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantsRequest
-from telethon.tl.types import ChannelParticipantsRecent, InputMessagesFilterPoll, InputMessagesFilterPhotos
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterPool
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import _with_cursor, _db_pool, get_db_connection
 
