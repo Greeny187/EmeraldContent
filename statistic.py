@@ -20,6 +20,7 @@ API_ID   = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SESSION  = "userbot_session"
 
+## Telethon-Client anlegen (oder None, wenn API-Creds fehlen)
 if API_ID and API_HASH:
     try:
         telethon_client = TelegramClient(SESSION, int(API_ID), API_HASH)
@@ -332,16 +333,22 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+    # Guard: Telethon nur nutzen, wenn Client existiert
+    if telethon_client:
+        # nur starten, wenn nicht schon verbunden
+        if not telethon_client.is_connected():
+            await telethon_client.start()
+    else:
+        # Telethon down – Du kannst hier evtl. Bot-API-Stats einsetzen oder überspringen
+        print("[Info] stats_command: Telethon-Client nicht verfügbar, skippt Telethon-Stats")
+        
     chat_id = update.effective_chat.id
     days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
 
-    # Telethon starten, falls nicht bereits geschehen
-    if not telethon_client.is_connected():
-        await telethon_client.start()
-
     # 1) Basis-Stats
-    msg_stats = await fetch_message_stats(chat_id, days)
+    msg_stats = await fetch_message_stats(chat_id, days) if telethon_client else {
+        "total": 0, "by_user": Counter(), "by_type": Counter(), "by_hour": Counter(), "hashtags": Counter()
+    }
     resp_times = await compute_response_times(chat_id, days)
     media_stats = await fetch_media_and_poll_stats(chat_id, days)
 
