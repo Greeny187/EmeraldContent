@@ -1,9 +1,9 @@
 import os
 import threading
+import database
 from datetime import datetime, date, timedelta
 from flask import Flask, jsonify, send_from_directory
 from database import (
-    conn,
     get_registered_groups,
     count_members,
     get_new_members_count,
@@ -55,7 +55,7 @@ def api_dashboard():
 
     # Mood-Verteilung
     mood_dist = {}
-    cur = conn.cursor()
+    cur = database.conn.cursor()
     for cid, _ in groups:
         cur.execute(
             "SELECT mood, COUNT(*) FROM mood_meter WHERE chat_id = %s GROUP BY mood;",
@@ -64,11 +64,13 @@ def api_dashboard():
         mood_dist[cid] = dict(cur.fetchall())
 
     # Top 3 Schreiber insgesamt heute
+    cur = database.conn.cursor()
     cur.execute(
         "SELECT user_id, SUM(messages) FROM daily_stats WHERE stat_date = %s GROUP BY user_id ORDER BY SUM(messages) DESC LIMIT 3;",
         (date.today(),)
     )
-    top_writers = [{ 'user_id': uid, 'messages': cnt } for uid, cnt in cur.fetchall()]
+    top_writers = [{'user_id': uid, 'messages': cnt} for uid, cnt in cur.fetchall()]
+    cur.close()
 
     # Bot-Aktivität: Startzeit & Uptime
     uptime = datetime.now() - start_time
