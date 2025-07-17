@@ -48,6 +48,10 @@ def main():
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     PORT        = int(os.getenv("PORT", 8443))
     PORT = int(os.getenv("PORT", 8443))
+
+    # 1) Telethon starten (in eigenem Loop)
+    asyncio.get_event_loop().run_until_complete(start_telethon())
+
     app = (ApplicationBuilder().token(BOT_TOKEN).connection_pool_size(50).pool_timeout(20.0).concurrent_updates(20).build())
 
     logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
