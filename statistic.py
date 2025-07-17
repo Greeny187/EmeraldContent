@@ -170,6 +170,16 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
     return cur.fetchall()
 
 async def fetch_message_stats(chat_id: int, days: int = 7):
+    if telethon_client is None:
+        # keine Telethon-Stats möglich → leere Struktur zurückgeben
+        return {
+            "total": 0,
+            "by_user": Counter(),
+            "by_type": Counter(),
+            "by_hour": Counter(),
+            "hashtags": Counter(),
+        }
+    
     since = datetime.utcnow() - timedelta(days=days)
     stats = {
         "total": 0,
@@ -225,6 +235,10 @@ def heatmap_matrix(by_hour: Counter, days: int = 7):
     return matrix
 
 async def compute_response_times(chat_id: int, days: int = 7):
+    
+    # Guard: Telethon nur nutzen, wenn Client existiert
+    if telethon_client is None:
+        return {"average_response_s": None, "median_response_s": None}
     """
     Misst Zeitdifferenz zwischen jeder Erstnachricht und erster Antwort im Thread.
     Gibt Durchschnitt und Median zurück.
@@ -247,6 +261,9 @@ async def compute_response_times(chat_id: int, days: int = 7):
     }
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
+    if telethon_client is None:
+        return {"photos":0, "videos":0, "voices":0, "docs":0, "gifs":0, "polls":0}
+    
     since = datetime.utcnow() - timedelta(days=days)
     media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 
