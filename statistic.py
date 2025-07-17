@@ -3,7 +3,7 @@ import os
 import csv
 import logging
 import asyncio
-import openai
+from openai import OpenAI
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from telegram import Update
@@ -15,7 +15,13 @@ from database import _with_cursor, _db_pool
 
 logger = logging.getLogger(__name__)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# OpenAI-Client initialisieren (oder None, wenn kein Key gesetzt)
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+if OPENAI_KEY:
+    openai_client = OpenAI(api_key=OPENAI_KEY)
+else:
+    openai_client = None
+    print("[Warnung] OPENAI_API_KEY nicht gesetzt – Sentiment/Summary deaktiviert.")
 API_ID   = os.getenv("TG_API_ID")
 API_HASH = os.getenv("TG_API_HASH")
 SESSION  = "userbot_session"
@@ -295,32 +301,49 @@ async def analyze_sentiment(texts: list[str]):
     """
     Rückgabe: {'positive': x, 'neutral': y, 'negative': z}
     """
+    if not openai_client:
+        return "⚠️ Sentiment nicht verfügbar"
+    
     prompt = (
-        "Analysiere folgende Texte und gib für jeden positiven, neutralen "
-        "oder negativen Sentiment an:\n\n" + "\n\n".join(texts)
+        "Analysiere die folgenden Texte und gib pro Text ‚positiv‘, ‚neutral‘ "
+        "oder ‚negativ‘ aus:\n\n" + "\n\n".join(texts)
     )
-    resp = openai.ChatCompletion.create(
+    resp = openai_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user","content":prompt}],
         temperature=0
     )
-    # parse resp.choices[0].message.content → dict
+    # je nach neuer API evtl. resp.choices[0].message.content oder resp.choices[0].message…
     return resp.choices[0].message.content
 
 async def summarize_conversation(chat_id: int, days: int = 1):
     """
-    Holt letzte Nachrichten und fasst sie kurz zusammen.
+    Holt die letzten Chat-Nachrichten und fasst sie in bis zu 5 Sätzen zusammen.
     """
+    # Guard: OpenAI-Client prüfen
+    if not openai_client:
+        return "⚠️ Zusammenfassung nicht verfügbar (kein API-Key)."
+
+    # 1) Nachrichten sammeln
     msgs = []
     async for msg in telethon_client.iter_messages(chat_id, limit=50):
         if msg.text:
             msgs.append(msg.text)
-    prompt = "Fasse die folgenden Konversationen in max. 5 Sätzen zusammen:\n\n" + "\n\n".join(msgs)
-    resp = openai.ChatCompletion.create(
+
+    # 2) Prompt bauen
+    text_block = "\n\n".join(msgs) if msgs else "<keine Nachrichten>"
+    prompt = (
+        "Fasse die folgenden Kurznachrichten in maximal 5 Sätzen zusammen:\n\n"
+        f"{text_block}"
+    )
+
+    # 3) OpenAI-Request mit neuer API
+    resp = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}],
+        messages=[{"role": "user", "content": prompt}],
         temperature=0.3
     )
+    # Je nach Response-Shape:
     return resp.choices[0].message.content
 
 async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -350,7 +373,10 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Guard: Telethon nur nutzen, wenn Client existiert
+    # Guards
+    if not openai_client:
+        print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")
+    
     if telethon_client:
         # nur starten, wenn nicht schon verbunden
         if not telethon_client.is_connected():
