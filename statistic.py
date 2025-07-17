@@ -16,10 +16,19 @@ from database import _with_cursor, _db_pool
 logger = logging.getLogger(__name__)
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
-API_ID   = int(os.getenv("TG_API_ID", 0))
-API_HASH = os.getenv("TG_API_HASH", "")
+API_ID   = os.getenv("TG_API_ID")
+API_HASH = os.getenv("TG_API_HASH")
 SESSION  = "userbot_session"
-telethon_client = TelegramClient(SESSION, API_ID, API_HASH)
+
+if API_ID and API_HASH:
+    try:
+        telethon_client = TelegramClient(SESSION, int(API_ID), API_HASH)
+    except Exception as e:
+        telethon_client = None
+        print(f"[Warnung] TelethonClient konnte nicht erstellt werden: {e}")
+else:
+    telethon_client = None
+    print("[Warnung] TG_API_ID oder TG_API_HASH nicht gesetzt – Telethon-Statistiken deaktiviert.")
 
 # Hilfsfunktion für rohe DB-Verbindung
 def get_db_connection():
