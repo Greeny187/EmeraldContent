@@ -388,46 +388,40 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
 
-    # 1) Basis-Stats
+    # 1) Basis-Stats bleiben wie gehabt …
     msg_stats   = await fetch_message_stats(chat_id, days)
     resp_times  = await compute_response_times(chat_id, days)
     media_stats = await fetch_media_and_poll_stats(chat_id, days)
-    sentiment   = await analyze_sentiment([...])  # bleibt wie gehabt
 
-    # 1) Fallbacks für fehlende Response-Times
+    # 2) Sentiment-Analyse: echte Texte statt Platzhalter
+    texts: list[str] = []
+    # lade bis zu 10 letzte Nachrichten aus dem Zeitraum
+    since = datetime.utcnow() - timedelta(days=days)
+    async for msg in telethon_client.iter_messages(chat_id, offset_date=since, limit=10):
+        if msg.text:
+            texts.append(msg.text)
+
+    if texts:
+        sentiment = await analyze_sentiment(texts)
+    else:
+        sentiment = "Keine Nachrichten zum Analysieren"
+
+    # 3) Strings für Ø/Med wie zuvor mit Fallback
     avg = resp_times.get('average_response_s')
     med = resp_times.get('median_response_s')
     avg_str = f"{avg:.1f}s" if avg is not None else "Keine Daten verfügbar"
     med_str = f"{med:.1f}s" if med is not None else "Keine Daten verfügbar"
 
-    # 2) Einheitlichen Text-Baustein erstellen
-    text = [
+    # 4) Ausgabe zusammenbauen (nur einmal, ohne doppelte text_lines)
+    output = [
         f"*Letzte {days} Tage:*",
         f"• Nachrichten gesamt: {msg_stats['total']}",
-        f"• Top 3 Absender: " + ", ".join(
-            str(u) for u, _ in msg_stats["by_user"].most_common(3)
-        ),
+        f"• Top 3 Absender: " + ", ".join(str(u) for u,_ in msg_stats["by_user"].most_common(3)),
         f"• Reaktionszeit Ø/Med: {avg_str} / {med_str}",
-        f"• Medien: " + ", ".join(f"{k}={v}" for k, v in media_stats.items()),
-        f"• Stimmung (GPT): {sentiment}"
-    ]
-
-    # 3) Antwort senden
-    await update.effective_message.reply_text(
-        "\n".join(text),
-        parse_mode="Markdown"
-    )
-    # 3) Ausgabe zusammenbauen
-    text = [
-        f"*Letzte {days} Tage:*",
-        f"• Nachrichten gesamt: {msg_stats['total']}",
-        f"• Top 3 Absender: " + ", ".join(
-            str(u) for u,_ in msg_stats["by_user"].most_common(3)),
-        f"• Reaktionszeit Ø/Med: {resp_times['average_response_s']:.1f}/{resp_times['median_response_s']:.1f}s",
         f"• Medien: " + ", ".join(f"{k}={v}" for k,v in media_stats.items()),
         f"• Stimmung (GPT): {sentiment}"
     ]
-    await update.effective_message.reply_text("\n".join(text), parse_mode="Markdown")
+    await update.effective_message.reply_text("\n".join(output), parse_mode="Markdown")
 
     # 1) Prüfen, ob Menü-Callback die Gruppe vorgibt
     group_id = context.user_data.pop("stats_group_id", None)
