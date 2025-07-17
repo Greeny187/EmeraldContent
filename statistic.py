@@ -1,6 +1,7 @@
 import re
 import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
@@ -11,11 +12,16 @@ from database import _with_cursor, _db_pool
 
 logger = logging.getLogger(__name__)
 
-# --- Telethon-Setup ---
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
+API_ID     = int(os.getenv("API_ID", "0"))
+API_HASH   = os.getenv("API_HASH", "")
 SESSION_NAME = 'userbot_session'
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+
+# Neuen Event-Loop für Telethon anlegen und setzen
+_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(_loop)
+
+# Client mit eigenem Loop erstellen
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH, loop=_loop)
 
 # Hilfsfunktion für rohe DB-Verbindung
 def get_db_connection():

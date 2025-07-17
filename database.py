@@ -1,10 +1,8 @@
 import os
 import logging
-import psycopg2
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
 from psycopg2 import pool
 
 # Logger setup
@@ -146,7 +144,6 @@ def init_db(cur):
         """
         CREATE TABLE IF NOT EXISTS members (
             chat_id BIGINT,
-            title TEXT NOT NULL,
             user_id BIGINT,
             joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -202,7 +199,7 @@ def unregister_group(cur, chat_id: int):
 @_with_cursor
 def add_member(cur, chat_id: int, user_id: int):
     cur.execute(
-        "INSERT INTO members (chat_id, title, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
+        "INSERT INTO members (chat_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
         (chat_id, user_id)
     )
     logger.info(f"✅ add_member: user {user_id} zu chat {chat_id} hinzugefügt")
