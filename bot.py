@@ -29,7 +29,8 @@ def main():
     BOT_TOKEN   = os.getenv("BOT_TOKEN")
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     PORT        = int(os.getenv("PORT", 8443))
-
+    global start_time
+    start_time = datetime.datetime.now()
     PORT = int(os.getenv("PORT", 8443))
     app = (ApplicationBuilder().token(BOT_TOKEN).connection_pool_size(50).pool_timeout(20.0).concurrent_updates(20).build())
 
