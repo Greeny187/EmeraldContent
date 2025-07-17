@@ -1,5 +1,4 @@
 import os
-from flask import Flask, request, jsonify
 from datetime import datetime, date, time
 from database import get_registered_groups, count_members, get_new_members_count, get_group_stats, get_mood_question, get_rss_topic, is_daily_stats_enabled
 from statistic import get_active_users_count, get_command_usage, get_command_logs
