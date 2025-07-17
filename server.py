@@ -11,7 +11,6 @@ from database import (
     get_rss_topic,
     get_mood_question,
 )
-from bot import start_time
 
 # Flask-Setup: Statische Dateien liegen in /public
 app = Flask(__name__, static_folder='public', static_url_path='')
@@ -72,9 +71,6 @@ def api_dashboard():
     top_writers = [{'user_id': uid, 'messages': cnt} for uid, cnt in cur.fetchall()]
     cur.close()
 
-    # Bot-Aktivität: Startzeit & Uptime
-    uptime = datetime.now() - start_time
-
     # Zugriffshistorie (letzte 20 Einträge)
     cur.execute(
         "SELECT timestamp, user_id, chat_id, command FROM access_log ORDER BY timestamp DESC LIMIT 20;"
@@ -103,8 +99,6 @@ def api_dashboard():
         'activeMembers': active_members,
         'moodDistribution': mood_dist,
         'topWriters': top_writers,
-        'startTime': start_time.isoformat(),
-        'uptime': str(uptime),
         'commandUsage': command_usage,
         'accessLog': access_log
     })
