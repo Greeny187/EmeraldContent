@@ -2,12 +2,11 @@ import re
 import os
 import logging
 from openai import OpenAI
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from telethon import TelegramClient
-from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantsRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import _with_cursor, _db_pool
 

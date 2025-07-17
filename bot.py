@@ -14,16 +14,22 @@ from mood import register_mood
 from jobs import register_jobs
 
 # 1. Telegram-API-Zugangsdaten prüfen
-API_ID   = os.getenv("TG_API_ID")
-API_HASH = os.getenv("TG_API_HASH")
-if not API_ID or not API_HASH:
-    raise RuntimeError("Bitte TG_API_ID und TG_API_HASH als Umgebungsvariablen setzen!")
+API_ID    = os.getenv("TG_API_ID")
+API_HASH  = os.getenv("TG_API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not all([API_ID, API_HASH, BOT_TOKEN]):
+    raise RuntimeError("TG_API_ID, TG_API_HASH und BOT_TOKEN müssen als Env-Vars gesetzt sein!")
 
-# 2. Client instanziieren und synchron starten
-telethon_client = TelegramClient('userbot_session', int(API_ID), API_HASH)
-asyncio.get_event_loop().run_until_complete(telethon_client.start())
+# 1) Client erzeugen
+telethon_client = TelegramClient('bot_session', int(API_ID), API_HASH)
 
-BOT_TOKEN   = os.getenv("BOT_TOKEN")
+# 2) Bot-Token-basiert starten – kein input() mehr!
+async def start_telethon():
+    await telethon_client.start(bot_token=BOT_TOKEN)
+
+# 3) Synchronously ensure the client is started before handlers
+asyncio.get_event_loop().run_until_complete(start_telethon())
+
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN ist nicht gesetzt.")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")

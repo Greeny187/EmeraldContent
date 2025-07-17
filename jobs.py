@@ -6,23 +6,16 @@ from datetime import date, time
 from zoneinfo import ZoneInfo
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, JobQueue
-from telethon import TelegramClient
+from telethon import events
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
 from statistic import fetch_and_store_stats
 
 logger = logging.getLogger(__name__)
 
-# === Configuration ===
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-SESSION_NAME = 'userbot_session'
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
 DEVELOPER_IDS = {int(x) for x in os.getenv("DEVELOPER_CHAT_IDS", "").split(",") if x.strip().isdigit()}
 TIMEZONE = os.getenv("TZ", "Europe/Berlin")
-
-# === Telethon Client ===
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
 # === Helpers ===
 def get_db_connection():
@@ -56,10 +49,10 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
+    from bot import telethon_client
     for username in CHANNEL_USERNAMES:
         try:
-            await client.start()
-            full = await client(GetFullChannelRequest(username))
+            full = await telethon_client(GetFullChannelRequest(username))
             conn = get_db_connection()
             with conn.cursor() as cur:
                 cur.execute(
@@ -77,7 +70,6 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
                     )
                 )
             _db_pool.putconn(conn)
-            await client.disconnect()
         except Exception as e:
             logger.error(f"Fehler beim Abfragen von {username}: {e}")
 
