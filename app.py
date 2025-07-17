@@ -3,9 +3,12 @@ from flask import Flask, request, jsonify
 from datetime import datetime, date, time
 from database import get_registered_groups, count_members, get_new_members_count, get_group_stats, get_mood_question, get_rss_topic, is_daily_stats_enabled
 from statistic import get_active_users_count, get_command_usage, get_command_logs
-
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+# Erlaube deine GitHub-Pages-Domain (z.B. https://username.github.io)
+CORS(app, resources={r"/api/*": {"origins": "https://greeny187.github.io"}}, supports_credentials=True)
 
 # Dashboard-Token aus Umgebungsvariable
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN")
