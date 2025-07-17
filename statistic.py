@@ -125,6 +125,17 @@ def get_command_usage(cur, chat_id: int, start_date: datetime, end_date: datetim
     return cur.fetchall()
 
 @_with_cursor
+def get_command_logs(cur, chat_id: int, start_date: datetime, end_date: datetime):
+    cur.execute(
+        "SELECT user_id, command, used_at FROM command_logs "
+        "WHERE chat_id = %s AND used_at BETWEEN %s AND %s "
+        "ORDER BY used_at DESC LIMIT 100;",
+        (chat_id, start_date, end_date)
+    )
+    return [{"user_id": u, "command": c, "timestamp": t.isoformat()} 
+            for u, c, t in cur.fetchall()]
+
+@_with_cursor
 def get_activity_by_weekday(cur, chat_id: int, start_date: datetime, end_date: datetime):
     cur.execute(
         "SELECT EXTRACT(DOW FROM stat_date) AS weekday, SUM(messages) AS total "

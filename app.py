@@ -1,6 +1,9 @@
 import os
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, date, time
+from database import get_registered_groups, count_members, get_new_members_count, get_group_stats, get_mood_question, get_rss_topic, is_daily_stats_enabled
+from statistic import get_active_users_count, get_command_usage, get_command_logs
+
 
 app = Flask(__name__)
 
@@ -34,21 +37,53 @@ BOT_DATA = {
     ]
 }
 
-@app.route("/api/dashboard", methods=["GET"])
+@app.route("/api/dashboard")
 def dashboard():
-    now = datetime.now()
-    start = datetime.fromisoformat(BOT_DATA["start_time"])
-    uptime = now - start
+    start_dt = datetime.combine(date.today(), time.min)
+    end_dt   = datetime.combine(date.today(), time.max)
+
+    groups = []
+    for chat_id, title in get_registered_groups():
+        # Basis-Statistiken
+        total_members = count_members(chat_id)
+        new_today     = get_new_members_count(chat_id, date.today())
+        active_users  = get_active_users_count(chat_id, start_dt, end_dt)
+        top3          = get_group_stats(chat_id, date.today())
+        mood_stats    = {}  # hier müsstest du message_id aus latest mood-prompt parsen
+        # Einstellungen
+        # Mit _with_cursor kannst du group_settings abfragen:
+        # daily = is_daily_stats_enabled(chat_id)
+        # mood_q= get_mood_question(chat_id)
+        # rss   = get_rss_topic(chat_id)
+        settings = {
+          "daily_stats": is_daily_stats_enabled(chat_id),
+          "mood_question": get_mood_question(chat_id),
+          "rss_topic": get_rss_topic(chat_id)
+        }
+
+        # Befehls-Logs & Access History
+        commands = [{"cmd": cmd, "count": cnt}
+                    for cmd, cnt in get_command_usage(chat_id, start_dt, end_dt)]
+        history = get_command_logs(chat_id, start_dt, end_dt)  # du kannst Funktion hinzufügen
+
+        groups.append({
+          "id": chat_id,
+          "title": title,
+          "total_members": total_members,
+          "new_today": new_today,
+          "active_users": active_users,
+          "top_writers": [{"user_id": u, "msgs": m} for u, m in top3],
+          "mood_stats": mood_stats,
+          "settings": settings,
+          "commands": commands,
+          "access_history": history,
+        })
+
     return jsonify({
-        "start_time": BOT_DATA["start_time"],
-        "uptime": str(uptime).split('.')[0],
-        "groups": BOT_DATA["groups"],
-        "total_groups": len(BOT_DATA["groups"]),
-        "total_members": sum(g["members"] for g in BOT_DATA["groups"]),
-        "daily_messages": BOT_DATA["daily_messages"],
-        "logged_events": BOT_DATA["logged_events"],
-        "mood_stats": BOT_DATA["mood_stats"],
-        "top_users": BOT_DATA["top_users"]
+      "start_time": BOT_DATA["start_time"],
+      "uptime": str(datetime.now() - datetime.fromisoformat(BOT_DATA["start_time"])).split('.')[0],
+      "total_groups": len(groups),
+      "groups": groups,
     })
 
 if __name__ == "__main__":
