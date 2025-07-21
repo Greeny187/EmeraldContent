@@ -71,45 +71,6 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
-    cur.execute("""
-    ALTER TABLE group_settings
-      ADD COLUMN IF NOT EXISTS last_command TEXT,
-      ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS group_activity_score REAL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS description TEXT,
-      ADD COLUMN IF NOT EXISTS topic_count INT DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS bot_count INT DEFAULT 0;
-    """
-    )
-
-    # 2) Bisherige Statistik-Tabellen
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS command_logs (
-            chat_id BIGINT,
-            user_id BIGINT,
-            command TEXT,
-            used_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_command_logs_chat ON command_logs(chat_id);")
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS member_events (
-            group_id BIGINT,
-            user_id  BIGINT,
-            event    TEXT,
-            event_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);")
-
-    # 3) Message-Logging für Dev-Dashboard
-    # Bestehende Tabelle anpassen oder neu erstellen
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS message_logs (
@@ -127,6 +88,10 @@ def init_stats_db(cur):
         );
         """
     )
+    # Stelle sicher, dass die Spalte timestamp existiert (für alte Tabellen ohne timestamp)
+    cur.execute(
+        "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;"
+    )
     # Spalte group_id ergänzen, falls nicht vorhanden
     cur.execute(
         "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS group_id BIGINT;"
@@ -139,7 +104,7 @@ def init_stats_db(cur):
     cur.execute(
         "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS last_message_time TIMESTAMPTZ;"
     )
-    # Standardwerte initialisieren (alte timestamp übernehmen)
+    # Werte initialisieren: last_message_time = timestamp
     cur.execute(
         "UPDATE message_logs SET last_message_time = timestamp WHERE last_message_time IS NULL;"
     )
@@ -148,7 +113,7 @@ def init_stats_db(cur):
         "CREATE INDEX IF NOT EXISTS idx_message_logs_group ON message_logs(group_id);"
     )
 
-    # 4) Poll-Responses speichern für Insights (unverändert) speichern für Insights (unverändert)
+    # 4) Poll-Responses speichern für Insights (unverändert) speichern für Insights (unverändert) speichern für Insights (unverändert)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS poll_responses (
@@ -171,8 +136,8 @@ def init_stats_db(cur):
         );
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);"
-    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);")
+
 
 
 # --- Befehls-Logging ---
