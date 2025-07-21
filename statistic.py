@@ -588,7 +588,7 @@ async def get_group_meta(chat_id: int) -> dict:
             with get_db_connection() as conn:
                 cur = conn.cursor()
                 cur.execute("""
-                    SELECT title, description, topic_count, bot_count
+                    SELECT title, description, topic_count AS topics, bot_count AS bots
                     FROM group_settings
                     WHERE group_id=%s
                 """, (chat_id,))
