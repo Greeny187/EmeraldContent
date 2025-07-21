@@ -425,6 +425,136 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text(text, parse_mode='Markdown')
 
+def get_group_meta(chat_id: int) -> dict:
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT description, topic_count, bot_count
+              FROM group_settings
+             WHERE group_id = %s
+        """, (chat_id,))
+        row = cur.fetchone() or ("–","–",0)
+    return {
+        "description": row[0],
+        "topics":      row[1],
+        "bots":        row[2],
+    }
+
+# 2) Neue/Verlassene Mitglieder & Inaktive
+def get_member_stats(chat_id: int, since: datetime) -> dict:
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        # Neue Member
+        cur.execute("""
+            SELECT COUNT(*) FROM member_events 
+             WHERE group_id=%s AND event='join' AND event_time >= %s
+        """, (chat_id, since))
+        new_count = cur.fetchone()[0]
+        # Verlassene Member
+        cur.execute("""
+            SELECT COUNT(*) FROM member_events 
+             WHERE group_id=%s AND event='leave' AND event_time >= %s
+        """, (chat_id, since))
+        left_count = cur.fetchone()[0]
+        # Inaktive (kein Post seit X Tage)
+        threshold = since - timedelta(days=7)
+        cur.execute("""
+            SELECT COUNT(DISTINCT user_id) 
+              FROM message_logs 
+             WHERE group_id=%s 
+               AND last_message_time < %s
+        """, (chat_id, threshold))
+        inactive = cur.fetchone()[0]
+    return {
+        "new":      new_count,
+        "left":     left_count,
+        "inactive": inactive,
+    }
+
+# 3) Nachrichten-Insights (Medien-, Poll-, Forward-Statistiken)
+def get_message_insights(chat_id: int, start: datetime, end: datetime) -> dict:
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        # Gesamt-Nachrichten
+        cur.execute("""
+            SELECT COUNT(*) FROM message_logs
+             WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        total = cur.fetchone()[0]
+        # Medienverteilung
+        cur.execute("""
+            SELECT 
+              SUM(CASE WHEN is_photo THEN 1 ELSE 0 END),
+              SUM(CASE WHEN is_video THEN 1 ELSE 0 END),
+              SUM(CASE WHEN is_sticker THEN 1 ELSE 0 END),
+              SUM(CASE WHEN is_voice THEN 1 ELSE 0 END),
+              SUM(CASE WHEN is_location THEN 1 ELSE 0 END)
+            FROM message_logs
+           WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        photo, video, sticker, voice, location = cur.fetchone()
+        # Poll-Antworten
+        cur.execute("""
+            SELECT COUNT(*) FROM poll_responses
+             WHERE group_id=%s AND response_time BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        polls = cur.fetchone()[0]
+    return {
+        "total":    total,
+        "photo":    photo,
+        "video":    video,
+        "sticker":  sticker,
+        "voice":    voice,
+        "location": location,
+        "polls":    polls,
+    }
+
+# 4) Engagement (Antwort-Rate & Reaktionszeiten)
+def get_engagement_metrics(chat_id: int, start: datetime, end: datetime) -> dict:
+    from statistics import mean
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        # Antwort-Rate: replies / total_messages
+        cur.execute("""
+            SELECT COUNT(*) FROM message_logs
+             WHERE group_id=%s AND is_reply AND timestamp BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        replies = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(*) FROM message_logs
+             WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        total = cur.fetchone()[0]
+        rate = round((replies/total*100) if total else 0, 1)
+        # Reaktionszeiten: hier exemplarisch aus reply_times-Tabelle
+        cur.execute("""
+            SELECT response_delay_s FROM reply_times
+             WHERE group_id=%s AND replied_at BETWEEN %s AND %s
+        """, (chat_id, start, end))
+        delays = [r[0] for r in cur.fetchall()]
+    return {
+        "reply_rate_pct": rate,
+        "avg_delay_s":    round(mean(delays),1) if delays else None,
+    }
+
+# 5) Trend-Analyse (Verlauf über Wochen/Monate)
+def get_trend_analysis(chat_id: int, periods: int = 4) -> dict:
+    """Return weekly totals for the last `periods` weeks."""
+    today = datetime.utcnow().date()
+    results = []
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        for w in range(periods):
+            end = today - timedelta(weeks=w)
+            start = end - timedelta(weeks=1)
+            cur.execute("""
+                SELECT COUNT(*) FROM message_logs
+                 WHERE group_id=%s AND timestamp::date BETWEEN %s AND %s
+            """, (chat_id, start, end))
+            results.append((str(start), cur.fetchone()[0]))
+    return dict(results)
+
+
 # --- Handler-Registrierung ---
 def register_statistics_handlers(app):
     init_stats_db()
