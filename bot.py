@@ -19,6 +19,10 @@ API_HASH  = os.getenv("TG_API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not all([API_ID, API_HASH, BOT_TOKEN]):
     raise RuntimeError("TG_API_ID, TG_API_HASH und BOT_TOKEN müssen als Env-Vars gesetzt sein!")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL ist nicht gesetzt.")
+PORT = int(os.getenv("PORT", 8443))
 
 # 1) Client erzeugen
 telethon_client = TelegramClient('bot_session', int(API_ID), API_HASH)
@@ -26,15 +30,6 @@ telethon_client = TelegramClient('bot_session', int(API_ID), API_HASH)
 # 2) Bot-Token-basiert starten – kein input() mehr!
 async def start_telethon():
     await telethon_client.start(bot_token=BOT_TOKEN)
-
-# 3) Synchronously ensure the client is started before handlers
-asyncio.get_event_loop().run_until_complete(start_telethon())
-
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN ist nicht gesetzt.")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-if not WEBHOOK_URL:
-    raise ValueError("WEBHOOK_URL ist nicht gesetzt.")
 
 async def log_update(update, context):
     logging.info(f"Update angekommen: {update}")
@@ -44,10 +39,7 @@ def main():
     setup_logging()
     init_db()
     statistic.init_stats_db()
-    BOT_TOKEN   = os.getenv("BOT_TOKEN")
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-    PORT        = int(os.getenv("PORT", 8443))
-    PORT = int(os.getenv("PORT", 8443))
+
 
     # 1) Telethon starten (in eigenem Loop)
     asyncio.get_event_loop().run_until_complete(start_telethon())
@@ -64,7 +56,7 @@ def main():
     register_rss(app)
     register_mood(app)
     register_menu(app)
-    register_jobs(app)
+    register_jobs(app, telethon_client)
 
     # Startzeit merken (optional)
     app.bot_data['start_time'] = datetime.datetime.now()

@@ -358,14 +358,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not openai_client:
         print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")
     
-    # Telethon starten, falls vorhanden
-    if telethon_client:
-        if not telethon_client.is_connected():
-            await telethon_client.start()
-    else:
-        # Telethon nicht verfügbar → wir skippen alle Aufrufe
-        print("[Info] Telethon-Client nicht verfügbar, überspringe Telethon-Statistiken")
-
     chat_id = update.effective_chat.id
     days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
 

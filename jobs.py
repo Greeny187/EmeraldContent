@@ -90,7 +90,7 @@ def schedule_daily_stats(chat_ids: list[int], hour: int = 3):
     sched.start()
 
 # === Scheduler Registration ===
-def register_jobs(app):
+def register_jobs(app, telethon_client):
     jq: JobQueue = app.job_queue
     # Täglich um 08:00 Berlin-Zeit
     jq.run_daily(
