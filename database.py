@@ -1,5 +1,6 @@
 import os
 import logging
+import psycopg2
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional
@@ -38,15 +39,19 @@ _db_pool = _init_pool(dsn, minconn=1, maxconn=10)
 
 # Decorator to acquire/release connections and cursors
 def _with_cursor(func):
-    def wrapper(*args, **kwargs):
+    def wrapped(*args, **kwargs):
         conn = _db_pool.getconn()
         try:
-            conn.autocommit = True
             with conn.cursor() as cur:
-                return func(cur, *args, **kwargs)
+                result = func(cur, *args, **kwargs)
+                # falls func Änderungen an der DB gemacht hat, commite sie
+                if conn.status != psycopg2.extensions.STATUS_IN_TRANSACTION:
+                    conn.commit()
+                return result
         finally:
+            # Immer sicherstellen, dass die Verbindung zurückgegeben wird
             _db_pool.putconn(conn)
-    return wrapper
+    return wrapped
 
 # --- Schema Initialization & Migrations ---
 @_with_cursor
