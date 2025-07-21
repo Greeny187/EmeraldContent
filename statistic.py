@@ -168,6 +168,9 @@ async def fetch_message_stats(chat_id: int, days: int = 7):
             "hashtags": Counter(),
         }
     
+    # Verbindung prüfen und ggf. herstellen
+    if not telethon_client.is_connected():
+        await telethon_client.connect()
     since = datetime.utcnow() - timedelta(days=days)
     stats = {
         "total": 0,
@@ -230,6 +233,8 @@ async def compute_response_times(chat_id: int, days: int = 7):
     """
     from statistics import mean, median
 
+    if not telethon_client.is_connected():
+        await telethon_client.connect()
     since = datetime.utcnow() - timedelta(days=days)
     diffs = []
 
@@ -246,6 +251,8 @@ async def compute_response_times(chat_id: int, days: int = 7):
     }
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
+    if not telethon_client.is_connected():
+        await telethon_client.connect()
     since = datetime.utcnow() - timedelta(days=days)
     media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 

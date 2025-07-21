@@ -38,6 +38,9 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
     # Telethon-Client direkt aus telethon_client.py
+    # Sicherstellen, dass der Telethon-Client verbunden ist
+    if not telethon_client.is_connected():
+        await telethon_client.connect()
     for username in CHANNEL_USERNAMES:
         try:
             full = await telethon_client(GetFullChannelRequest(username))
