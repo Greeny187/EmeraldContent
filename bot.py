@@ -56,6 +56,8 @@ def main():
 
     # Startzeit merken
     app.bot_data['start_time'] = datetime.datetime.now()
+    # Telethon-Client für handlers/jobs zugänglich
+    app.bot_data['telethon_client'] = telethon_client
 
     # Webhook starten
     app.run_webhook(

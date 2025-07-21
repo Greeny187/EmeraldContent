@@ -1,11 +1,9 @@
 import os
-import asyncio
 import logging
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import date, time
 from zoneinfo import ZoneInfo
-from telegram.ext import ContextTypes, JobQueue
-from telethon_client import telethon_client
+from telegram.ext import ContextTypes
+from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
 
@@ -13,7 +11,6 @@ logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
 TIMEZONE = os.getenv("TZ", "Europe/Berlin")
 
-# === Job Functions ===
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     today = date.today()
     bot = context.bot
@@ -37,10 +34,9 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
-    # Telethon-Client direkt aus telethon_client.py
-    # Sicherstellen, dass der Telethon-Client verbunden ist
+    # Sicherstellen, dass Telethon verbunden und autorisiert ist
     if not telethon_client.is_connected():
-        await telethon_client.connect()
+        await start_telethon()
     for username in CHANNEL_USERNAMES:
         try:
             full = await telethon_client(GetFullChannelRequest(username))
@@ -72,9 +68,9 @@ async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Fehler beim Purgen von Mitgliedern: {e}")
 
-# === Scheduler Registration ===
+
 def register_jobs(app):
-    jq: JobQueue = app.job_queue
+    jq = app.job_queue
     jq.run_daily(
         daily_report,
         time(hour=8, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
@@ -91,14 +87,3 @@ def register_jobs(app):
         name="purge_members"
     )
     logger.info("Jobs registriert: daily_report, telethon_stats, purge_members")
-
-
-# === Entrypoint for standalone run ===
-if __name__ == "__main__":
-    # Für lokalen Test
-    from telegram.ext import Application
-    import asyncio
-    app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
-    register_jobs(app)
-    # Start Polling für lokalen Lauf
-    app.run_polling()
