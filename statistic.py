@@ -71,10 +71,14 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-    # 0) Ergänzung: bots-Feld in group_settings für Dev-Dashboard
+    # 0) Ergänze Spalten `bots` und `topics` in `group_settings`
     cur.execute(
         "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS bots INT DEFAULT 0;"
     )
+    cur.execute(
+        "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS topics INT DEFAULT 0;"
+    )
+
     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
     cur.execute("""
     ALTER TABLE group_settings
