@@ -108,6 +108,8 @@ def init_stats_db(cur):
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);")
     
+    # 3) Message-Logging für Dev-Dashboard
+    # Erstelle oder passe message_logs an, damit sowohl chat_id als auch group_id unterstützt werden.
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS message_logs (
@@ -133,6 +135,9 @@ def init_stats_db(cur):
     cur.execute(
         "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS group_id BIGINT;"
     )
+    # Flags hinzufügen, falls nicht vorhanden
+    for col in ['is_photo', 'is_video', 'is_sticker', 'is_voice', 'is_location', 'is_reply']:
+        cur.execute(f"ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT FALSE;")
     # Vorhandene chat_id-Werte in group_id kopieren
     cur.execute(
         "UPDATE message_logs SET group_id = chat_id WHERE group_id IS NULL;"
@@ -174,6 +179,7 @@ def init_stats_db(cur):
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);")
+
 
 
 
