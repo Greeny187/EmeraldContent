@@ -113,7 +113,7 @@ def init_stats_db(cur):
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS message_logs (
-            chat_id    BIGINT,
+            chat_id     BIGINT,
             message_id  BIGINT,
             user_id     BIGINT,
             content     TEXT,
@@ -127,20 +127,28 @@ def init_stats_db(cur):
         );
         """
     )
-    # Füge group_id hinzu, falls Tabelle schon existierte mit chat_id
+    # Spalte group_id ergänzen, falls nicht vorhanden
     cur.execute(
         "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS group_id BIGINT;"
     )
-    # Kopiere vorhandene chat_id-Werte
+    # Vorhandene chat_id-Werte in group_id kopieren
     cur.execute(
         "UPDATE message_logs SET group_id = chat_id WHERE group_id IS NULL;"
     )
-    # Index auf group_id
+    # Spalte last_message_time ergänzen, sofern nötig (für Dev-Dashboard-Inaktive Benutzer)
+    cur.execute(
+        "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS last_message_time TIMESTAMPTZ;"
+    )
+    # Standardwerte initialisieren (alte timestamp übernehmen)
+    cur.execute(
+        "UPDATE message_logs SET last_message_time = timestamp WHERE last_message_time IS NULL;"
+    )
+    # Index auf group_id anlegen
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_message_logs_group ON message_logs(group_id);"
     )
 
-    # 4) Poll-Responses speichern für Insights
+    # 4) Poll-Responses speichern für Insights (unverändert) speichern für Insights (unverändert)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS poll_responses (
@@ -153,17 +161,19 @@ def init_stats_db(cur):
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_poll_responses_group ON poll_responses(group_id);")
 
-    # 5) Reply-Zeiten für Engagement-Metriken
+    # 5) Reply-Zeiten für Engagement-Metriken (unverändert)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS reply_times (
-            group_id        BIGINT,
+            group_id         BIGINT,
             response_delay_s REAL,
-            replied_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            replied_at       TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);"
+    )
+
 
 # --- Befehls-Logging ---
 @_with_cursor
