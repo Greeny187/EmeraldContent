@@ -43,15 +43,9 @@ def _with_cursor(func):
         conn = _db_pool.getconn()
         try:
             with conn.cursor() as cur:
-                result = func(cur, *args, **kwargs)
-                # falls func Änderungen an der DB gemacht hat, commite sie
-                if conn.status != psycopg2.extensions.STATUS_IN_TRANSACTION:
-                    conn.commit()
-                return result
+                return func(cur, *args, **kwargs)
         finally:
-            # Immer sicherstellen, dass die Verbindung zurückgegeben wird
             _db_pool.putconn(conn)
-    return wrapped
 
 # --- Schema Initialization & Migrations ---
 @_with_cursor
