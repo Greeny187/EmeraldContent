@@ -460,7 +460,7 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📂 Topics: {meta['topics']}\n\n"
         f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
         f"📝 Beschreibung: {meta['description']}\n"
-        f"🔖 Topics: {meta['topic_count']}  🤖 Bots: {meta['bot_count']}\n\n"
+        f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
         f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
         f"💬 Nachrichten gesamt: {insights['total']}\n"
         f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
