@@ -44,9 +44,8 @@ def _with_cursor(func):
         try:
             with conn.cursor() as cur:
                 result = func(cur, *args, **kwargs)
-                # falls func Änderungen an der DB gemacht hat, commite sie
-                if conn.status != psycopg2.extensions.STATUS_IN_TRANSACTION:
-                    conn.commit()
+                # immer committen, damit z.B. add_posted_link tatsächlich gespeichert wird
+                conn.commit()
                 return result
         finally:
             # Immer sicherstellen, dass die Verbindung zurückgegeben wird
