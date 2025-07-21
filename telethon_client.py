@@ -16,9 +16,6 @@ telethon_client = TelegramClient(StringSession(SESSION) if SESSION else StringSe
 if not all([API_ID, API_HASH, SESSION]):
     raise RuntimeError("TG_API_ID, TG_API_HASH und TELETHON_SESSION müssen als Env-Vars gesetzt sein!")
 
-# Client-Instanz erzeugen (StringSession speichert Login-Daten)
-telethon_client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
-
 async def start_telethon():
     """Stellt die Verbindung her und prüft die Autorisierung."""
     if not SESSION:

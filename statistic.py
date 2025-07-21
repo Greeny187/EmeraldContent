@@ -589,9 +589,8 @@ async def get_group_meta(chat_id: int) -> dict:
                 meta.update({
                     "title":       row[0],
                     "description": row[1],
-                    "topic_count":      row[2],
-                    # bot_count gibt nur Anzahl registrierter Bot-Instanzen in der Tabelle wieder
-                    "bot_count":        row[3]
+                    "topics":      row[2],
+                    "bots":        row[3]
                 })
         except Exception:
             # Spalten existieren nicht – ignorieren
