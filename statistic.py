@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import _with_cursor, _db_pool
@@ -32,7 +33,6 @@ DEVELOPER_IDS = {int(x) for x in raw.split(",") if x.strip().isdigit()}
 
 # --- Telethon-Daten abrufen und speichern ---
 async def fetch_and_store_stats(chat_username: str):
-    from bot import telethon_client
     """Fragt via Telethon ab und speichert Mitglieder+Admins in daily_stats."""
     full = await telethon_client(GetFullChannelRequest(chat_username))
     conn = get_db_connection()
@@ -158,7 +158,6 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
     return cur.fetchall()
 
 async def fetch_message_stats(chat_id: int, days: int = 7):
-    from bot import telethon_client
     if telethon_client is None:
         # keine Telethon-Stats möglich → leere Struktur zurückgeben
         return {
@@ -229,7 +228,6 @@ async def compute_response_times(chat_id: int, days: int = 7):
     Misst Zeitdifferenz zwischen jeder Erstnachricht und erster Antwort im Thread.
     Gibt Durchschnitt und Median zurück.
     """
-    from bot import telethon_client
     from statistics import mean, median
 
     since = datetime.utcnow() - timedelta(days=days)
@@ -248,7 +246,6 @@ async def compute_response_times(chat_id: int, days: int = 7):
     }
 
 async def fetch_media_and_poll_stats(chat_id: int, days: int = 7):
-    from bot import telethon_client
     since = datetime.utcnow() - timedelta(days=days)
     media = {"photos": 0, "videos": 0, "voices": 0, "docs": 0, "gifs": 0, "polls": 0}
 
@@ -296,7 +293,6 @@ async def analyze_sentiment(texts: list[str]):
     return resp.choices[0].message.content
 
 async def summarize_conversation(chat_id: int, days: int = 1):
-    from bot import telethon_client
     """
     Holt die letzten Chat-Nachrichten und fasst sie in bis zu 5 Sätzen zusammen.
     """
@@ -353,7 +349,6 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from bot import telethon_client
     # Guards
     if not openai_client:
         print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")

@@ -4,24 +4,14 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import date, time
 from zoneinfo import ZoneInfo
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, JobQueue
-from telethon import events
+from telegram.ext import ContextTypes, JobQueue
+from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
-from statistic import fetch_and_store_stats
 
 logger = logging.getLogger(__name__)
-
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
-DEVELOPER_IDS = {int(x) for x in os.getenv("DEVELOPER_CHAT_IDS", "").split(",") if x.strip().isdigit()}
 TIMEZONE = os.getenv("TZ", "Europe/Berlin")
-
-# === Helpers ===
-def get_db_connection():
-    conn = _db_pool.getconn()
-    conn.autocommit = True
-    return conn
 
 # === Job Functions ===
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
@@ -31,8 +21,6 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         if not is_daily_stats_enabled(chat_id):
             continue
         try:
-            top3 = []
-            # Annahme: get_group_stats liefert List[Tuple[user_id, count]]
             top3 = get_group_stats(chat_id, today)
             if not top3:
                 continue
@@ -49,11 +37,12 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
-    from bot import telethon_client
+    # Telethon-Client direkt aus telethon_client.py
     for username in CHANNEL_USERNAMES:
         try:
             full = await telethon_client(GetFullChannelRequest(username))
-            conn = get_db_connection()
+            conn = _db_pool.getconn()
+            conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -80,37 +69,26 @@ async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Fehler beim Purgen von Mitgliedern: {e}")
 
-def schedule_daily_stats(chat_ids: list[int], hour: int = 3):
-    sched = AsyncIOScheduler()
-    for cid in chat_ids:
-        sched.add_job(
-            lambda c=cid: asyncio.create_task(fetch_and_store_stats(c)),
-            trigger='cron', hour=hour, minute=0
-        )
-    sched.start()
-
 # === Scheduler Registration ===
-def register_jobs(app, telethon_client):
+def register_jobs(app):
     jq: JobQueue = app.job_queue
-    # Täglich um 08:00 Berlin-Zeit
     jq.run_daily(
         daily_report,
         time(hour=8, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="daily_report"
     )
-    # Täglich um 02:00 Berlin-Zeit Telethon Stats
     jq.run_daily(
         telethon_stats_job,
         time(hour=2, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="telethon_stats"
     )
-    # Täglich um 03:00 Berlin-Zeit Mitglieder-Purge
     jq.run_daily(
         purge_members_job,
         time(hour=3, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="purge_members"
     )
     logger.info("Jobs registriert: daily_report, telethon_stats, purge_members")
+
 
 # === Entrypoint for standalone run ===
 if __name__ == "__main__":
