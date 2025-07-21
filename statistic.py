@@ -71,7 +71,7 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-    # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
+     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
     cur.execute("""
     ALTER TABLE group_settings
       ADD COLUMN IF NOT EXISTS last_command TEXT,
@@ -109,10 +109,11 @@ def init_stats_db(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);")
 
     # 3) Message-Logging für Dev-Dashboard
+    # Bestehende Tabelle anpassen oder neu erstellen
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS message_logs (
-            group_id    BIGINT,
+            chat_id    BIGINT,
             message_id  BIGINT,
             user_id     BIGINT,
             content     TEXT,
@@ -126,7 +127,18 @@ def init_stats_db(cur):
         );
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_group ON message_logs(group_id);")
+    # Füge group_id hinzu, falls Tabelle schon existierte mit chat_id
+    cur.execute(
+        "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS group_id BIGINT;"
+    )
+    # Kopiere vorhandene chat_id-Werte
+    cur.execute(
+        "UPDATE message_logs SET group_id = chat_id WHERE group_id IS NULL;"
+    )
+    # Index auf group_id
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_logs_group ON message_logs(group_id);"
+    )
 
     # 4) Poll-Responses speichern für Insights
     cur.execute(
