@@ -369,7 +369,12 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trends   = get_trend_analysis(chat_id, periods=4)
 
     # 2) Ausgabe formatieren
+    meta = await get_group_meta(chat_id)
     text = (
+        f"*Gruppe:* {meta['title']} (`{chat_id}`)\n"
+        f"📝 Beschreibung: {meta['description']}\n"
+        f"👥 Mitglieder: {meta['members']}  👮 Admins: {meta['admins']}\n"
+        f"📂 Topics: {meta['topics']}\n\n"
         f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
         f"📝 Beschreibung: {meta['description']}\n"
         f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
@@ -455,20 +460,61 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text(text, parse_mode='Markdown')
 
-def get_group_meta(chat_id: int) -> dict:
-    with get_db_connection() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT description, topic_count, bot_count
-              FROM group_settings
-             WHERE group_id = %s
-        """, (chat_id,))
-        row = cur.fetchone() or ("–","–",0)
-    return {
-        "description": row[0],
-        "topics":      row[1],
-        "bots":        row[2],
+async def get_group_meta(chat_id: int) -> dict:
+    """
+    Liefert Title, Beschreibung, Anzahl Mitglieder/Admins und Topics:
+    – per Telethon, falls konfiguriert
+    – fallback: Platzhalter, falls DB-Spalten fehlen
+    """
+    meta = {
+        "title":      "–",
+        "description":"–",
+        "members":    None,
+        "admins":     None,
+        "topics":     None,
     }
+
+        # 1) Versuch: live über Telethon
+    if telethon_client:
+        try:
+            # Chat-Entity holen (Username oder ID)
+            entity = await telethon_client.get_entity(chat_id)
+            full   = await telethon_client(GetFullChannelRequest(entity.username or entity.id))
+            meta.update({
+                "title":      getattr(entity, "title", "–"),
+                "description": getattr(full.full_chat, "about", "–"),
+                "members":     full.full_chat.participants_count,
+                "admins":      len(full.full_chat.admin_rights or []),
+                # forum_info.total_count nur bei supergruppen mit Topics
+                "topics":      getattr(full.full_chat, "forum_info", {}).get("total_count", 0)
+            })
+        except Exception as e:
+            logger.warning(f"get_group_meta: Telethon-Fallback fehlgeschlagen: {e}")
+
+    # 2) Versuch: ggf. aus DB-Spalten (falls Schema angepasst wurde)
+    else:
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT title, description, topic_count, bot_count
+                    FROM group_settings
+                    WHERE group_id=%s
+                """, (chat_id,))
+                row = cur.fetchone()
+            if row:
+                meta.update({
+                    "title":       row[0],
+                    "description": row[1],
+                    "topics":      row[2],
+                    # bot_count gibt nur Anzahl registrierter Bot-Instanzen in der Tabelle wieder
+                    "bots":        row[3]
+                })
+        except Exception:
+            # Spalten existieren nicht – ignorieren
+            pass
+
+    return meta
 
 # 2) Neue/Verlassene Mitglieder & Inaktive
 def get_member_stats(chat_id: int, since: datetime) -> dict:
