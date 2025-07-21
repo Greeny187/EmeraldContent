@@ -71,24 +71,19 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-    cur.execute(
-        """
-        ALTER TABLE group_settings
-        ADD COLUMN IF NOT EXISTS last_command TEXT;
-        """
+    # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
+    cur.execute("""
+    ALTER TABLE group_settings
+      ADD COLUMN IF NOT EXISTS last_command TEXT,
+      ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS group_activity_score REAL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS description TEXT,
+      ADD COLUMN IF NOT EXISTS topic_count INT DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS bot_count INT DEFAULT 0;
+    """
     )
-    cur.execute(
-        """
-        ALTER TABLE group_settings
-        ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ;
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE group_settings
-        ADD COLUMN IF NOT EXISTS group_activity_score REAL DEFAULT 0;
-        """
-    )
+
+    # 2) Bisherige Statistik-Tabellen
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS command_logs (
@@ -99,36 +94,64 @@ def init_stats_db(cur):
         );
         """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_command_logs_chat ON command_logs(chat_id);")
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS member_events (
             group_id BIGINT,
             user_id  BIGINT,
-            event    TEXT,              -- 'join' oder 'leave'
+            event    TEXT,
             event_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
         """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);")
+
+    # 3) Message-Logging für Dev-Dashboard
     cur.execute(
-        '''
+        """
         CREATE TABLE IF NOT EXISTS message_logs (
-            chat_id    BIGINT,
-            message_id BIGINT,
-            user_id    BIGINT,
-            content    TEXT,
-            msg_time   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            group_id    BIGINT,
+            message_id  BIGINT,
+            user_id     BIGINT,
+            content     TEXT,
+            is_photo    BOOLEAN DEFAULT FALSE,
+            is_video    BOOLEAN DEFAULT FALSE,
+            is_sticker  BOOLEAN DEFAULT FALSE,
+            is_voice    BOOLEAN DEFAULT FALSE,
+            is_location BOOLEAN DEFAULT FALSE,
+            is_reply    BOOLEAN DEFAULT FALSE,
+            timestamp   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
-        '''
+        """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_group ON message_logs(group_id);")
+
+    # 4) Poll-Responses speichern für Insights
     cur.execute(
-        'CREATE INDEX IF NOT EXISTS idx_message_logs_chat ON message_logs(chat_id);'
+        """
+        CREATE TABLE IF NOT EXISTS poll_responses (
+            group_id      BIGINT,
+            user_id       BIGINT,
+            poll_id       BIGINT,
+            response_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        """
     )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_poll_responses_group ON poll_responses(group_id);")
+
+    # 5) Reply-Zeiten für Engagement-Metriken
     cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);"
+        """
+        CREATE TABLE IF NOT EXISTS reply_times (
+            group_id        BIGINT,
+            response_delay_s REAL,
+            replied_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        """
     )
-    cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_command_logs_chat ON command_logs(chat_id);"
-    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);")
 
 # --- Befehls-Logging ---
 @_with_cursor
