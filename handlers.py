@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome)
-from statistic import get_group_meta, get_member_stats, get_message_insights, get_trend_analysis, get_engagement_metrics, DEVELOPER_IDS
+from statistic import get_group_meta, get_member_stats, get_message_insights, get_trend_analysis, get_engagement_metrics, stats_dev_command, DEVELOPER_IDS
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account, tr
 from user_manual import help_handler
@@ -412,42 +412,6 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
     await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
 
-async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in DEVELOPER_IDS:
-        return await update.effective_message.reply_text("❌ Zugriff verweigert.")
-
-    chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
-    # Zeitfenster: letzte 7 Tage
-    end   = datetime.utcnow()
-    start = end - timedelta(days=7)
-
-    meta       = get_group_meta(chat_id)
-    members    = get_member_stats(chat_id, start)
-    insights   = get_message_insights(chat_id, start, end)
-    engage     = get_engagement_metrics(chat_id, start, end)
-    trends     = get_trend_analysis(chat_id, periods=4)
-
-    text = (
-        f"*Dev-Dashboard für Gruppe {chat_id} (letzte 7 Tage)*\n"
-        f"• Beschreibung: {meta['description']}\n"
-        f"• Topics: {meta['topics']}  • Bots: {meta['bots']}\n"
-        f"• Neue Member: {members['new']}  🔴 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
-
-        f"*Nachrichten*  Gesamt: {insights['total']}\n"
-        f"  • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
-        f"  • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n\n"
-
-        f"*Engagement*  Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n\n"
-
-        f"*Trend (Woche → Menge)*\n"
-    )
-    for week, cnt in trends.items():
-        text += f"  – {week}: {cnt}\n"
-
-    await update.effective_message.reply_text(text, parse_mode="Markdown")
-
-
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
@@ -458,7 +422,7 @@ def register_handlers(app):
     
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("dashboard", stats_dev_command))
+    app.add_handler(CommandHandler("dashboard", stats_dev_command, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)

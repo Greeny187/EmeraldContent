@@ -352,13 +352,36 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
     await update.effective_message.reply_document(open(fname, "rb"))
 
 async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeige globale Top-Gruppen (nur für Developer)."""
-    end = datetime.utcnow()
-    start = end - timedelta(days=7)
-    top = get_top_groups(start, end, limit=5)
-    text = "🏆 *Top 5 Gruppen (7 Tage)*\n"
-    for i, (gid, tot) in enumerate(top, 1):
-        text += f"{i}. {gid}: {tot} Nachrichten\n"
+    """Dev-Dashboard: ausführliche Statistiken für Developer."""
+    user_id = update.effective_user.id
+    if user_id not in DEVELOPER_IDS:
+        return await update.effective_message.reply_text("❌ Zugriff verweigert.")
+
+    chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
+    end     = datetime.utcnow()
+    start   = end - timedelta(days=7)
+
+    # 1) Basis-Daten
+    meta     = get_group_meta(chat_id)
+    members  = get_member_stats(chat_id, start)
+    insights = get_message_insights(chat_id, start, end)
+    engage   = get_engagement_metrics(chat_id, start, end)
+    trends   = get_trend_analysis(chat_id, periods=4)
+
+    # 2) Ausgabe formatieren
+    text = (
+        f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
+        f"📝 Beschreibung: {meta['description']}\n"
+        f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
+        f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
+        f"💬 Nachrichten gesamt: {insights['total']}\n"
+        f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
+        f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n\n"
+        f"⏱️ Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n\n"
+        "📈 Trend (Woche → Nachrichten):\n"
+    )
+    for week_start, count in trends.items():
+        text += f"   – {week_start}: {count}\n"
     await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 # --- Stats-Command ---
