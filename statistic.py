@@ -1,6 +1,7 @@
 import re
 import os
 import logging
+import psycopg2
 from openai import OpenAI
 from collections import Counter
 from datetime import datetime, timedelta
@@ -98,7 +99,22 @@ def init_stats_db(cur):
         );
         """
     )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_command_logs_chat ON command_logs(chat_id);")
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS member_events (
+            group_id BIGINT,
+            user_id  BIGINT,
+            event    TEXT,              -- 'join' oder 'leave'
+            event_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_command_logs_chat ON command_logs(chat_id);"
+    )
 
 # --- Befehls-Logging ---
 @_with_cursor
