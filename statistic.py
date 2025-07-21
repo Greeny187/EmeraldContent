@@ -110,6 +110,20 @@ def init_stats_db(cur):
         """
     )
     cur.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS message_logs (
+            chat_id    BIGINT,
+            message_id BIGINT,
+            user_id    BIGINT,
+            content    TEXT,
+            msg_time   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        '''
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_message_logs_chat ON message_logs(chat_id);'
+    )
+    cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_member_events_group ON member_events(group_id);"
     )
     cur.execute(
