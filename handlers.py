@@ -7,8 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
-remove_member, list_members, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question,
-get_rss_feeds, count_members, get_farewell, get_welcome)
+remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome)
 from statistic import get_group_meta, get_member_stats, get_message_insights, get_trend_analysis, get_engagement_metrics, DEVELOPER_IDS
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, is_deleted_account, tr

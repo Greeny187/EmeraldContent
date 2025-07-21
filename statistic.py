@@ -29,7 +29,14 @@ def get_db_connection():
 
 # Deine Developer-IDs für globale Metriken
 raw = os.getenv("DEVELOPER_CHAT_IDS", "")
-DEVELOPER_IDS = {int(x) for x in raw.split(",") if x.strip().isdigit()}
+# IDs der Entwickler (DEVELOPER_CHAT_IDS oder DEVELOPER_CHAT_ID)
+raw_ids = os.getenv("DEVELOPER_CHAT_IDS") or os.getenv("DEVELOPER_CHAT_ID", "")
+DEVELOPER_IDS = {
+    int(x) for x in re.split(r"\s*,\s*", raw_ids) 
+    if x and x.isdigit()
+}
+if not DEVELOPER_IDS:
+    print("[Warnung] Keine Developer-IDs definiert – /dashboard bleibt gesperrt.")
 
 # --- Telethon-Daten abrufen und speichern ---
 async def fetch_and_store_stats(chat_username: str):

@@ -16,16 +16,19 @@ from jobs import register_jobs
 # Env-Variablen prüfen
 API_ID    = os.getenv("TG_API_ID")
 API_HASH  = os.getenv("TG_API_HASH")
+SESSION   = os.getenv("TELETHON_SESSION")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not all([API_ID, API_HASH, BOT_TOKEN]):
-    raise RuntimeError("TG_API_ID, TG_API_HASH und BOT_TOKEN müssen als Env-Vars gesetzt sein!")
+if not all([API_ID, API_HASH, SESSION, BOT_TOKEN]):
+    raise RuntimeError(
+        "TG_API_ID, TG_API_HASH, TELETHON_SESSION und BOT_TOKEN müssen als Env-Vars gesetzt sein!"
+    )
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 if not WEBHOOK_URL:
     raise ValueError("WEBHOOK_URL ist nicht gesetzt.")
 PORT = int(os.getenv("PORT", 8443))
 
 async def log_update(update, context):
-    logging.info(f"Update angekommen: {update}")
+    logging.debug(f"Update angekommen: {update}")
 
 
 def main():
@@ -33,7 +36,7 @@ def main():
     init_db()
     statistic.init_stats_db()
 
-    # Telethon starten (einmaliger Event-Loop)
+    # Telethon (User-Session) verbinden
     asyncio.get_event_loop().run_until_complete(start_telethon())
 
     app = (ApplicationBuilder()
@@ -42,8 +45,6 @@ def main():
         .pool_timeout(20.0)
         .concurrent_updates(20)
         .build())
-
-    logging.getLogger("telegram.updatequeue").setLevel(logging.DEBUG)
 
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
@@ -54,9 +55,8 @@ def main():
     register_menu(app)
     register_jobs(app)
 
-    # Startzeit merken
+    # Startzeit und Telethon-Client speichern
     app.bot_data['start_time'] = datetime.datetime.now()
-    # Telethon-Client für handlers/jobs zugänglich
     app.bot_data['telethon_client'] = telethon_client
 
     # Webhook starten
