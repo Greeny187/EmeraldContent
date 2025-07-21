@@ -71,14 +71,6 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-    # 0) Ergänze Spalten `bots` und `topics` in `group_settings`
-    cur.execute(
-        "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS bots INT DEFAULT 0;"
-    )
-    cur.execute(
-        "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS topics INT DEFAULT 0;"
-    )
-
     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
     cur.execute("""
     ALTER TABLE group_settings
@@ -597,9 +589,9 @@ async def get_group_meta(chat_id: int) -> dict:
                 meta.update({
                     "title":       row[0],
                     "description": row[1],
-                    "topics":      row[2],
+                    "topic_count":      row[2],
                     # bot_count gibt nur Anzahl registrierter Bot-Instanzen in der Tabelle wieder
-                    "bots":        row[3]
+                    "bot_count":        row[3]
                 })
         except Exception:
             # Spalten existieren nicht – ignorieren
