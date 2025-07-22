@@ -70,6 +70,17 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
+    
+    # 0) Erst die Basistabelle anlegen, falls noch nicht da
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_settings (
+            chat_id   BIGINT PRIMARY KEY,
+            title     TEXT,
+            description TEXT
+        );
+    """
+    )
+
     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
     cur.execute("""
     ALTER TABLE group_settings
