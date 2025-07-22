@@ -2,6 +2,7 @@ import re
 import os
 import logging
 from openai import OpenAI
+from contextlib import contextmanager
 from collections import Counter
 from datetime import datetime, timedelta
 from telegram import Update, Message, ChatMemberUpdated
@@ -26,6 +27,15 @@ def get_db_connection():
     conn = _db_pool.getconn()
     conn.autocommit = True
     return conn
+
+def get_cursor():
+    conn = _db_pool.getconn()
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            yield cur
+    finally:
+        _db_pool.putconn(conn)
 
 # Deine Developer-IDs für globale Metriken
 raw = os.getenv("DEVELOPER_CHAT_IDS", "")
@@ -722,7 +732,8 @@ async def get_group_meta(chat_id: int) -> dict:
 
 # 2) Neue/Verlassene Mitglieder & Inaktive
 def get_member_stats(chat_id: int, since: datetime) -> dict:
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cur = conn.cursor()
         # Neue Member
         cur.execute("""
@@ -745,11 +756,13 @@ def get_member_stats(chat_id: int, since: datetime) -> dict:
                AND last_message_time < %s
         """, (chat_id, threshold))
         inactive = cur.fetchone()[0]
-    return {
-        "new":      new_count,
-        "left":     left_count,
-        "inactive": inactive,
-    }
+        return {
+            "new":      new_count,
+            "left":     left_count,
+            "inactive": inactive,
+        }
+    finally:
+        _db_pool.putconn(conn)
 
 # 3) Nachrichten-Insights (Medien-, Poll-, Forward-Statistiken)
 def get_message_insights(chat_id: int, start: datetime, end: datetime) -> dict:
