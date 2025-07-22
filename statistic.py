@@ -378,8 +378,7 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 async def universal_logger(update, context):
     msg = update.effective_message
     if msg:
-        log_message(context.bot, msg.chat.id, msg)
-
+        log_message(msg.chat.id, msg)
 async def fetch_message_stats(chat_id: int, days: int = 7):
     if telethon_client is None:
         # keine Telethon-Stats möglich → leere Struktur zurückgeben
