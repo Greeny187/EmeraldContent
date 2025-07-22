@@ -1,12 +1,11 @@
 import re
 import os
 import logging
-import psycopg2
 from openai import OpenAI
 from collections import Counter
 from datetime import datetime, timedelta
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
+from telegram import Update, Message, ChatMemberUpdated
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler
 from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -247,6 +246,104 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
     )
     return cur.fetchall()
 
+@_with_cursor
+def log_message(cur, chat_id: int, msg):
+    cur.execute(
+        """
+        INSERT INTO message_logs
+          (chat_id, group_id, message_id, user_id, content,
+           is_photo, is_video, is_sticker, is_voice,
+           is_location, is_reply, timestamp, last_message_time)
+        VALUES
+          (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT DO NOTHING;
+        """,
+        (
+            msg.chat_id,
+            getattr(msg, 'chat_id', None),
+            msg.message_id,
+            msg.from_user.id if msg.from_user else None,
+            msg.text or None,
+            bool(msg.photo),
+            bool(msg.video),
+            bool(msg.sticker),
+            bool(msg.voice),
+            bool(msg.location),
+            bool(msg.reply_to_message)
+        )
+    )
+    # last_message_time kann später per UPDATE angepasst werden
+
+@_with_cursor
+def log_member_event(cur, group_id: int, user_id: int, event: str):
+    cur.execute(
+        """
+        INSERT INTO member_events (group_id, user_id, event)
+        VALUES (%s, %s, %s)
+        ON CONFLICT DO NOTHING;
+        """,
+        (group_id, user_id, event)
+    )
+
+@_with_cursor
+def log_poll_response(cur, chat_id: int, user_id: int, poll_id: int):
+    cur.execute(
+        """
+        INSERT INTO poll_responses (group_id, user_id, poll_id, response_time)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT DO NOTHING;
+        """,
+        (chat_id, user_id, poll_id)
+    )
+
+@_with_cursor
+def log_reply_time(cur, group_id: int, delay_s: float):
+    cur.execute(
+        """
+        INSERT INTO reply_times (group_id, response_delay_s, replied_at)
+        VALUES (%s, %s, NOW())
+        ON CONFLICT DO NOTHING;
+        """,
+        (group_id, delay_s)
+    )
+
+async def reply_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg: Message = update.effective_message
+    if msg.reply_to_message:
+        delay = (msg.date - msg.reply_to_message.date).total_seconds()
+        log_reply_time(context.bot, msg.chat.id, delay)
+
+async def poll_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Wird bei Poll-Option-Callback aufgerufen
+    query = update.callback_query
+    if query and query.poll_answer:
+        poll_id = query.poll_answer.poll_id
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+        log_poll_response(context.bot, chat_id, user_id, poll_id)
+    await context.answer_callback_query()
+
+async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cm: ChatMemberUpdated = update.chat_member
+    # Alte und neue Rolle vergleichen
+    old = cm.old_chat_member.status
+    new = cm.new_chat_member.status
+    if old in ("left", "kicked") and new in ("member", "administrator"):
+        event = "join"
+    elif old in ("member", "administrator") and new in ("left", "kicked"):
+        event = "leave"
+    else:
+        return  # andere Status-Änderungen ignorieren
+
+    chat_id = cm.chat.id
+    user_id = cm.new_chat_member.user.id
+    log_member_event(context.bot, chat_id, user_id, event)
+
+async def universal_logger(update, context):
+    msg = update.effective_message
+    if msg:
+        log_message(context.bot, msg.chat.id, msg)
+
 async def fetch_message_stats(chat_id: int, days: int = 7):
     if telethon_client is None:
         # keine Telethon-Stats möglich → leere Struktur zurückgeben
@@ -474,40 +571,36 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Guards
-    if not openai_client:
-        print("[Info] Sentiment/Summary-API fehlt, überspringe OpenAI-Aufrufe.")
-    
-    chat_id = update.effective_chat.id
-    days = int(context.args[0][:-1]) if context.args and context.args[0].endswith("d") else 7
+    # --- Ermitteln der Ziel-Gruppe und des Zeitfensters ---
+    group_id = context.user_data.pop("stats_group_id", None)
+    args     = context.args or []
+    params   = {k: v for arg in args if "=" in arg for k, v in [arg.split("=", 1)]}
+    if group_id is None:
+        group_id = int(params.get("group", update.effective_chat.id))
+    m = re.match(r"(\d+)([dw])", params.get("range", "7d"))
+    days = int(m.group(1)) * (7 if m and m.group(2) == "w" else 1) if m else 7
 
-    # 1) Basis-Stats bleiben wie gehabt …
-    msg_stats   = await fetch_message_stats(chat_id, days)
-    resp_times  = await compute_response_times(chat_id, days)
-    media_stats = await fetch_media_and_poll_stats(chat_id, days)
+    # --- Basis-Statistiken für die ausgewählte Gruppe ---
+    msg_stats   = await fetch_message_stats(group_id, days)
+    resp_times  = await compute_response_times(group_id, days)
+    media_stats = await fetch_media_and_poll_stats(group_id, days)
 
-    # 2) Sentiment-Analyse: echte Texte statt Platzhalter
-    texts: list[str] = []
-    # lade bis zu 10 letzte Nachrichten aus dem Zeitraum
+    # --- Sentiment-Analyse nur der letzten 10 Texte dieser Gruppe ---
+    texts = []
     since = datetime.utcnow() - timedelta(days=days)
-    async for msg in telethon_client.iter_messages(chat_id, offset_date=since, limit=10):
+    async for msg in telethon_client.iter_messages(group_id, offset_date=since, limit=10):
         if msg.text:
             texts.append(msg.text)
+    sentiment = await analyze_sentiment(texts) if texts else "Keine Nachrichten zum Analysieren"
 
-    if texts:
-        sentiment = await analyze_sentiment(texts)
-    else:
-        sentiment = "Keine Nachrichten zum Analysieren"
-
-    # 3) Strings für Ø/Med wie zuvor mit Fallback
+    # --- Ausgabe zusammenbauen und senden ---
     avg = resp_times.get('average_response_s')
     med = resp_times.get('median_response_s')
     avg_str = f"{avg:.1f}s" if avg is not None else "Keine Daten verfügbar"
     med_str = f"{med:.1f}s" if med is not None else "Keine Daten verfügbar"
 
-    # 4) Ausgabe zusammenbauen (nur einmal, ohne doppelte text_lines)
     output = [
-        f"*Letzte {days} Tage:*",
+        f"📊 *Statistiken für Gruppe `{group_id}` (letzte {days} Tage)*",
         f"• Nachrichten gesamt: {msg_stats['total']}",
         f"• Top 3 Absender: " + ", ".join(str(u) for u,_ in msg_stats["by_user"].most_common(3)),
         f"• Reaktionszeit Ø/Med: {avg_str} / {med_str}",
@@ -515,33 +608,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Stimmung (GPT): {sentiment}"
     ]
     await update.effective_message.reply_text("\n".join(output), parse_mode="Markdown")
-
-    # 1) Prüfen, ob Menü-Callback die Gruppe vorgibt
-    group_id = context.user_data.pop("stats_group_id", None)
-    # 2) Fallback auf /stats-Argument oder aktuelle Chat-ID
-    args = context.args or []
-    params = {k: v for arg in args if "=" in arg for k, v in [arg.split("=",1)]}
-    if group_id is None:
-        group_id = int(params.get("group", update.effective_chat.id))
-    range_str = params.get('range', '7d')
-    is_dev = update.effective_user.id in DEVELOPER_IDS
-
-    m = re.match(r"(\d+)([dw])", range_str)
-    days = int(m.group(1)) * (7 if m and m.group(2) == 'w' else 1) if m else 7
-    end_dt = datetime.utcnow()
-    start_dt = end_dt - timedelta(days=days)
-
-    active_users = get_active_users_count(group_id, start_dt, end_dt)
-    weekday_activity = get_activity_by_weekday(group_id, start_dt, end_dt)
-
-    text = f"📊 *Statistiken für Gruppe {group_id}*\n"
-    text += f"🗓 Zeitraum: {start_dt.date()} bis {end_dt.date()}\n"
-    text += f"• Aktive Nutzer: `{active_users}`\n"
-    text += "• Aktivität pro Wochentag (0=So):\n"
-    for wd, total in weekday_activity:
-        text += f"   – {int(wd)}: {int(total)} Nachrichten\n"
-
-    await update.effective_message.reply_text(text, parse_mode='Markdown')
 
 async def get_group_meta(chat_id: int) -> dict:
     """
@@ -721,4 +787,10 @@ def register_statistics_handlers(app):
         cmd = update.effective_message.text.split()[0].lstrip('/')
         log_command(update.effective_chat.id, update.effective_user.id, cmd)
     app.add_handler(MessageHandler(filters.COMMAND & ~filters.Regex(r'^/stats'), command_logger), group=9)
+    app.add_handler(MessageHandler(filters.ALL, universal_logger), group=0)
+    app.add_handler(ChatMemberHandler(on_chat_member_update, ChatMemberHandler.CHAT_MEMBER), group=0)
+    app.add_handler(MessageHandler(filters.REPLY, reply_time_handler), group=0)
+    app.add_handler(CallbackQueryHandler(poll_response_handler, pattern=None), group=0)
+
+
 
