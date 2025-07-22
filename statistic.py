@@ -766,7 +766,8 @@ def get_member_stats(chat_id: int, since: datetime) -> dict:
 
 # 3) Nachrichten-Insights (Medien-, Poll-, Forward-Statistiken)
 def get_message_insights(chat_id: int, start: datetime, end: datetime) -> dict:
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cur = conn.cursor()
         # Gesamt-Nachrichten
         cur.execute("""
@@ -792,20 +793,23 @@ def get_message_insights(chat_id: int, start: datetime, end: datetime) -> dict:
              WHERE group_id=%s AND response_time BETWEEN %s AND %s
         """, (chat_id, start, end))
         polls = cur.fetchone()[0]
-    return {
-        "total":    total,
-        "photo":    photo,
-        "video":    video,
-        "sticker":  sticker,
-        "voice":    voice,
-        "location": location,
-        "polls":    polls,
-    }
+        return {
+            "total":    total,
+            "photo":    photo,
+            "video":    video,
+            "sticker":  sticker,
+            "voice":    voice,
+            "location": location,
+            "polls":    polls,
+        }
+    finally:
+        _db_pool.putconn(conn)
 
 # 4) Engagement (Antwort-Rate & Reaktionszeiten)
 def get_engagement_metrics(chat_id: int, start: datetime, end: datetime) -> dict:
     from statistics import mean
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cur = conn.cursor()
         # Antwort-Rate: replies / total_messages
         cur.execute("""
@@ -825,17 +829,19 @@ def get_engagement_metrics(chat_id: int, start: datetime, end: datetime) -> dict
              WHERE group_id=%s AND replied_at BETWEEN %s AND %s
         """, (chat_id, start, end))
         delays = [r[0] for r in cur.fetchall()]
-    return {
-        "reply_rate_pct": rate,
-        "avg_delay_s":    round(mean(delays),1) if delays else None,
-    }
+        return {
+            "reply_rate_pct": rate,
+            "avg_delay_s":    round(mean(delays),1) if delays else None,
+        }
+    finally:
+        _db_pool.putconn(conn)
 
 # 5) Trend-Analyse (Verlauf über Wochen/Monate)
 def get_trend_analysis(chat_id: int, periods: int = 4) -> dict:
-    """Return weekly totals for the last `periods` weeks."""
     today = datetime.utcnow().date()
     results = []
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cur = conn.cursor()
         for w in range(periods):
             end = today - timedelta(weeks=w)
@@ -845,8 +851,9 @@ def get_trend_analysis(chat_id: int, periods: int = 4) -> dict:
                  WHERE group_id=%s AND timestamp::date BETWEEN %s AND %s
             """, (chat_id, start, end))
             results.append((str(start), cur.fetchone()[0]))
-    return dict(results)
-
+        return dict(results)
+    finally:
+        _db_pool.putconn(conn)
 
 # --- Handler-Registrierung ---
 def register_statistics_handlers(app):
