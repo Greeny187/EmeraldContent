@@ -714,12 +714,17 @@ async def get_group_meta(chat_id: int) -> dict:
         try:
             entity = await telethon_client.get_entity(chat_id)
             full   = await telethon_client(GetFullChannelRequest(entity.username or entity.id))
+            # Robuster Zugriff auf admins und topics:
+            admins = getattr(full.full_chat, "admins_count", None)
+            if admins is None:
+                admins = 0
+            topics = getattr(getattr(full.full_chat, "forum_info", None), "total_count", 0) or 0
             meta.update({
                 "title":       getattr(entity, "title", "–"),
                 "description": getattr(full.full_chat, "about", "–"),
                 "members":     getattr(full.full_chat, "participants_count", None),
-                "admins":      getattr(full.full_chat, "admins_count", None),
-                "topics":      getattr(full.full_chat, "forum_info", {}).get("total_count", 0)
+                "admins":      admins,
+                "topics":      topics
             })
             telethon_ok = True
         except Exception as e:
