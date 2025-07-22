@@ -70,7 +70,7 @@ def schedule_telethon_jobs(chat_usernames: list[str]):
 # --- Schema-Migration für Stats ---
 @_with_cursor
 def init_stats_db(cur):
-    
+
     # 0) Erst die Basistabelle anlegen, falls noch nicht da
     cur.execute("""
         CREATE TABLE IF NOT EXISTS group_settings (
@@ -394,18 +394,27 @@ async def fetch_message_stats(chat_id: int, days: int = 7):
             uid = msg.from_id.user_id or msg.from_id.chat_id
             stats["by_user"][uid] += 1
 
-        # Typ
-        kind = ("text" if msg.text else
-                "photo" if msg.photo else
-                "video" if msg.video else
-                "sticker" if msg.sticker else
-                "voice" if msg.voice else
-                "location" if msg.location else
-                "other")
+        # Typ bestimmen mit sicherem Attributzugriff (MessageService hat z.B. kein .location)
+        if getattr(msg, "text", None):
+            kind = "text"
+        elif getattr(msg, "photo", None):
+            kind = "photo"
+        elif getattr(msg, "video", None):
+            kind = "video"
+        elif getattr(msg, "sticker", None):
+            kind = "sticker"
+        elif getattr(msg, "voice", None):
+            kind = "voice"
+        elif getattr(msg, "location", None):
+            kind = "location"
+        else:
+            kind = "other"
         stats["by_type"][kind] += 1
 
-        # Stunde
-        stats["by_hour"][msg.date.hour] += 1
+        # Stunde (nur, wenn date-Attribut vorhanden)
+        msg_date = getattr(msg, "date", None)
+        if msg_date:
+            stats["by_hour"][msg_date.hour] += 1
 
         # Hashtags
         if msg.text:
@@ -562,7 +571,6 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start   = end - timedelta(days=7)
 
     # 1) Basis-Daten
-    meta     = get_group_meta(chat_id)
     members  = get_member_stats(chat_id, start)
     insights = get_message_insights(chat_id, start, end)
     engage   = get_engagement_metrics(chat_id, start, end)
@@ -641,6 +649,7 @@ async def get_group_meta(chat_id: int) -> dict:
         "members":    None,
         "admins":     None,
         "topics":     None,
+        "bots":       None
     }
 
         # 1) Versuch: live über Telethon
@@ -668,7 +677,7 @@ async def get_group_meta(chat_id: int) -> dict:
                 cur.execute("""
                     SELECT title, description, topic_count AS topics, bot_count AS bots
                     FROM group_settings
-                    WHERE group_id=%s
+                    WHERE chat_id=%s
                 """, (chat_id,))
                 row = cur.fetchone()
             if row:
