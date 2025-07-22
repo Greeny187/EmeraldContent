@@ -715,10 +715,10 @@ async def get_group_meta(chat_id: int) -> dict:
             entity = await telethon_client.get_entity(chat_id)
             full   = await telethon_client(GetFullChannelRequest(entity.username or entity.id))
             meta.update({
-                "title":      getattr(entity, "title", "–"),
+                "title":       getattr(entity, "title", "–"),
                 "description": getattr(full.full_chat, "about", "–"),
-                "members":     full.full_chat.participants_count,
-                "admins":      len(full.full_chat.admin_rights or []),
+                "members":     getattr(full.full_chat, "participants_count", None),
+                "admins":      getattr(full.full_chat, "admins_count", None),
                 "topics":      getattr(full.full_chat, "forum_info", {}).get("total_count", 0)
             })
             telethon_ok = True
