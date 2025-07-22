@@ -1,9 +1,18 @@
 import asyncio
-from telethon_client import telethon_client
+import os
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import get_all_group_ids, _db_pool
 
-async def update_titles_and_descriptions():
+api_id = int(os.getenv("TELETHON_API_ID"))
+api_hash = os.getenv("TELETHON_API_HASH")
+session_string = os.getenv("TELETHON_SESSION_STRING")
+telethon_client = TelegramClient(StringSession(session_string), api_id, api_hash)
+
+async def update_group_metadata():
+    if not telethon_client.is_connected():
+        await telethon_client.connect()
     group_ids = get_all_group_ids()
     for chat_id in group_ids:
         try:
@@ -11,14 +20,19 @@ async def update_titles_and_descriptions():
             full   = await telethon_client(GetFullChannelRequest(entity.username or entity.id))
             title = getattr(entity, "title", None)
             description = getattr(full.full_chat, "about", None)
+            members = getattr(full.full_chat, "participants_count", None)
+            admins = len(getattr(full.full_chat, "admin_rights", []) or [])
+            topics = getattr(full.full_chat, "forum_info", {}).get("total_count", None)
+            # Beispiel: weitere Felder wie bots kannst du hier ergänzen
+
             conn = _db_pool.getconn()
             try:
                 with conn.cursor() as cur:
                     cur.execute("""
                         UPDATE group_settings
-                        SET title=%s, description=%s
+                        SET title=%s, description=%s, member_count=%s, admin_count=%s, topic_count=%s
                         WHERE chat_id=%s
-                    """, (title, description, chat_id))
+                    """, (title, description, members, admins, topics, chat_id))
                     conn.commit()
             finally:
                 _db_pool.putconn(conn)
@@ -27,4 +41,4 @@ async def update_titles_and_descriptions():
             print(f"Fehler bei {chat_id}: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(update_titles_and_descriptions())
+    asyncio.run(update_group_metadata())

@@ -465,6 +465,15 @@ def add_posted_link(cur, chat_id: int, link: str):
         (chat_id, link)
     )
 
+def get_all_group_ids():
+    conn = _db_pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT chat_id FROM group_settings")
+            return [row[0] for row in cur.fetchall()]
+    finally:
+        _db_pool.putconn(conn)
+
 # Mulitlanguage
 
 @_with_cursor
