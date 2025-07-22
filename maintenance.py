@@ -1,14 +1,8 @@
 import asyncio
 import os
-from telethon import TelegramClient
-from telethon.sessions import StringSession
+from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import get_all_group_ids, _db_pool
-
-api_id = int(os.getenv("TELETHON_API_ID"))
-api_hash = os.getenv("TELETHON_API_HASH")
-session_string = os.getenv("TELETHON_SESSION_STRING")
-telethon_client = TelegramClient(StringSession(session_string), api_id, api_hash)
 
 async def update_group_metadata():
     if not telethon_client.is_connected():
