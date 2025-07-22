@@ -88,22 +88,18 @@ def init_stats_db(cur):
             title     TEXT,
             description TEXT
         );
-    """
-    )
+    """)
 
     # 1) Alte group_settings-Spalten auf die neuen Dev-Dashboard-Felder erweitern
-    cur.execute("""
-    ALTER TABLE group_settings
-        ADD COLUMN IF NOT EXISTS last_command TEXT,
-        ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ,
-        ADD COLUMN IF NOT EXISTS group_activity_score REAL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS description TEXT,
-        ADD COLUMN IF NOT EXISTS topic_count INT DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS bot_count INT DEFAULT 0;
-        ADD COLUMN IF NOT EXISTS member_count INT DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS admin_count INT DEFAULT 0;
-    """
-    )
+
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS last_command TEXT;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS last_active TIMESTAMPTZ;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS group_activity_score REAL DEFAULT 0;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS description TEXT;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS topic_count INT DEFAULT 0;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS bot_count INT DEFAULT 0;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS member_count INT DEFAULT 0;")
+    cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS admin_count INT DEFAULT 0;")
 
     # 2) Bisherige Statistik-Tabellen
     cur.execute(
