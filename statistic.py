@@ -700,11 +700,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("\n".join(output), parse_mode="Markdown")
 
 async def get_group_meta(chat_id: int) -> dict:
-    """
-    Liefert Title, Beschreibung, Anzahl Mitglieder/Admins und Topics:
-    – per Telethon, falls konfiguriert
-    – fallback: Platzhalter, falls DB-Spalten fehlen
-    """
     meta = {
         "title":      "–",
         "description":"–",
@@ -714,10 +709,10 @@ async def get_group_meta(chat_id: int) -> dict:
         "bots":       None
     }
 
-        # 1) Versuch: live über Telethon
+    # 1) Versuch: live über Telethon
+    telethon_ok = False
     if telethon_client:
         try:
-            # Chat-Entity holen (Username oder ID)
             entity = await telethon_client.get_entity(chat_id)
             full   = await telethon_client(GetFullChannelRequest(entity.username or entity.id))
             meta.update({
@@ -725,16 +720,17 @@ async def get_group_meta(chat_id: int) -> dict:
                 "description": getattr(full.full_chat, "about", "–"),
                 "members":     full.full_chat.participants_count,
                 "admins":      len(full.full_chat.admin_rights or []),
-                # forum_info.total_count nur bei supergruppen mit Topics
                 "topics":      getattr(full.full_chat, "forum_info", {}).get("total_count", 0)
             })
+            telethon_ok = True
         except Exception as e:
             logger.warning(f"get_group_meta: Telethon-Fallback fehlgeschlagen: {e}")
 
-    # 2) Versuch: ggf. aus DB-Spalten (falls Schema angepasst wurde)
-    else:
+    # 2) Fallback: aus DB, wenn Telethon nicht erfolgreich oder Felder fehlen
+    if not telethon_ok or meta["title"] == "–" or meta["description"] == "–":
         try:
-            with get_db_connection() as conn:
+            conn = get_db_connection()
+            try:
                 cur = conn.cursor()
                 cur.execute("""
                     SELECT title, description, topic_count AS topics, bot_count AS bots
@@ -742,15 +738,16 @@ async def get_group_meta(chat_id: int) -> dict:
                     WHERE chat_id=%s
                 """, (chat_id,))
                 row = cur.fetchone()
-            if row:
-                meta.update({
-                    "title":       row[0],
-                    "description": row[1],
-                    "topics":      row[2],
-                    "bots":        row[3]
-                })
+                if row:
+                    meta.update({
+                        "title":       row[0] or meta["title"],
+                        "description": row[1] or meta["description"],
+                        "topics":      row[2] if meta["topics"] is None else meta["topics"],
+                        "bots":        row[3] if meta["bots"] is None else meta["bots"]
+                    })
+            finally:
+                _db_pool.putconn(conn)
         except Exception:
-            # Spalten existieren nicht – ignorieren
             pass
 
     return meta
