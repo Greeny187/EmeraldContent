@@ -597,36 +597,62 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     end   = datetime.utcnow()
     start = end - timedelta(days=7)
-
     group_ids = get_all_group_ids()
     if not group_ids:
         return await update.effective_message.reply_text("Keine Gruppen registriert.")
 
     output = []
     for chat_id in group_ids:
-        # 1) Basis-Daten
+        meta = await get_group_meta(chat_id)
+
+        # --- Telethon-Statistiken ---
+        telethon_text = ""
+        try:
+            msg_stats   = await fetch_message_stats(chat_id, 7)
+            resp_times  = await compute_response_times(chat_id, 7)
+            media_stats = await fetch_media_and_poll_stats(chat_id, 7)
+            avg = resp_times.get('average_response_s')
+            med = resp_times.get('median_response_s')
+            avg_str = f"{avg:.1f}s" if avg is not None else "Keine Daten"
+            med_str = f"{med:.1f}s" if med is not None else "Keine Daten"
+            telethon_text = (
+                f"📡 *Live-Statistiken (Telethon, letzte 7 Tage)*\n"
+                f"• Nachrichten gesamt: {msg_stats['total']}\n"
+                f"• Top 3 Absender: " + ", ".join(str(u) for u,_ in msg_stats['by_user'].most_common(3)) + "\n"
+                f"• Reaktionszeit Ø/Med: {avg_str} / {med_str}\n"
+                f"• Medien: " + ", ".join(f"{k}={v}" for k,v in media_stats.items()) + "\n"
+            )
+        except Exception as e:
+            logger.warning(f"Telethon-Stats für {chat_id} fehlgeschlagen: {e}")
+            telethon_text = "📡 *Live-Statistiken (Telethon)*: _nicht verfügbar_\n"
+
+        # --- Datenbank-Statistiken ---
         members  = get_member_stats(chat_id, start)
         insights = get_message_insights(chat_id, start, end)
         engage   = get_engagement_metrics(chat_id, start, end)
         trends   = get_trend_analysis(chat_id, periods=4)
-        meta     = await get_group_meta(chat_id)
+        db_text = (
+            "💾 *Datenbank-Statistiken (letzte 7 Tage)*\n"
+            f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n"
+            f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n"
+            f"💬 Nachrichten gesamt: {insights['total']}\n"
+            f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
+            f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n"
+            f"⏱️ Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n"
+            "📈 Trend (Woche → Nachrichten):\n"
+        )
+        for week_start, count in trends.items():
+            db_text += f"   – {week_start}: {count}\n"
 
+        # --- Gesamtausgabe ---
         text = (
             f"*Gruppe:* {meta['title']} (`{chat_id}`)\n"
             f"📝 Beschreibung: {meta['description']}\n"
             f"👥 Mitglieder: {meta['members']}  👮 Admins: {meta['admins']}\n"
             f"📂 Topics: {meta['topics']}\n\n"
-            f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
-            f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
-            f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
-            f"💬 Nachrichten gesamt: {insights['total']}\n"
-            f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
-            f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n\n"
-            f"⏱️ Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n\n"
-            "📈 Trend (Woche → Nachrichten):\n"
+            f"{telethon_text}\n"
+            f"{db_text}"
         )
-        for week_start, count in trends.items():
-            text += f"   – {week_start}: {count}\n"
         output.append(text)
 
     # Telegram-Nachrichtenlänge beachten, ggf. splitten
