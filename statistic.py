@@ -206,6 +206,12 @@ def log_command(cur, chat_id: int, user_id: int, command: str):
     )
 
 # --- Metrik-Funktionen ---
+
+@_with_cursor
+def get_all_group_ids(cur):
+    cur.execute("SELECT chat_id FROM group_settings")
+    return [row[0] for row in cur.fetchall()]
+
 @_with_cursor
 def get_active_users_count(cur, chat_id: int, start_date: datetime, end_date: datetime) -> int:
     cur.execute(
@@ -456,10 +462,24 @@ async def compute_response_times(chat_id: int, days: int = 7):
 
     # einfacher Ansatz: jede Nachricht, die reply_to_message hat
     async for msg in telethon_client.iter_messages(chat_id, offset_date=since):
-        if msg.reply_to_msg_id:
-            orig = await telethon_client.get_messages(chat_id, ids=msg.reply_to_msg_id)
-            diff = (msg.date - orig.date).total_seconds()
-            diffs.append(diff)
+        # Nur Antworten betrachten
+        if not getattr(msg, "reply_to_msg_id", None):
+            continue
+
+        # Originalnachricht holen (gibt Message oder Liste zurück)
+        orig = await telethon_client.get_messages(chat_id, ids=msg.reply_to_msg_id)
+        # Normieren: falls Liste, nimm erstes Element
+        if isinstance(orig, list):
+            orig_msg = orig[0] if orig else None
+        else:
+            orig_msg = orig
+
+        # Wenn keine Originalnachricht oder kein Datum → überspringen
+        if not orig_msg or not getattr(orig_msg, "date", None):
+            continue
+
+        # Antwortzeit berechnen
+        diffs.append((msg.date - orig_msg.date).total_seconds())
 
     return {
         "average_response_s": mean(diffs) if diffs else None,
@@ -561,41 +581,48 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
     await update.effective_message.reply_document(open(fname, "rb"))
 
 async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dev-Dashboard: ausführliche Statistiken für Developer."""
+    """Dev-Dashboard: ausführliche Statistiken für alle registrierten Gruppen."""
     user_id = update.effective_user.id
     if user_id not in DEVELOPER_IDS:
         return await update.effective_message.reply_text("❌ Zugriff verweigert.")
 
-    chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
-    end     = datetime.utcnow()
-    start   = end - timedelta(days=7)
+    end   = datetime.utcnow()
+    start = end - timedelta(days=7)
 
-    # 1) Basis-Daten
-    members  = get_member_stats(chat_id, start)
-    insights = get_message_insights(chat_id, start, end)
-    engage   = get_engagement_metrics(chat_id, start, end)
-    trends   = get_trend_analysis(chat_id, periods=4)
+    group_ids = get_all_group_ids()
+    if not group_ids:
+        return await update.effective_message.reply_text("Keine Gruppen registriert.")
 
-    # 2) Ausgabe formatieren
-    meta = await get_group_meta(chat_id)
-    text = (
-        f"*Gruppe:* {meta['title']} (`{chat_id}`)\n"
-        f"📝 Beschreibung: {meta['description']}\n"
-        f"👥 Mitglieder: {meta['members']}  👮 Admins: {meta['admins']}\n"
-        f"📂 Topics: {meta['topics']}\n\n"
-        f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
-        f"📝 Beschreibung: {meta['description']}\n"
-        f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
-        f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
-        f"💬 Nachrichten gesamt: {insights['total']}\n"
-        f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
-        f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n\n"
-        f"⏱️ Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n\n"
-        "📈 Trend (Woche → Nachrichten):\n"
-    )
-    for week_start, count in trends.items():
-        text += f"   – {week_start}: {count}\n"
-    await update.effective_message.reply_text(text, parse_mode="Markdown")
+    output = []
+    for chat_id in group_ids:
+        # 1) Basis-Daten
+        members  = get_member_stats(chat_id, start)
+        insights = get_message_insights(chat_id, start, end)
+        engage   = get_engagement_metrics(chat_id, start, end)
+        trends   = get_trend_analysis(chat_id, periods=4)
+        meta     = await get_group_meta(chat_id)
+
+        text = (
+            f"*Gruppe:* {meta['title']} (`{chat_id}`)\n"
+            f"📝 Beschreibung: {meta['description']}\n"
+            f"👥 Mitglieder: {meta['members']}  👮 Admins: {meta['admins']}\n"
+            f"📂 Topics: {meta['topics']}\n\n"
+            f"*Dev-Dashboard Gruppe {chat_id} (letzte 7 Tage)*\n\n"
+            f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n\n"
+            f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n\n"
+            f"💬 Nachrichten gesamt: {insights['total']}\n"
+            f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
+            f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n\n"
+            f"⏱️ Antwort-Rate: {engage['reply_rate_pct']} %  Ø-Delay: {engage['avg_delay_s']} s\n\n"
+            "📈 Trend (Woche → Nachrichten):\n"
+        )
+        for week_start, count in trends.items():
+            text += f"   – {week_start}: {count}\n"
+        output.append(text)
+
+    # Telegram-Nachrichtenlänge beachten, ggf. splitten
+    for chunk in output:
+        await update.effective_message.reply_text(chunk, parse_mode="Markdown")
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
