@@ -5,7 +5,7 @@ from openai import OpenAI
 from collections import Counter
 from datetime import datetime, timedelta
 from telegram import Update, Message, ChatMemberUpdated
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler, PollAnswerHandler
 from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -314,14 +314,23 @@ async def reply_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         log_reply_time(context.bot, msg.chat.id, delay)
 
 async def poll_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Wird bei Poll-Option-Callback aufgerufen
-    query = update.callback_query
-    if query and query.poll_answer:
-        poll_id = query.poll_answer.poll_id
-        user_id = query.from_user.id
-        chat_id = query.message.chat.id
+    """Loggt Poll-Antworten, wenn Nutzer abstimmen."""
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    user_id = answer.user.id
+    # Wir brauchen den chat_id, in dem die Umfrage lief.
+    # Beim Erstellen der Umfrage speichern wir ihn in bot_data:
+    chat_id = context.application.bot_data.get('poll_chat_ids', {}).get(poll_id)
+    if chat_id:
         log_poll_response(context.bot, chat_id, user_id, poll_id)
-    await context.answer_callback_query()
+
+async def send_my_poll(update, context):
+    msg = await update.effective_chat.send_poll(
+        "Frage?", ["A", "B"], is_anonymous=False
+    )
+    poll_id = msg.poll.id
+    # Speichere chat_id → poll_id
+    context.application.bot_data.setdefault('poll_chat_ids', {})[poll_id] = msg.chat.id
 
 async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cm: ChatMemberUpdated = update.chat_member
@@ -790,7 +799,7 @@ def register_statistics_handlers(app):
     app.add_handler(MessageHandler(filters.ALL, universal_logger), group=0)
     app.add_handler(ChatMemberHandler(on_chat_member_update, ChatMemberHandler.CHAT_MEMBER), group=0)
     app.add_handler(MessageHandler(filters.REPLY, reply_time_handler), group=0)
-    app.add_handler(CallbackQueryHandler(poll_response_handler, pattern=None), group=0)
+    app.add_handler(PollAnswerHandler(poll_response_handler), group=0)
 
 
 
