@@ -630,6 +630,14 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         insights = get_message_insights(chat_id, start, end)
         engage   = get_engagement_metrics(chat_id, start, end)
         trends   = get_trend_analysis(chat_id, periods=4)
+
+        # --- Score berechnen und speichern ---
+        messages_last_week = insights['total']
+        new_members = members['new']
+        replies = engage['reply_rate_pct'] * messages_last_week / 100  # absolute Zahl der Replies
+        score = (messages_last_week * 0.5) + (new_members * 2) + (replies * 1)
+        update_group_activity_score(chat_id, score)
+
         db_text = (
             "💾 *Datenbank-Statistiken (letzte 7 Tage)*\n"
             f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n"
@@ -719,10 +727,12 @@ async def get_group_meta(chat_id: int) -> dict:
             if admins is None:
                 admins = 0
             topics = getattr(getattr(full.full_chat, "forum_info", None), "total_count", 0) or 0
+            bots = len(getattr(full.full_chat, "bot_info", []) or [])
             meta.update({
                 "title":       getattr(entity, "title", "–"),
                 "description": getattr(full.full_chat, "about", "–"),
                 "members":     getattr(full.full_chat, "participants_count", None),
+                "bots":        bots,
                 "admins":      admins,
                 "topics":      topics
             })
@@ -878,6 +888,18 @@ def get_trend_analysis(chat_id: int, periods: int = 4) -> dict:
             """, (chat_id, start, end))
             results.append((str(start), cur.fetchone()[0]))
         return dict(results)
+    finally:
+        _db_pool.putconn(conn)
+
+def update_group_activity_score(chat_id: int, score: float):
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE group_settings SET group_activity_score=%s WHERE chat_id=%s;",
+            (score, chat_id)
+        )
+        conn.commit()
     finally:
         _db_pool.putconn(conn)
 
