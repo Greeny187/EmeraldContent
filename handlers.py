@@ -298,6 +298,8 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 0) Service-Messages behandeln: new_chat_members / left_chat_member
     msg = update.message
+    chat_id = update.effective_chat.id
+
     if msg:
         chat_id = msg.chat.id
         # a) Neue Mitglieder
@@ -445,15 +447,19 @@ async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_T
     chat_id_str, _, _, user_id_str = query.data.split("_")
     chat_id, user_id = int(chat_id_str), int(user_id_str)
 
-    # Bot bestätigen
-    await query.answer("Verifiziert! Willkommen.", show_alert=True)
-    # Hier könnte man z.B. eine Rolle vergeben oder weitere Aktionen ausführen
-    # Anschließend Fehlversuche/Timeout-Cleanup implementieren
+    await query.answer("✅ Verifiziert! Willkommen.", show_alert=True)
+    
+    # Abschließende Willkommensnachricht (optional)
+    text, photo_id = get_welcome(chat_id)
+    if photo_id:
+        await context.bot.send_photo(chat_id, photo_id, caption=f"🎉 {text}", parse_mode="HTML")
+    else:
+        await context.bot.send_message(chat_id, text=f"🎉 {text}", parse_mode="HTML")
 
 # Message-Handler für Mathe-Antworten
 async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    chat_id = msg.chat_id
+    chat_id = update.effective_chat.id
     user_id = msg.from_user.id
     key = f"captcha_{chat_id}_{user_id}"
     if key not in context.user_data:
