@@ -414,6 +414,28 @@ def get_farewell(cur, chat_id: int) -> Optional[Tuple[str, str]]:
 def delete_farewell(cur, chat_id: int):
     cur.execute("DELETE FROM farewell WHERE chat_id = %s;", (chat_id,))
 
+@ _with_cursor
+def get_captcha_settings(cur, chat_id: int):
+    cur.execute(
+        "SELECT captcha_enabled, captcha_type, captcha_behavior FROM group_settings WHERE chat_id=%s",
+        (chat_id,)
+    )
+    return cur.fetchone() or (False, 'button', 'kick')
+
+@ _with_cursor
+def set_captcha_settings(cur, chat_id: int, enabled: bool, ctype: str, behavior: str):
+    cur.execute(
+        """
+        INSERT INTO group_settings (chat_id, captcha_enabled, captcha_type, captcha_behavior)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (chat_id) DO UPDATE
+          SET captcha_enabled  = EXCLUDED.captcha_enabled,
+              captcha_type     = EXCLUDED.captcha_type,
+              captcha_behavior = EXCLUDED.captcha_behavior;
+        """,
+        (chat_id, enabled, ctype, behavior)
+    )
+
 # --- RSS Feeds & Deduplication ---
 @_with_cursor
 def set_rss_topic(cur, chat_id: int, topic_id: int):
@@ -534,6 +556,11 @@ def migrate_db():
         )
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS title TEXT NOT NULL;"
+        )
+        cur.execute(
+            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_enabled BOOLEAN NOT NULL DEFAULT FALSE;"
+            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_type       TEXT    NOT NULL DEFAULT 'button';"
+            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_behavior   TEXT    NOT NULL DEFAULT 'kick';"
         )
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")

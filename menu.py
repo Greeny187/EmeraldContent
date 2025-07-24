@@ -3,7 +3,7 @@ from telegram.ext import CallbackQueryHandler, filters, MessageHandler
 from database import (
     get_registered_groups,
     get_welcome, set_welcome, delete_welcome, get_rss_topic, set_group_language, get_group_language,
-    get_rules, set_rules, delete_rules,
+    get_rules, set_rules, delete_rules, get_captcha_settings, set_captcha_settings, 
     get_farewell, set_farewell, delete_farewell,
     list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
     get_topic_owners,
@@ -53,6 +53,7 @@ async def show_group_menu(query_or_update, chat_id: int):
     # Menü-Buttons
     keyboard = [
         [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome")],
+        [InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{chat_id}_captcha")],
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{chat_id}_rules")],
         [InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{chat_id}_farewell")],
         [InlineKeyboardButton(tr('Linksperre', lang), callback_data=f"{chat_id}_exceptions")],
@@ -140,7 +141,7 @@ async def menu_callback(update, context):
 
     # Sub-Menüs: welcome, rules, farewell, rss, exceptions
     parts = data.split("_", 1)
-    if len(parts) == 2 and parts[1] in ("welcome", "rules", "farewell", "rss", "exceptions"):
+    if len(parts) == 2 and parts[1] in ("welcome","rules","farewell","rss","exceptions","captcha"):
         chat_id_str, func = parts
         chat_id = int(chat_id_str)
         back_main = InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Hauptmenü", callback_data=f"group_{chat_id}")]])
@@ -199,10 +200,40 @@ async def menu_callback(update, context):
                 await query.edit_message_text(text, reply_markup=back_main)
             return
 
-    # 3) Detail-Handler (Action-Blocks) – unverändert
+        if func == "captcha":
+            # aktuellen Status laden
+            enabled, ctype, behavior = get_captcha_settings(chat_id)
+            kb = [
+                [InlineKeyboardButton(
+                    f"{'✅ ' if enabled else ''}{tr('Aktiviert',lang) if enabled else tr('Deaktiviert',lang)}",
+                    callback_data=f"{chat_id}_captcha_toggle"
+                )],
+                [InlineKeyboardButton(
+                    f"{'✅ ' if ctype=='button' else ''}{tr('Button',lang)}",
+                    callback_data=f"{chat_id}_captcha_type_button"
+                )],
+                [InlineKeyboardButton(
+                    f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe',lang)}",
+                    callback_data=f"{chat_id}_captcha_type_math"
+                )],
+                [InlineKeyboardButton(
+                    f"{'✅ ' if behavior=='kick' else ''}{tr('Kick',lang)}",
+                    callback_data=f"{chat_id}_captcha_behavior_kick"
+                )],
+                [InlineKeyboardButton(
+                    f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout',lang)}",
+                    callback_data=f"{chat_id}_captcha_behavior_timeout"
+                )],
+                [InlineKeyboardButton(tr('↩️ Zurück',lang), callback_data=f"{chat_id}_captcha_back")]
+            ]
+            text = tr('🔐 Captcha-Einstellungen', lang)
+            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+    # 3) Detail-Handler (Action-Blocks)
     parts_full = data.split("_")
-    if len(parts_full) == 3:
+    if len(parts_full) == 4:
         chat_id, func, action = parts_full
+        chat_id_str, func, category, value = parts_full
         chat_id = int(chat_id)
         back_func = InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Zurück", callback_data=f"{chat_id}_{func}")]])
 
@@ -318,6 +349,32 @@ async def menu_callback(update, context):
             )
             return
         
+        # Captcha-Typ und Verhalten setzen
+        if func == "captcha":
+            if category == "type":
+                enabled, _, behavior = get_captcha_settings(chat_id)
+                set_captcha_settings(chat_id, enabled, value, behavior)
+                await query.answer(tr(
+                    f"Captcha-Typ gesetzt: {tr('Button',lang) if value=='button' else tr('Rechenaufgabe',lang)}",
+                    lang), show_alert=True)
+                return await menu_callback(update, context)
+            if category == "behavior":
+                enabled, ctype, _ = get_captcha_settings(chat_id)
+                set_captcha_settings(chat_id, enabled, ctype, value)
+                await query.answer(tr(
+                    f"Captcha-Verhalten gesetzt: {tr('Kick',lang) if value=='kick' else tr('Timeout',lang)}",
+                    lang), show_alert=True)
+                return await menu_callback(update, context)
+        # Captcha: An/Aus und Back-Button
+        if func == "captcha":
+            if action == "toggle":
+                curr, ctype, behavior = get_captcha_settings(chat_id)
+                set_captcha_settings(chat_id, not curr, ctype, behavior)
+                await query.answer(tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}", lang), show_alert=True)
+                return await menu_callback(update, context)
+            if action == "back":
+                return await show_group_menu(query, chat_id)
+            
     # Sprache-Submenu
     if data.endswith('_language'):
         chat_id = int(data.split('_')[0])

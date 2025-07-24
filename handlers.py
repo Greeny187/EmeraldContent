@@ -2,15 +2,16 @@ import os
 import datetime
 import re
 import logging
+import random, datetime
 from datetime import date, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
-remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome)
-from statistic import get_group_meta, get_member_stats, get_message_insights, get_trend_analysis, get_engagement_metrics, stats_dev_command, DEVELOPER_IDS
+remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings)
+from statistic import stats_dev_command, DEVELOPER_IDS
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat, is_deleted_account, tr
+from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler
 from menu import show_group_menu
 from access import get_visible_groups
@@ -314,6 +315,32 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
                 add_member(chat_id, user.id)
+
+                # 2) Captcha zusätzlich anzeigen, falls aktiviert
+                enabled, ctype, behavior = get_captcha_settings(chat_id)
+                if enabled:
+                    if ctype == 'button':
+                        kb = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}|captcha|button|{user.id}")
+                        ]])
+                        await context.bot.send_message(
+                            chat_id,
+                            text=f"🔐 Bitte bestätige, dass du kein Bot bist, {user.first_name}.",
+                            reply_markup=kb
+                        )
+                    elif ctype == 'math':
+                        a, b = random.randint(1,9), random.randint(1,9)
+                        # speichere Antwort und Verhalten kurzzeitig in context.user_data
+                        context.user_data[f"captcha_{chat_id}_{user.id}"] = {
+                            "answer": a + b,
+                            "behavior": behavior,
+                            "issued_at": datetime.datetime.utcnow()
+                        }
+                        await context.bot.send_message(
+                            chat_id,
+                            text=f"🔐 Bitte rechne: {a} + {b} = ?",
+                            reply_markup=ForceReply(selective=True)
+                        )
             return
         # b) Verlassene Mitglieder
         if msg.left_chat_member:
