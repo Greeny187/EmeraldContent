@@ -84,6 +84,9 @@ def init_db(cur):
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?',
             language_code TEXT NOT NULL DEFAULT 'de'
+            captcha_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            captcha_type TEXT NOT NULL DEFAULT 'button',
+            captcha_behavior TEXT NOT NULL DEFAULT 'kick'
         );
         """
     )
@@ -559,7 +562,11 @@ def migrate_db():
         )
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_enabled BOOLEAN NOT NULL DEFAULT FALSE;"
+        )
+        cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_type       TEXT    NOT NULL DEFAULT 'button';"
+        )
+        cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_behavior   TEXT    NOT NULL DEFAULT 'kick';"
         )
         conn.commit()
