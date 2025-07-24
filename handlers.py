@@ -504,4 +504,4 @@ def register_handlers(app):
 
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, track_members))
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
-    app.add_handler(MessageHandler(filters.FORCE_REPLY & filters.ChatType.GROUPS, math_captcha_handler))
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))
