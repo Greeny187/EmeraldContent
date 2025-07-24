@@ -231,8 +231,7 @@ async def menu_callback(update, context):
                 tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}",lang),
                 show_alert=True
             )
-            return await menu_callback(update, context)
-        if action == 'back':
+            # Submenü neu anzeigen (ohne Rekursion)
             return await show_group_menu(query, chat_id)
 
     # 4) Typ / Verhalten setzen
@@ -251,7 +250,7 @@ async def menu_callback(update, context):
                 tr(f"Captcha-Verhalten gesetzt: {tr('Kick',lang) if value=='kick' else tr('Timeout',lang)}",lang),
                 show_alert=True
             )
-        return await menu_callback(update, context)
+        return await show_group_menu(query, chat_id)
 
     # 3) Detail-Handler (Action-Blocks)
     parts_full = data.split("_")
