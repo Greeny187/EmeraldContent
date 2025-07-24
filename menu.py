@@ -82,33 +82,21 @@ async def show_group_menu(query_or_update, chat_id: int):
         await query_or_update.reply_text(title, reply_markup=markup)
 
 async def menu_callback(update, context):
-    # 1) Basis-Objekte
     query = update.callback_query
-    await query.answer()
     data = query.data
-    chat_id_str, func, *rest = data.split("_")
+
+    # 0) Zurück zum Hauptmenü: "group_<chat_id>"
+    if data.startswith('group_'):
+        _, chat_id_str = data.split('_', 1)
+        chat_id = int(chat_id_str)
+        return await show_group_menu(query, chat_id)
+
+    # 1) Alle anderen: "<chat_id>_<func>[_...]" 
+    parts = data.split('_')
+    chat_id_str, func, *rest = parts
+    # Hier kommt kein 'group' mehr, weil es vorher abgefangen wurde
     chat_id = int(chat_id_str)
     lang = get_group_language(chat_id)
-
-    # 2) chat_id ermitteln: entweder aus dem Callback-Prefix oder aus context.user_data
-    if data.startswith("group_"):
-        chat_id = int(data.split("_", 1)[1])
-        context.user_data["selected_chat_id"] = chat_id
-    else:
-        chat_id = context.user_data.get("selected_chat_id")
-
-    # 3) Falls noch keine Gruppe ausgewählt ist, direkt zur Auswahl springen
-    if not chat_id:
-        groups = get_registered_groups()
-        visible = await get_visible_groups(update.effective_user.id, context.bot, groups)
-        kb = [[InlineKeyboardButton(name, callback_data=f"group_{gid}")] for gid, name in visible]
-        return await query.message.reply_text(
-            tr('🔧 Wähle eine Gruppe:', 'de'), 
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-    
-    # 4) Gruppensprache einmalig laden
-    lang = get_group_language(chat_id) or 'de'
     
     # Statistik-Button: nur Gruppen-Stats
     if query.data and query.data.endswith("_stats"):
@@ -228,33 +216,41 @@ async def menu_callback(update, context):
             )],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{chat_id}_captcha_back")]
         ]
-        await query.edit_message_text(
-            tr('🔐 Captcha-Einstellungen', lang),
+        return await query.edit_message_text(
+            tr('🔐 Captcha-Einstellungen',lang),
             reply_markup=InlineKeyboardMarkup(kb)
         )
-        return
 
-    # Aktionen: toggle, back
-    if func == 'captcha' and rest:
+    # 3) Toggle / Zurück
+    if func == 'captcha' and rest and rest[0] in ('toggle','back'):
         action = rest[0]
+        curr, ctype, behavior = get_captcha_settings(chat_id)
         if action == 'toggle':
-            curr, ctype, behavior = get_captcha_settings(chat_id)
             set_captcha_settings(chat_id, not curr, ctype, behavior)
-            await query.answer(tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}", lang), show_alert=True)
+            await query.answer(
+                tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}",lang),
+                show_alert=True
+            )
             return await menu_callback(update, context)
         if action == 'back':
             return await show_group_menu(query, chat_id)
 
-    # Aktionen: type & behavior
+    # 4) Typ / Verhalten setzen
     if func == 'captcha' and len(rest) == 2:
         category, value = rest
         enabled, ctype, behavior = get_captcha_settings(chat_id)
-        if category == 'type':  # button/math
+        if category == 'type':
             set_captcha_settings(chat_id, enabled, value, behavior)
-            await query.answer(tr(f"Captcha-Typ gesetzt: {tr('Button', lang) if value=='button' else tr('Rechenaufgabe', lang)}", lang), show_alert=True)
-        elif category == 'behavior':  # kick/timeout
+            await query.answer(
+                tr(f"Captcha-Typ gesetzt: {tr('Button',lang) if value=='button' else tr('Rechenaufgabe',lang)}",lang),
+                show_alert=True
+            )
+        elif category == 'behavior':
             set_captcha_settings(chat_id, enabled, ctype, value)
-            await query.answer(tr(f"Captcha-Verhalten gesetzt: {tr('Kick', lang) if value=='kick' else tr('Timeout', lang)}", lang), show_alert=True)
+            await query.answer(
+                tr(f"Captcha-Verhalten gesetzt: {tr('Kick',lang) if value=='kick' else tr('Timeout',lang)}",lang),
+                show_alert=True
+            )
         return await menu_callback(update, context)
 
     # 3) Detail-Handler (Action-Blocks)
