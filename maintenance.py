@@ -1,5 +1,4 @@
 import asyncio
-import os
 from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from database import get_all_group_ids, _db_pool

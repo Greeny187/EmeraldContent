@@ -1,8 +1,8 @@
 import re
 import os
 import logging
+import csv
 from openai import OpenAI
-from contextlib import contextmanager
 from collections import Counter
 from datetime import datetime, timedelta
 from telegram import Update, Message, ChatMemberUpdated
@@ -574,18 +574,50 @@ async def summarize_conversation(chat_id: int, days: int = 1):
     return resp.choices[0].message.content
 
 async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Exportiere alle relevanten Metriken als CSV und sende die Datei."""
     chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
-    # Beispiel: hole Basis-Stats
-    active = get_active_users_count(chat_id, datetime.utcnow()-timedelta(days=7), datetime.utcnow())
-    cmds   = get_command_usage(chat_id, datetime.utcnow()-timedelta(days=7), datetime.utcnow())
+    start = datetime.utcnow() - timedelta(days=7)
+    end = datetime.utcnow()
+
+    # Basisdaten aus group_settings
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT chat_id, title, description, member_count, admin_count, topic_count, bot_count, group_activity_score
+            FROM group_settings
+            WHERE chat_id = %s
+        """, (chat_id,))
+        group_row = cur.fetchone()
+    finally:
+        _db_pool.putconn(conn)
+
+    # Statistiken berechnen
+    members  = get_member_stats(chat_id, start)
+    insights = get_message_insights(chat_id, start, end)
+    engage   = get_engagement_metrics(chat_id, start, end)
+    trends   = get_trend_analysis(chat_id, periods=4)
+
     # CSV schreiben
-    fname = f"/tmp/stats_{chat_id}.csv"
-    with open(fname, "w", encoding="utf-8") as f:
-        f.write("Metrik;Wert\n")
-        f.write(f"aktive_nutzer;{active}\n")
-        for cmd, cnt in cmds:
-            f.write(f"cmd_{cmd};{cnt}\n")
+    fname = f"/tmp/full_stats_{chat_id}.csv"
+    with open(fname, "w", encoding="utf-8", newline='') as f:
+        writer = csv.writer(f, delimiter=";")
+        # Header
+        writer.writerow([
+            "chat_id", "title", "description", "member_count", "admin_count", "topic_count", "bot_count", "group_activity_score",
+            "new_members", "left_members", "inactive_members",
+            "messages_total", "photo", "video", "sticker", "voice", "location", "polls",
+            "reply_rate_pct", "avg_delay_s",
+            "trend_week_start", "trend_messages"
+        ])
+        # Trends als separate Zeilen
+        for week_start, trend_count in trends.items():
+            writer.writerow([
+                *(group_row if group_row else [chat_id, "", "", 0, 0, 0, 0, 0]),
+                members["new"], members["left"], members["inactive"],
+                insights["total"], insights["photo"], insights["video"], insights["sticker"], insights["voice"], insights["location"], insights["polls"],
+                engage["reply_rate_pct"], engage["avg_delay_s"],
+                week_start, trend_count
+            ])
     await update.effective_message.reply_document(open(fname, "rb"))
 
 async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
