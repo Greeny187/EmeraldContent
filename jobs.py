@@ -34,29 +34,50 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
-    # Sicherstellen, dass Telethon verbunden und autorisiert ist
     if not telethon_client.is_connected():
         await start_telethon()
     for username in CHANNEL_USERNAMES:
         try:
             full = await telethon_client(GetFullChannelRequest(username))
+            chat = full.chats[0]
+            chat_id = chat.id
+            admins = getattr(full.full_chat, "admins_count", 0) or 0
+            members = getattr(full.full_chat, "participants_count", 0) or 0
+            topics = getattr(getattr(full.full_chat, "forum_info", None), "total_count", 0) or 0
+            bots = len(getattr(full.full_chat, "bot_info", []) or [])
+            description = getattr(full.full_chat, "about", "") or ""
+            title = getattr(chat, "title", "–")
+
             conn = _db_pool.getconn()
             conn.autocommit = True
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO daily_stats (chat_id, stat_date, members, admins)
-                    VALUES (%s, %s, %s, %s)
+                # group_settings updaten
+                cur.execute("""
+                    UPDATE group_settings
+                    SET title=%s, description=%s, member_count=%s, admin_count=%s, topic_count=%s, bot_count=%s
+                    WHERE chat_id=%s
+                """, (title, description, members, admins, topics, bots, chat_id))
+
+                # daily_stats wie gehabt
+                cur.execute("""
+                    INSERT INTO daily_stats (chat_id, stat_date, members, admins, topics, bots, description)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (chat_id, stat_date)
-                    DO UPDATE SET members = EXCLUDED.members, admins = EXCLUDED.admins;
-                    """,
-                    (
-                        full.chats[0].id,
-                        date.today(),
-                        full.full_chat.participants_count,
-                        len(full.full_chat.admin_rights or [])
-                    )
-                )
+                    DO UPDATE SET
+                        members = EXCLUDED.members,
+                        admins = EXCLUDED.admins,
+                        topics = EXCLUDED.topics,
+                        bots = EXCLUDED.bots,
+                        description = EXCLUDED.description;
+                """, (
+                    chat_id,
+                    date.today(),
+                    members,
+                    admins,
+                    topics,
+                    bots,
+                    description
+                ))
             _db_pool.putconn(conn)
         except Exception as e:
             logger.error(f"Fehler beim Abfragen von {username}: {e}")
