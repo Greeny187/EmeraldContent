@@ -86,7 +86,10 @@ async def menu_callback(update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
-   
+    chat_id_str, func, *rest = data.split("_")
+    chat_id = int(chat_id_str)
+    lang = get_group_language(chat_id)
+
     # 2) chat_id ermitteln: entweder aus dem Callback-Prefix oder aus context.user_data
     if data.startswith("group_"):
         chat_id = int(data.split("_", 1)[1])
@@ -200,34 +203,59 @@ async def menu_callback(update, context):
                 await query.edit_message_text(text, reply_markup=back_main)
             return
 
-        if func == "captcha":
-            # aktuellen Status laden
-            enabled, ctype, behavior = get_captcha_settings(chat_id)
-            kb = [
-                [InlineKeyboardButton(
-                    f"{'✅ ' if enabled else ''}{tr('Aktiviert',lang) if enabled else tr('Deaktiviert',lang)}",
-                    callback_data=f"{chat_id}_captcha_toggle"
-                )],
-                [InlineKeyboardButton(
-                    f"{'✅ ' if ctype=='button' else ''}{tr('Button',lang)}",
-                    callback_data=f"{chat_id}_captcha_type_button"
-                )],
-                [InlineKeyboardButton(
-                    f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe',lang)}",
-                    callback_data=f"{chat_id}_captcha_type_math"
-                )],
-                [InlineKeyboardButton(
-                    f"{'✅ ' if behavior=='kick' else ''}{tr('Kick',lang)}",
-                    callback_data=f"{chat_id}_captcha_behavior_kick"
-                )],
-                [InlineKeyboardButton(
-                    f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout',lang)}",
-                    callback_data=f"{chat_id}_captcha_behavior_timeout"
-                )],
-                [InlineKeyboardButton(tr('↩️ Zurück',lang), callback_data=f"{chat_id}_captcha_back")]
-            ]
-            text = tr('🔐 Captcha-Einstellungen', lang)
-            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+    if func == 'captcha' and not rest:
+        enabled, ctype, behavior = get_captcha_settings(chat_id)
+        kb = [
+            [InlineKeyboardButton(
+                f"{'✅ ' if enabled else ''}{tr('Aktiviert', lang) if enabled else tr('Deaktiviert', lang)}",
+                callback_data=f"{chat_id}_captcha_toggle"
+            )],
+            [InlineKeyboardButton(
+                f"{'✅ ' if ctype=='button' else ''}{tr('Button', lang)}",
+                callback_data=f"{chat_id}_captcha_type_button"
+            )],
+            [InlineKeyboardButton(
+                f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe', lang)}",
+                callback_data=f"{chat_id}_captcha_type_math"
+            )],
+            [InlineKeyboardButton(
+                f"{'✅ ' if behavior=='kick' else ''}{tr('Kick', lang)}",
+                callback_data=f"{chat_id}_captcha_behavior_kick"
+            )],
+            [InlineKeyboardButton(
+                f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout', lang)}",
+                callback_data=f"{chat_id}_captcha_behavior_timeout"
+            )],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{chat_id}_captcha_back")]
+        ]
+        await query.edit_message_text(
+            tr('🔐 Captcha-Einstellungen', lang),
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    # Aktionen: toggle, back
+    if func == 'captcha' and rest:
+        action = rest[0]
+        if action == 'toggle':
+            curr, ctype, behavior = get_captcha_settings(chat_id)
+            set_captcha_settings(chat_id, not curr, ctype, behavior)
+            await query.answer(tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}", lang), show_alert=True)
+            return await menu_callback(update, context)
+        if action == 'back':
+            return await show_group_menu(query, chat_id)
+
+    # Aktionen: type & behavior
+    if func == 'captcha' and len(rest) == 2:
+        category, value = rest
+        enabled, ctype, behavior = get_captcha_settings(chat_id)
+        if category == 'type':  # button/math
+            set_captcha_settings(chat_id, enabled, value, behavior)
+            await query.answer(tr(f"Captcha-Typ gesetzt: {tr('Button', lang) if value=='button' else tr('Rechenaufgabe', lang)}", lang), show_alert=True)
+        elif category == 'behavior':  # kick/timeout
+            set_captcha_settings(chat_id, enabled, ctype, value)
+            await query.answer(tr(f"Captcha-Verhalten gesetzt: {tr('Kick', lang) if value=='kick' else tr('Timeout', lang)}", lang), show_alert=True)
+        return await menu_callback(update, context)
 
     # 3) Detail-Handler (Action-Blocks)
     parts_full = data.split("_")
@@ -402,3 +430,4 @@ async def menu_callback(update, context):
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^\d+_captcha'))

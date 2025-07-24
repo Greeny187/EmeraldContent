@@ -5,7 +5,7 @@ import logging
 import random, datetime
 from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings)
@@ -439,6 +439,45 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
     await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
 
+# Callback-Handler für Button-Captcha
+async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    chat_id_str, _, _, user_id_str = query.data.split("_")
+    chat_id, user_id = int(chat_id_str), int(user_id_str)
+
+    # Bot bestätigen
+    await query.answer("Verifiziert! Willkommen.", show_alert=True)
+    # Hier könnte man z.B. eine Rolle vergeben oder weitere Aktionen ausführen
+    # Anschließend Fehlversuche/Timeout-Cleanup implementieren
+
+# Message-Handler für Mathe-Antworten
+async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat_id = msg.chat_id
+    user_id = msg.from_user.id
+    key = f"captcha_{chat_id}_{user_id}"
+    if key not in context.user_data:
+        return
+    data = context.user_data[key]
+    # Zeitlimit prüfen (z.B. 60 Sekunden)
+    if (datetime.datetime.utcnow() - data['issued_at']).seconds > 60:
+        # Timeout: Verhalten ausführen (kick/mute)
+        # ...
+        del context.user_data[key]
+        return
+    # Antwort prüfen
+    try:
+        if int(msg.text.strip()) == data['answer']:
+            await context.bot.send_message(chat_id, f"✅ Richtig, willkommen! {msg.from_user.first_name}")
+        else:
+            # Falsche Antwort: Verhalten ausführen
+            # ...
+            del context.user_data[key]
+    except ValueError:
+        # Ungültige Eingabe
+        pass
+
+
 def register_handlers(app):
 
     app.add_handler(CommandHandler("start", start))
@@ -462,3 +501,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=1)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, track_members))
+    app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
+    app.add_handler(MessageHandler(filters.FORCE_REPLY & filters.ChatType.GROUPS, math_captcha_handler))
