@@ -51,33 +51,34 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
             conn = _db_pool.getconn()
             conn.autocommit = True
             with conn.cursor() as cur:
-                # group_settings updaten
-                cur.execute("""
+                # 1) group_settings updaten (inkl. last_active)
+                cur.execute(
+                    """
                     UPDATE group_settings
-                    SET title=%s, description=%s, member_count=%s, admin_count=%s, topic_count=%s, bot_count=%s
-                    WHERE chat_id=%s
-                """, (title, description, members, admins, topics, bots, chat_id))
+                       SET title = %s,
+                           description = %s,
+                           member_count  = %s,
+                           admin_count   = %s,
+                           topic_count   = %s,
+                           bot_count     = %s,
+                           last_active   = NOW()
+                     WHERE chat_id = %s;
+                    """,
+                    (title, description, members, admins, topics, bots, chat_id)
+                )
 
-                # daily_stats wie gehabt
-                cur.execute("""
-                    INSERT INTO daily_stats (chat_id, stat_date, members, admins, topics, bots, description)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                # 2) daily_stats Tabelle aktualisieren
+                cur.execute(
+                    """
+                    INSERT INTO daily_stats (chat_id, stat_date, members, admins)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (chat_id, stat_date)
                     DO UPDATE SET
                         members = EXCLUDED.members,
-                        admins = EXCLUDED.admins,
-                        topics = EXCLUDED.topics,
-                        bots = EXCLUDED.bots,
-                        description = EXCLUDED.description;
-                """, (
-                    chat_id,
-                    date.today(),
-                    members,
-                    admins,
-                    topics,
-                    bots,
-                    description
-                ))
+                        admins  = EXCLUDED.admins;
+                    """,
+                    (chat_id, date.today(), members, admins)
+                )
             _db_pool.putconn(conn)
         except Exception as e:
             logger.error(f"Fehler beim Abfragen von {username}: {e}")

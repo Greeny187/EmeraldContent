@@ -11,6 +11,7 @@ from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import _with_cursor, _db_pool
+from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
 
@@ -700,7 +701,7 @@ async def stats_dev_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Stats-Command ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- Ermitteln der Ziel-Gruppe und des Zeitfensters ---
+    # Parameter verarbeiten
     group_id = context.user_data.pop("stats_group_id", None)
     args     = context.args or []
     params   = {k: v for arg in args if "=" in arg for k, v in [arg.split("=", 1)]}
@@ -708,35 +709,54 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = int(params.get("group", update.effective_chat.id))
     m = re.match(r"(\d+)([dw])", params.get("range", "7d"))
     days = int(m.group(1)) * (7 if m and m.group(2) == "w" else 1) if m else 7
+    # Ziel-Sprache für Übersetzung (Standard: Deutsch)
+    target_lang = params.get("lang", "de")
 
-    # --- Basis-Statistiken für die ausgewählte Gruppe ---
-    msg_stats   = await fetch_message_stats(group_id, days)
-    resp_times  = await compute_response_times(group_id, days)
-    media_stats = await fetch_media_and_poll_stats(group_id, days)
+    # Zeitfenster berechnen
+    end = datetime.utcnow()
+    start = end - timedelta(days=days)
 
-    # --- Sentiment-Analyse nur der letzten 10 Texte dieser Gruppe ---
-    texts = []
-    since = datetime.utcnow() - timedelta(days=days)
-    async for msg in telethon_client.iter_messages(group_id, offset_date=since, limit=10):
-        if msg.text:
-            texts.append(msg.text)
-    sentiment = await analyze_sentiment(texts) if texts else "Keine Nachrichten zum Analysieren"
+    # 1) Message-Insights
+    insights = get_message_insights(group_id, start, end)
+    # 2) Engagement
+    engage   = get_engagement_metrics(group_id, start, end)
+    # 3) Aktive Nutzer
+    active_users = get_active_users_count(group_id, start, end)
+    # 4) Befehlsnutzung
+    command_usage = get_command_usage(group_id, start, end)
+    cmd_lines = [f"{cmd}: {cnt}" for cmd, cnt in command_usage]
+    # 5) Aktivität nach Wochentag
+    weekday_stats = get_activity_by_weekday(group_id, start, end)
+    weekday_map = {0: 'Mo',1:'Di',2:'Mi',3:'Do',4:'Fr',5:'Sa',6:'So'}
+    day_lines = [f"{weekday_map[int(dow)]}: {total}" for dow, total in weekday_stats]
+    # 6) Mitglieder-Stats
+    members = get_member_stats(group_id, start)
 
-    # --- Ausgabe zusammenbauen und senden ---
-    avg = resp_times.get('average_response_s')
-    med = resp_times.get('median_response_s')
-    avg_str = f"{avg:.1f}s" if avg is not None else "Keine Daten verfügbar"
-    med_str = f"{med:.1f}s" if med is not None else "Keine Daten verfügbar"
+    # Formatierung (Basis-Sprache: Deutsch)
+    avg = engage.get('avg_delay_s')
+    rate = engage.get('reply_rate_pct')
+    avg_str = f"{avg:.1f}s" if avg is not None else "–"
+    rate_str = f"{rate:.1f}%" if rate is not None else "–"
 
-    output = [
-        f"📊 *Statistiken für Gruppe `{group_id}` (letzte {days} Tage)*",
-        f"• Nachrichten gesamt: {msg_stats['total']}",
-        f"• Top 3 Absender: " + ", ".join(str(u) for u,_ in msg_stats["by_user"].most_common(3)),
-        f"• Reaktionszeit Ø/Med: {avg_str} / {med_str}",
-        f"• Medien: " + ", ".join(f"{k}={v}" for k,v in media_stats.items()),
-        f"• Stimmung (GPT): {sentiment}"
+    lines = [
+        f"Statistiken für Gruppe {group_id} (letzte {days} Tage)",
+        f"Aktive Nutzer: {active_users}",
+        f"Nachrichten gesamt: {insights['total']}",
+        f"Fotos: {insights['photo']}, Videos: {insights['video']}, Sticker: {insights['sticker']}",
+        f"Voice: {insights['voice']}, Location: {insights['location']}, Polls: {insights['polls']}",
+        f"Antwort-Rate: {rate_str}, Ø-Delay: {avg_str}",
+        "Aktivität nach Wochentag: " + ", ".join(day_lines),
+        "Top-Befehle: " + ", ".join(cmd_lines[:5]) if cmd_lines else "Keine Befehle verwendet",  
+        f"Neu beigetreten: {members['new']}, Verlassen: {members['left']}, Inaktiv: {members['inactive']}"
     ]
-    await update.effective_message.reply_text("\n".join(output), parse_mode="Markdown")
+    # Zusammenführen
+    text = "\n".join(lines)
+    # Übersetzen wenn nötig
+    if target_lang and target_lang != "de":
+        text = translate_hybrid(text, target_lang)
+
+    await update.effective_message.reply_text(text, parse_mode="Markdown")
+
 
 async def get_group_meta(chat_id: int) -> dict:
     meta = {

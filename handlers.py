@@ -28,7 +28,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
-        return await update.message.reply_text("✅ Gruppe registriert! Geh privat auf /menu.")
+        return await update.message.reply_text(
+            "👋 Willkommen bei *Greeny Group Manager*!\n\n"
+            "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten – "
+            "inklusive Schutz, Statistiken, Rollenverwaltung, Captcha u.v.m.\n\n"
+            "🌐 Mehr Infos: [Zur Website](https://greeny187.github.io/GreenyManagementBots/)\n\n"
+            "💚 *Unterstütze das Projekt:*\n"
+            "• TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
+            "• PayPal: greeny187@outlook.de\n\n"
+            "ℹ️ Tippe /help für alle Funktionen.\n\n"
+            "✅ Gruppe registriert! Geh privat auf /menu.")
 
     if chat.type == "private":
         all_groups = get_registered_groups()
@@ -508,6 +517,5 @@ def register_handlers(app):
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, track_members))
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))
