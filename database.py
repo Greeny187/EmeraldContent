@@ -86,7 +86,11 @@ def init_db(cur):
             language_code TEXT NOT NULL DEFAULT 'de',
             captcha_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             captcha_type TEXT NOT NULL DEFAULT 'button',
-            captcha_behavior TEXT NOT NULL DEFAULT 'kick'
+            captcha_behavior TEXT NOT NULL DEFAULT 'kick',
+            link_protection_enabled  BOOLEAN NOT NULL DEFAULT FALSE,
+            link_warning_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
+            link_warning_text        TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
+            link_exceptions_enabled  BOOLEAN NOT NULL DEFAULT TRUE
         );
         """
     )
@@ -290,6 +294,41 @@ def has_topic(cur, chat_id: int, user_id: int) -> bool:
 def get_topic_owners(cur, chat_id: int) -> List[int]:
     cur.execute("SELECT user_id FROM user_topics WHERE chat_id = %s;", (chat_id,))
     return [row[0] for row in cur.fetchall()]
+
+@_with_cursor
+def get_link_settings(cur, chat_id: int) -> Tuple[bool, bool, str, bool]:
+    cur.execute("""
+        SELECT link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled
+        FROM group_settings WHERE chat_id=%s;
+    """, (chat_id,))
+    row = cur.fetchone()
+    # falls chat_id noch nicht existiert, Default-Werte zurückgeben
+    return row if row else (False, False,
+                             '⚠️ Nur Admins dürfen Links posten.',
+                             True)
+
+@_with_cursor
+def set_link_settings(cur, chat_id: int,
+                      protection: bool = None,
+                      warning_on: bool = None,
+                      warning_text: str = None,
+                      exceptions_on: bool = None):
+    # Baue dynamisches UPDATE
+    parts, params = [], []
+    if protection is not None:
+        parts.append("link_protection_enabled = %s");   params.append(protection)
+    if warning_on is not None:
+        parts.append("link_warning_enabled = %s");      params.append(warning_on)
+    if warning_text is not None:
+        parts.append("link_warning_text = %s");         params.append(warning_text)
+    if exceptions_on is not None:
+        parts.append("link_exceptions_enabled = %s");   params.append(exceptions_on)
+    if not parts:
+        return
+    sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET "
+    sql += ", ".join(parts)
+    params = [chat_id] + params
+    cur.execute(sql, params)
 
 # --- Daily Stats ---
 @_with_cursor
@@ -569,6 +608,13 @@ def migrate_db():
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_behavior TEXT NOT NULL DEFAULT 'kick';"
         )
+        cur.execute("""
+        ALTER TABLE group_settings
+        ADD COLUMN IF NOT EXISTS link_protection_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS link_warning_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS link_warning_text       TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
+        ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    """)
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
     except Exception as e:
