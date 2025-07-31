@@ -1,79 +1,52 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler
 from database import (
-    get_registered_groups,
-    get_welcome, set_welcome, delete_welcome, get_rss_topic, set_group_language, get_group_language,
-    get_rules, set_rules, delete_rules, get_captcha_settings, set_captcha_settings, 
-    get_farewell, set_farewell, delete_farewell,
-    list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    get_topic_owners,
-    is_daily_stats_enabled,  # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
-    set_daily_stats,         # *** ÄNDERUNG: hinzugefügt für Toggle-Logik ***
-    get_mood_question       # *** ÄNDERUNG: hinzugefügt für dynamische Mood-Frage ***
+    get_registered_groups, get_welcome, set_welcome, delete_welcome,
+    get_rules, set_rules, delete_rules, get_captcha_settings,
+    set_captcha_settings, get_farewell, set_farewell, delete_farewell,
+    get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
+    get_topic_owners, is_daily_stats_enabled, set_daily_stats,
+    get_group_language, set_group_language, get_group_language as get_lang
 )
-from statistic import stats_command
+from statistic import stats_command, export_stats_csv_command, stats_dev_command
 from utils import clean_delete_accounts_for_chat, tr
 from user_manual import HELP_TEXT
 from access import get_visible_groups
-import logging
-import statistic
+import logging, re
 
 logger = logging.getLogger(__name__)
 
 # Sprachoptionen
 LANGUAGES = {
-    'de': 'Deutsch',
-    'en': 'English',
-    'es': 'Español',
-    'fr': 'Français',
-    'it': 'Italiano',
-    'ru': 'Русский'
+    'de': 'Deutsch', 'en': 'English', 'es': 'Español',
+    'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-# Manuelle Übersetzungs-Overrides für Menü-Labels
-MENU_OVERRIDES = {
-    'Linksperre': {
-        'en': 'Link restrictions',
-        'es': 'Bloqueo de enlaces',
-        'fr': 'Blocage des liens'
-    }
-}
-
-def translate_label(text: str, lang: str) -> str:
-    """
-    Übersetzt Menü-Label: nutzt manuelle Overrides, ansonsten tr().
-    """
-    if text in MENU_OVERRIDES and lang in MENU_OVERRIDES[text]:
-        return MENU_OVERRIDES[text][lang]
-    return tr(text, lang)
-
+# Menü-Oberfläche: Zwei Spalten
 async def show_group_menu(query_or_update, chat_id: int):
-    # Sprache der Gruppe
     lang = get_group_language(chat_id) or 'de'
-    # Menü-Buttons
-    keyboard = [
-        [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome")],
-        [InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{chat_id}_captcha")],
-        [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{chat_id}_rules")],
-        [InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{chat_id}_farewell")],
-        [InlineKeyboardButton(tr('Linksperre', lang), callback_data=f"{chat_id}_exceptions")],
-        [InlineKeyboardButton(tr('RSS', lang), callback_data=f"{chat_id}_rss")],
-        [InlineKeyboardButton(tr('🗑 Gelöschte Accounts entfernen', lang), callback_data=f"{chat_id}_clean_delete")],
-        [InlineKeyboardButton(tr('📊 Statistiken anzeigen', lang), callback_data=f"{chat_id}_stats")],
-        [InlineKeyboardButton(tr('📥 Export CSV', lang),    callback_data=f"{chat_id}_stats_export")],
-        [InlineKeyboardButton(
-            tr('📊 Tagesstatistik {status}', lang).format(status=tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)),
-            callback_data=f"{chat_id}_toggle_stats"
-        )],
-        [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{chat_id}_edit_mood_q")],
-        [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{chat_id}_language")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help")],
-        [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
-    ]
-    title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
-    markup = InlineKeyboardMarkup(keyboard)
+    status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
 
-    # Sende oder aktualisiere Nachricht
+    buttons = [
+        [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome"),
+         InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{chat_id}_captcha")],
+        [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{chat_id}_rules"),
+         InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{chat_id}_farewell")],
+        [InlineKeyboardButton(tr('Linksperre', lang), callback_data=f"{chat_id}_exceptions"),
+         InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{chat_id}_rss")],
+        [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{chat_id}_clean_delete"),
+         InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{chat_id}_stats")],
+        [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{chat_id}_stats_export"),
+         InlineKeyboardButton(tr('📊 Tagesstatistik {status}', lang).format(status=status), callback_data=f"{chat_id}_toggle_stats")],
+        [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{chat_id}_edit_mood_q"),
+         InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{chat_id}_language")],
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
+         InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
+    ]
+
+    title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
+    markup = InlineKeyboardMarkup(buttons)
+
     if hasattr(query_or_update, 'edit_message_text'):
         await query_or_update.edit_message_text(title, reply_markup=markup)
     elif hasattr(query_or_update, 'message'):
@@ -81,344 +54,164 @@ async def show_group_menu(query_or_update, chat_id: int):
     else:
         await query_or_update.reply_text(title, reply_markup=markup)
 
+
 async def menu_callback(update, context):
     query = update.callback_query
     data = query.data
-
-    # 0) Zurück zum Hauptmenü: "group_<chat_id>"
+    # 1) Gruppen-Auswahl
+    if data == 'group_select':
+        groups = get_visible_groups(context.bot, query.from_user.id)
+        buttons = [[InlineKeyboardButton(str(cid), callback_data=f"group_{cid}")] for cid in groups]
+        return await query.edit_message_text('Wähle Gruppe:', reply_markup=InlineKeyboardMarkup(buttons))
     if data.startswith('group_'):
-        _, chat_id_str = data.split('_', 1)
-        chat_id = int(chat_id_str)
-        return await show_group_menu(query, chat_id)
+        return await show_group_menu(query, int(data.split('_',1)[1]))
 
-    # 1) Alle anderen: "<chat_id>_<func>[_...]" 
-    parts = data.split('_')
-    chat_id_str, func, *rest = parts
-    # Hier kommt kein 'group' mehr, weil es vorher abgefangen wurde
-    chat_id = int(chat_id_str)
-    lang = get_group_language(chat_id)
-    
-    # Statistik-Button: nur Gruppen-Stats
-    if query.data and query.data.endswith("_stats"):
-        # Beispiel: data = "-1001234567890_stats"
-        group_id_str, _ = query.data.split("_", 1)
-        # Temporär in context.params speichern
-        context.user_data["stats_group_id"] = int(group_id_str)
+    # 2) Exakte Callback-Muster
+    if re.match(r'^\d+_toggle_stats$', data):
+        cid = int(data.split('_',1)[0])
+        cur = is_daily_stats_enabled(cid)
+        set_daily_stats(cid, not cur)
+        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", get_lang(cid)), show_alert=True)
+        return await show_group_menu(query, cid)
+    if re.match(r'^\d+_stats_export$', data):
+        return await export_stats_csv_command(update, context)
+    if re.match(r'^\d+_stats_dev$', data):
+        return await stats_dev_command(update, context)
+    if re.match(r'^\d+_stats$', data):
+        context.user_data['stats_group_id'] = int(data.split('_',1)[0])
         return await stats_command(update, context)
-    
-    if data.endswith("_stats_export"):
-        return await statistic.export_stats_csv_command(update, context)
-
-    if data.endswith("_stats_dev"):
-        return await statistic.stats_dev_command(update, context)
-    
-    if data.endswith("_toggle_stats"):
-        chat_id = int(data.split("_",1)[0])
-        current = is_daily_stats_enabled(chat_id)
-        set_daily_stats(chat_id, not current)
-        await query.answer(f"Tagesstatistik {'aktiviert' if not current else 'deaktiviert'}", show_alert=True)
-        return await show_group_menu(query, chat_id)
-
-    if data.endswith("_edit_mood_q"):
-        chat_id = int(data.split("_",1)[0])
-        context.user_data["awaiting_mood_question"] = True
-        context.user_data["mood_group_id"] = chat_id
-        return await query.message.reply_text(
-            "Bitte sende deine neue Mood-Frage:", reply_markup=ForceReply(selective=True)
-        )
-
-    if data == "help":
+    if re.match(r'^\d+_edit_mood_q$', data):
+        cid = int(data.split('_',1)[0])
+        context.user_data.update(awaiting_mood_question=True, mood_group_id=cid)
+        return await query.message.reply_text('Bitte sende deine neue Mood-Frage:', reply_markup=ForceReply(selective=True))
+    if data == 'help':
         return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
 
-    # Sub-Menüs: welcome, rules, farewell, rss, exceptions
-    parts = data.split("_", 1)
-    if len(parts) == 2 and parts[1] in ("welcome","rules","farewell","rss","exceptions","captcha"):
-        chat_id_str, func = parts
-        chat_id = int(chat_id_str)
-        back_main = InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Hauptmenü", callback_data=f"group_{chat_id}")]])
+    # 3) Submenüs: welcome, rules, farewell, rss, exceptions, captcha
+    # Splitting data into cid, func, [action]
+    parts = data.split('_',2)
+    if len(parts) >= 2 and parts[1] in ('welcome','rules','farewell','rss','exceptions','captcha','language'):
+        cid = int(parts[0])
+        func = parts[1]
+        sub = parts[2] if len(parts)>=3 else None
+        lang = get_lang(cid)
+        back = InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f'group_{cid}')]])
 
-        if func in ("welcome", "rules", "farewell"):
+        # Welcome/Rules/Farewell Menü
+        if func in ('welcome','rules','farewell') and not sub:
             kb = [
-                [InlineKeyboardButton(translate_label('Bearbeiten', lang), callback_data=f"{chat_id}_{func}_edit")],
-                [InlineKeyboardButton(translate_label('Anzeigen', lang), callback_data=f"{chat_id}_{func}_show")],
-                [InlineKeyboardButton(translate_label('Löschen', lang), callback_data=f"{chat_id}_{func}_delete")],
-                [InlineKeyboardButton(translate_label('⬅ Hauptmenü', lang), callback_data=f"group_{chat_id}")]
+                [InlineKeyboardButton(tr('Bearbeiten', lang), callback_data=f"{cid}_{func}_edit"),
+                 InlineKeyboardButton(tr('Anzeigen', lang), callback_data=f"{cid}_{func}_show")],
+                [InlineKeyboardButton(tr('Löschen', lang), callback_data=f"{cid}_{func}_delete")],
+                [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
             ]
-            text = tr(f"⚙ {func.capitalize()} verwalten:", lang)
-            markup = InlineKeyboardMarkup(kb)
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(text, reply_markup=markup)
-            else:
-                await query.edit_message_text(text, reply_markup=markup)
-            return
+            text = tr(f"⚙️ {func.capitalize()} verwalten:", lang)
+            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-        if func == "rss":
+        # RSS Menü
+        if func == 'rss' and not sub:
             kb = [
-                [InlineKeyboardButton(translate_label('Auflisten', lang),    callback_data=f"{chat_id}_rss_list")],
-                [InlineKeyboardButton(translate_label('Feed hinzufügen', lang), callback_data=f"{chat_id}_rss_setrss")],
-                [InlineKeyboardButton(translate_label('Stoppen', lang),      callback_data=f"{chat_id}_rss_stop")],
-                [InlineKeyboardButton(translate_label('⬅ Hauptmenü', lang),   callback_data=f"group_{chat_id}")]
+                [InlineKeyboardButton(tr('Auflisten', lang), callback_data=f"{cid}_rss_list"),
+                 InlineKeyboardButton(tr('Feed hinzufügen', lang), callback_data=f"{cid}_rss_setrss")],
+                [InlineKeyboardButton(tr('Stoppen', lang), callback_data=f"{cid}_rss_stop")],
+                [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
             ]
             text = tr('📰 RSS verwalten', lang)
-            markup = InlineKeyboardMarkup(kb)
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(text, reply_markup=markup)
-            else:
-                await query.edit_message_text(text, reply_markup=markup)
-            return
+            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-        if func == "exceptions":
-            admins = await context.bot.get_chat_administrators(chat_id)
-            admin_names = [f"@{a.user.username}" if a.user.username else a.user.first_name for a in admins]
-            owner = next((a for a in admins if a.status == "creator"), None)
-            owner_name = f"@{owner.user.username}" if owner and owner.user.username else (owner.user.first_name if owner else "–")
-            topic_ids = get_topic_owners(chat_id)
-            topic_names = []
-            for uid in topic_ids:
-                try:
-                    m = await context.bot.get_chat_member(chat_id, uid)
-                    topic_names.append(f"@{m.user.username}" if m.user.username else m.user.first_name)
-                except:
-                    continue
-            lines = ["🔓 Ausnahmen der Link-Sperre:"]
-            lines.append(f"- Administratoren: {', '.join(admin_names)}")
-            lines.append(f"- Inhaber: {owner_name}")
-            lines.append(f"- Themenbesitzer: {', '.join(topic_names) if topic_names else '(keine)'}")
-            text = "\n".join(lines)
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(text, reply_markup=back_main)
-            else:
-                await query.edit_message_text(text, reply_markup=back_main)
-            return
+        # Exceptions Menü
+        if func == 'exceptions' and not sub:
+            admins = await context.bot.get_chat_administrators(cid)
+            names = [f"@{a.user.username}" if a.user.username else a.user.first_name for a in admins]
+            owners = get_topic_owners(cid)
+            text = '🔓 Ausnahmen der Link-Sperre:\n' + \
+                   f"- Admins: {', '.join(names)}\n" + \
+                   f"- Themenbesitzer: {', '.join(str(o) for o in owners) or '(keine)'}"
+            return await query.edit_message_text(text, reply_markup=back)
 
-    if func == 'captcha' and not rest:
-        enabled, ctype, behavior = get_captcha_settings(chat_id)
-        kb = [
-            [InlineKeyboardButton(
-                f"{'✅ ' if enabled else ''}{tr('Aktiviert', lang) if enabled else tr('Deaktiviert', lang)}",
-                callback_data=f"{chat_id}_captcha_toggle"
-            )],
-            [InlineKeyboardButton(
-                f"{'✅ ' if ctype=='button' else ''}{tr('Button', lang)}",
-                callback_data=f"{chat_id}_captcha_type_button"
-            )],
-            [InlineKeyboardButton(
-                f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe', lang)}",
-                callback_data=f"{chat_id}_captcha_type_math"
-            )],
-            [InlineKeyboardButton(
-                f"{'✅ ' if behavior=='kick' else ''}{tr('Kick', lang)}",
-                callback_data=f"{chat_id}_captcha_behavior_kick"
-            )],
-            [InlineKeyboardButton(
-                f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout', lang)}",
-                callback_data=f"{chat_id}_captcha_behavior_timeout"
-            )],
-            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{chat_id}_captcha_back")]
-        ]
-        return await query.edit_message_text(
-            tr('🔐 Captcha-Einstellungen',lang),
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+        # Captcha Menü
+        if func == 'captcha' and not sub:
+            en, ctype, behavior = get_captcha_settings(cid)
+            kb = [
+                [InlineKeyboardButton(f"{'✅ ' if en else ''}{tr('Aktiviert', lang) if en else tr('Deaktiviert', lang)}", callback_data=f"{cid}_captcha_toggle")],
+                [InlineKeyboardButton(f"{'✅ ' if ctype=='button' else ''}{tr('Button', lang)}", callback_data=f"{cid}_captcha_type_button"),
+                 InlineKeyboardButton(f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe', lang)}", callback_data=f"{cid}_captcha_type_math")],
+                [InlineKeyboardButton(f"{'✅ ' if behavior=='kick' else ''}{tr('Kick', lang)}", callback_data=f"{cid}_captcha_behavior_kick"),
+                 InlineKeyboardButton(f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout', lang)}", callback_data=f"{cid}_captcha_behavior_timeout")],
+                [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+            ]
+            return await query.edit_message_text(tr('🔐 Captcha-Einstellungen', lang), reply_markup=InlineKeyboardMarkup(kb))
 
-    # 3) Toggle / Zurück
-    if func == 'captcha' and rest and rest[0] in ('toggle','back'):
-        action = rest[0]
-        curr, ctype, behavior = get_captcha_settings(chat_id)
-        if action == 'toggle':
-            set_captcha_settings(chat_id, not curr, ctype, behavior)
-            await query.answer(
-                tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}",lang),
-                show_alert=True
-            )
-            # Submenü neu anzeigen (ohne Rekursion)
-            return await show_group_menu(query, chat_id)
+    # 4) Detail-Handler Actions (edit/show/delete etc.)
+    parts = data.split('_')
+    if len(parts) == 3:
+        cid, func, action = parts
+        cid = int(cid)
+        back = InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f"{cid}_{func}")]])
+        get_map = {'welcome': get_welcome, 'rules': get_rules, 'farewell': get_farewell}
+        set_map = {'welcome': set_welcome, 'rules': set_rules, 'farewell': set_farewell}
+        del_map = {'welcome': delete_welcome, 'rules': delete_rules, 'farewell': delete_farewell}
 
-    # 4) Typ / Verhalten setzen
-    if func == 'captcha' and len(rest) == 2:
-        category, value = rest
-        enabled, ctype, behavior = get_captcha_settings(chat_id)
-        if category == 'type':
-            set_captcha_settings(chat_id, enabled, value, behavior)
-            await query.answer(
-                tr(f"Captcha-Typ gesetzt: {tr('Button',lang) if value=='button' else tr('Rechenaufgabe',lang)}",lang),
-                show_alert=True
-            )
-        elif category == 'behavior':
-            set_captcha_settings(chat_id, enabled, ctype, value)
-            await query.answer(
-                tr(f"Captcha-Verhalten gesetzt: {tr('Kick',lang) if value=='kick' else tr('Timeout',lang)}",lang),
-                show_alert=True
-            )
-        return await show_group_menu(query, chat_id)
+        # Inhalte zeigen oder löschen oder editieren
+        if action == 'show' and func in get_map:
+            rec = get_map[func](cid)
+            text = rec[1] if rec else f"Keine {func}-Nachricht gesetzt."
+            return await query.edit_message_text(text, reply_markup=back)
+        if action == 'delete' and func in del_map:
+            del_map[func](cid)
+            await query.answer(tr(f"✅ {func.capitalize()} gelöscht.", get_lang(cid)), show_alert=True)
+            return await query.edit_message_text(tr(f"{func.capitalize()} entfernt.", get_lang(cid)), reply_markup=back)
+        if action == 'edit' and func in set_map:
+            context.user_data['last_edit'] = (cid, f"{func}_edit")
+            return await query.edit_message_text(f"✏️ Sende nun das neue {func}:", reply_markup=back)
 
-    # 3) Detail-Handler (Action-Blocks)
-    parts_full = data.split("_")
-    if len(parts_full) == 4:
-        chat_id, func, action = parts_full
-        chat_id_str, func, category, value = parts_full
-        chat_id = int(chat_id)
-        back_func = InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Zurück", callback_data=f"{chat_id}_{func}")]])
+    # 5) RSS-Detail
+    if data.endswith('_rss_setrss'):
+        cid = int(data.split('_',1)[0])
+        if not get_rss_topic(cid):
+            await query.answer('❗ Kein RSS-Topic gesetzt.', show_alert=True)
+            return await show_group_menu(query, cid)
+        context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
+        await query.answer()
+        return await query.edit_message_text('➡ Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
+    if data.endswith('_rss_list'):
+        cid = int(data.split('_',1)[0])
+        feeds = db_list_rss_feeds(cid)
+        text = 'Keine RSS-Feeds.' if not feeds else 'Aktive Feeds:\n' + '\n'.join(feeds)
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f'group_{cid}')]]))
+    if data.endswith('_rss_stop'):
+        cid = int(data.split('_',1)[0])
+        remove_rss_feed(cid)
+        await query.answer('✅ RSS gestoppt', show_alert=True)
+        return await show_group_menu(query, cid)
 
-        # Welcome/Rules/Farewell mappings
-        get_map = {"welcome": get_welcome, "rules": get_rules, "farewell": get_farewell}
-        set_map = {"welcome": set_welcome, "rules": set_rules, "farewell": set_farewell}
-        del_map = {"welcome": delete_welcome, "rules": delete_rules, "farewell": delete_farewell}
+    # 6) Gelöschte Accounts entfernen
+    if data.endswith('_clean_delete'):
+        cid = int(data.split('_',1)[0])
+        await query.answer('⏳ Bereinige…')
+        removed = await clean_delete_accounts_for_chat(cid, context.bot)
+        text = f"✅ {removed} Accounts entfernt."
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f'group_{cid}')]]))
 
-        # Show
-        if action == "show" and func in get_map:
-            rec = get_map[func](chat_id)
-            if not rec:
-                msg = f"Keine {func}-Nachricht gesetzt."
-                if query.message.photo or query.message.caption:
-                    await query.edit_message_caption(msg, reply_markup=back_func)
-                else:
-                    await query.edit_message_text(msg, reply_markup=back_func)
-            else:
-                pid, txt = rec
-                if pid:
-                    await query.edit_message_media(InputMediaPhoto(pid, caption=txt or ""), reply_markup=back_func)
-                else:
-                    if query.message.photo or query.message.caption:
-                        await query.edit_message_caption(txt or "(kein Text)", reply_markup=back_func)
-                    else:
-                        await query.edit_message_text(txt or "(kein Text)", reply_markup=back_func)
-            return
-
-        # Delete
-        if action == "delete" and func in del_map:
-            del_map[func](chat_id)
-            msg = f"✅ {func.capitalize()} gelöscht."
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(msg, reply_markup=back_func)
-            else:
-                await query.edit_message_text(msg, reply_markup=back_func)
-            return
-
-        # Edit
-        if action == "edit" and func in set_map:
-            context.user_data["last_edit"] = (chat_id, f"{func}_edit")
-            prompt = f"✏️ Sende nun das neue {func}"
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(prompt, reply_markup=back_func)
-            else:
-                await query.edit_message_text(prompt, reply_markup=back_func)
-            return
-
-        # RSS «Feed hinzufügen» aus Menü
-        if func == "rss" and action == "setrss":
-        # prüfen, ob ein RSS-Topic gesetzt ist
-            topic_id = get_rss_topic(chat_id)
-            if not topic_id:
-                # kein Topic → Fehlermeldung und zurück zum Menü
-                await query.answer(
-                    "❗ Kein RSS-Topic gesetzt. Bitte setze zuerst ein Thema.", 
-                    show_alert=True
-                )
-                return await show_group_menu(query, chat_id)
-            # Topic vorhanden → URL-Eingabe anfordern
-            context.user_data["awaiting_rss_url"] = True
-            context.user_data["rss_group_id"] = int(chat_id)
-            # 1) Callback bestätigen (optional, aber empfehlenswert)
-            await query.answer()
-            # 2) Inline-Buttons entfernen
-            await query.edit_message_reply_markup(reply_markup=None)
-            # 3) Neue Nachricht mit ForceReply senden
-            await query.message.reply_text(
-                "➡ Bitte sende jetzt die RSS-URL für dieses Thema:",
-                reply_markup=ForceReply(selective=True)
-            )
-            return
-
-        # RSS List
-        if func == "rss" and action == "list":
-            feeds = db_list_rss_feeds(chat_id)
-            if not feeds:
-                text = "Keine RSS-Feeds gesetzt."
-            else:
-                text = "Aktive RSS-Feeds:\n" + "\n".join(f"- {url} (Topic {tid})" for url, tid in feeds)
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(text, reply_markup=back_func)
-            else:
-                await query.edit_message_text(text, reply_markup=back_func)
-            return
-
-        # RSS Stop
-        if func == "rss" and action == "stop":
-            remove_rss_feed(chat_id)
-            msg = "✅ Alle RSS-Feeds entfernt."
-            if query.message.photo or query.message.caption:
-                await query.edit_message_caption(msg, reply_markup=back_func)
-            else:
-                await query.edit_message_text(msg, reply_markup=back_func)
-            return 
-
-        # Klick auf "🗑 Gelöschte Accounts entfernen"
-        if data.endswith("_clean_delete"):
-            chat_id = int(data.split("_", 1)[0])
-
-            # 1) Callback sofort bestätigen, damit er nicht abläuft
-            await query.answer(text="⏳ Entferne gelöschte Accounts…")
-
-            # 2) Cleanup ausführen und Zahl der entfernten Accounts ermitteln
-            removed_count = await clean_delete_accounts_for_chat(chat_id, context.bot)
-
-            # 3) Ergebnis in der Message anzeigen (und Tastatur beibehalten)
-            await query.edit_message_text(
-                text=f"✅ In Gruppe {chat_id} wurden {removed_count} gelöschte Accounts entfernt.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{chat_id}")]
-                ])
-            )
-            return
-        
-        # Captcha-Typ und Verhalten setzen
-        if func == "captcha":
-            if category == "type":
-                enabled, _, behavior = get_captcha_settings(chat_id)
-                set_captcha_settings(chat_id, enabled, value, behavior)
-                await query.answer(tr(
-                    f"Captcha-Typ gesetzt: {tr('Button',lang) if value=='button' else tr('Rechenaufgabe',lang)}",
-                    lang), show_alert=True)
-                return await menu_callback(update, context)
-            if category == "behavior":
-                enabled, ctype, _ = get_captcha_settings(chat_id)
-                set_captcha_settings(chat_id, enabled, ctype, value)
-                await query.answer(tr(
-                    f"Captcha-Verhalten gesetzt: {tr('Kick',lang) if value=='kick' else tr('Timeout',lang)}",
-                    lang), show_alert=True)
-                return await menu_callback(update, context)
-        # Captcha: An/Aus und Back-Button
-        if func == "captcha":
-            if action == "toggle":
-                curr, ctype, behavior = get_captcha_settings(chat_id)
-                set_captcha_settings(chat_id, not curr, ctype, behavior)
-                await query.answer(tr(f"Captcha {'aktiviert' if not curr else 'deaktiviert'}", lang), show_alert=True)
-                return await menu_callback(update, context)
-            if action == "back":
-                return await show_group_menu(query, chat_id)
-            
-    # Sprache-Submenu
-    if data.endswith('_language'):
-        chat_id = int(data.split('_')[0])
-        current = get_group_language(chat_id) or 'de'
-        kb = [[InlineKeyboardButton(f"{'✅ ' if code==current else ''}{name}", callback_data=f"{chat_id}_setlang_{code}")] for code, name in LANGUAGES.items()]
-        kb.append([InlineKeyboardButton(tr('↩️ Zurück', current), callback_data=f"group_{chat_id}")])
-        return await query.edit_message_text(tr('🌐 Wähle Sprache:', current), reply_markup=InlineKeyboardMarkup(kb))
-
-    # Sprache setzen
+    # 7) Sprache setzen
+    if re.match(r'^\d+_language$', data):
+        cid = int(data.split('_')[0])
+        cur = get_lang(cid) or 'de'
+        kb = [[InlineKeyboardButton(f"{'✅ ' if c==cur else ''}{n}", callback_data=f"{cid}_setlang_{c}")] for c,n in LANGUAGES.items()]
+        kb.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')])
+        return await query.edit_message_text(tr('🌐 Wähle Sprache:', cur), reply_markup=InlineKeyboardMarkup(kb))
     if '_setlang_' in data:
-        parts = data.split('_')
-        chat_id = int(parts[0])
-        lang = parts[-1]
-        set_group_language(chat_id, lang)
-        await query.answer(tr(f'Gruppensprache gesetzt: {LANGUAGES[lang]}', lang), show_alert=True)
-        return await show_group_menu(query, chat_id)
+        cid,_,lang = data.partition('_setlang_')[::2]
+        cid = int(cid)
+        set_group_language(cid, lang)
+        await query.answer(tr(f"Gruppensprache gesetzt: {LANGUAGES[lang]}", lang), show_alert=True)
+        return await show_group_menu(query, cid)
 
-    # Fallback: zeige Menü erneut
+    # Fallback: Hauptmenü
     selected = context.user_data.get('selected_chat_id')
     if selected:
         return await show_group_menu(query, selected)
+
     
 # /menu 
 
