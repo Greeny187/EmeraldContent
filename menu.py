@@ -8,7 +8,7 @@ from database import (
     get_topic_owners, is_daily_stats_enabled, set_daily_stats,
     get_group_language, set_group_language
 )
-from statistic import stats_command, export_stats_csv_command, stats_dev_command
+from statistic import stats_command, export_stats_csv_command
 from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from user_manual import HELP_TEXT
@@ -91,7 +91,7 @@ async def menu_callback(update, context):
         cur = is_daily_stats_enabled(cid)
         set_daily_stats(cid, not cur)
         await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", get_group_language(cid)), show_alert=True)
-        return await show_group_menu(query, cid)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     if re.match(r'^\d+_stats_export$', data):
         return await export_stats_csv_command(update, context)
@@ -116,7 +116,7 @@ async def menu_callback(update, context):
         with open(path, 'w', encoding='utf-8') as f:
             f.write(translated)
         await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
-        return
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 3) Submenüs: welcome, rules, farewell, rss, exceptions, captcha
     # Splitting data into cid, func, [action]
@@ -228,7 +228,7 @@ async def menu_callback(update, context):
         cid = int(data.split('_',1)[0])
         if not get_rss_topic(cid): # pyright: ignore[reportCallIssue]
             await query.answer('❗ Kein RSS-Topic gesetzt.', show_alert=True)
-            return await show_group_menu(query, cid)
+            return await show_group_menu(query=query, chat_id=cid, context=context)
         context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
         await query.answer()
         return await query.edit_message_text('➡ Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
