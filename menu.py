@@ -26,10 +26,15 @@ LANGUAGES = {
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-async def show_group_menu(query_or_update, chat_id: int):
-    # Always store selected for context
-    if hasattr(query_or_update, 'context'):
-        query_or_update.context.user_data['selected_chat_id'] = chat_id
+async def menu_command(update: Update, context):
+    chat_id = update.effective_chat.id
+    context.user_data['selected_chat_id'] = chat_id
+    # show_group_menu nutzt keyword-only args
+    return await show_group_menu(query=update.callback_query or update, chat_id=chat_id, context=context)
+
+async def show_group_menu(*, query, chat_id: int, context):
+    # Immer ausgewählte Gruppe speichern
+    context.user_data['selected_chat_id'] = chat_id
 
     lang = get_group_language(chat_id) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
@@ -60,11 +65,6 @@ async def show_group_menu(query_or_update, chat_id: int):
         await query_or_update.message.reply_text(title, reply_markup=markup)
     else:
         await query_or_update.reply_text(title, reply_markup=markup)
-
-async def menu_command(update: Update, context):
-    chat_id = update.effective_chat.id
-    context.user_data['selected_chat_id'] = chat_id
-    return await show_group_menu(update, chat_id)
 
 async def menu_callback(update, context):
     query = update.callback_query
