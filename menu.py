@@ -6,7 +6,7 @@ from database import (
     set_captcha_settings, get_farewell, set_farewell, delete_farewell,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
     get_topic_owners, is_daily_stats_enabled, set_daily_stats,
-    get_group_language, set_group_language, get_group_language as get_lang
+    get_group_language, set_group_language
 )
 from statistic import stats_command, export_stats_csv_command, stats_dev_command
 from utils import clean_delete_accounts_for_chat, tr
@@ -17,15 +17,21 @@ import logging, re
 
 logger = logging.getLogger(__name__)
 
+# Alias für alte get_lang-Aufrufe
+get_lang = get_group_language
+
 # Sprachoptionen
 LANGUAGES = {
     'de': 'Deutsch', 'en': 'English', 'es': 'Español',
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-# Menü-Oberfläche: Zwei Spalten
 async def show_group_menu(query_or_update, chat_id: int):
-    lang = get_group_language(chat_id) or 'de' # pyright: ignore[reportCallIssue]
+    # Always store selected for context
+    if hasattr(query_or_update, 'context'):
+        query_or_update.context.user_data['selected_chat_id'] = chat_id
+
+    lang = get_group_language(chat_id) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
 
     buttons = [
@@ -38,7 +44,7 @@ async def show_group_menu(query_or_update, chat_id: int):
         [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{chat_id}_clean_delete"),
          InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{chat_id}_stats")],
         [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{chat_id}_stats_export"),
-         InlineKeyboardButton(tr('📊 Tagesreport {status}', lang).format(status=status), callback_data=f"{chat_id}_toggle_stats")],
+         InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{chat_id}_toggle_stats")],
         [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{chat_id}_edit_mood_q"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{chat_id}_language")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
@@ -55,60 +61,57 @@ async def show_group_menu(query_or_update, chat_id: int):
     else:
         await query_or_update.reply_text(title, reply_markup=markup)
 
-# /menu Command
 async def menu_command(update: Update, context):
     chat_id = update.effective_chat.id
-    # Merke Gruppe für Help
     context.user_data['selected_chat_id'] = chat_id
     return await show_group_menu(update, chat_id)
 
 async def menu_callback(update, context):
     query = update.callback_query
     data = query.data
+
     # 1) Gruppen-Auswahl
     if data == 'group_select':
         groups = get_visible_groups(context.bot, query.from_user.id)
         buttons = [[InlineKeyboardButton(str(cid), callback_data=f"group_{cid}")] for cid in groups]
         return await query.edit_message_text('Wähle Gruppe:', reply_markup=InlineKeyboardMarkup(buttons))
-    if data.startswith('group_'):
-        return await show_group_menu(query, int(data.split('_',1)[1]))
 
-    # 2) Exakte Callback-Muster
+    if data.startswith('group_'):
+        cid = int(data.split('_', 1)[1])
+        context.user_data['selected_chat_id'] = cid
+        return await show_group_menu(query, cid)
+
+    # 2) Direct callbacks
     if re.match(r'^\d+_toggle_stats$', data):
-        cid = int(data.split('_',1)[0])
+        cid = int(data.split('_')[0])
         cur = is_daily_stats_enabled(cid)
         set_daily_stats(cid, not cur)
-        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", get_lang(cid)), show_alert=True)
+        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", get_group_language(cid)), show_alert=True)
         return await show_group_menu(query, cid)
+
     if re.match(r'^\d+_stats_export$', data):
         return await export_stats_csv_command(update, context)
-    if re.match(r'^\d+_stats_dev$', data):
-        return await stats_dev_command(update, context)
+
     if re.match(r'^\d+_stats$', data):
-        context.user_data['stats_group_id'] = int(data.split('_',1)[0])
+        context.user_data['stats_group_id'] = int(data.split('_')[0])
         return await stats_command(update, context)
+
+    # Mood-Frage ändern
     if re.match(r'^\d+_edit_mood_q$', data):
-        cid = int(data.split('_',1)[0])
-        context.user_data.update(awaiting_mood_question=True, mood_group_id=cid)
+        cid = int(data.split('_')[0])
+        context.user_data['awaiting_mood_question'] = True
+        context.user_data['mood_group_id'] = cid
         return await query.message.reply_text('Bitte sende deine neue Mood-Frage:', reply_markup=ForceReply(selective=True))
 
-    # Help-Handler: Handbuch als Datei mit Hybrid-Übersetzung
+    # Handbuch
     if data == 'help':
-        # ID aus context holen
-        cid = context.user_data.get('selected_chat_id') or context.bot_data.get('selected_chat_id')
+        cid = context.user_data.get('selected_chat_id')
         lang = get_group_language(cid) or 'de'
-        # HELP_TEXT verwenden statt Datei
-        text = HELP_TEXT
-        translated = translate_hybrid(text, target_lang=lang)
-        # Zwischenspeichern
+        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
         path = f'user_manual_{lang}.md'
         with open(path, 'w', encoding='utf-8') as f:
             f.write(translated)
-        # Dokument versenden
-        await query.message.reply_document(
-            document=open(path, 'rb'),
-            filename=f'Handbuch_{lang}.md'
-        )
+        await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
         return
 
     # 3) Submenüs: welcome, rules, farewell, rss, exceptions, captcha
@@ -155,7 +158,7 @@ async def menu_callback(update, context):
 
         # Captcha Menü
         if func == 'captcha' and not sub:
-            en, ctype, behavior = get_captcha_settings(cid)
+            en, ctype, behavior = get_captcha_settings(cid) # pyright: ignore[reportCallIssue]
             kb = [
                 [InlineKeyboardButton(f"{'✅ ' if en else ''}{tr('Aktiviert', lang) if en else tr('Deaktiviert', lang)}", callback_data=f"{cid}_captcha_toggle")],
                 [InlineKeyboardButton(f"{'✅ ' if ctype=='button' else ''}{tr('Button', lang)}", callback_data=f"{cid}_captcha_type_button"),
@@ -178,13 +181,13 @@ async def menu_callback(update, context):
 
         # Inhalte zeigen oder löschen oder editieren
         if action == 'show' and func in get_map:
-            rec = get_map[func](cid)
+            rec = get_map[func](cid) # pyright: ignore[reportCallIssue]
             text = rec[1] if rec else f"Keine {func}-Nachricht gesetzt."
             return await query.edit_message_text(text, reply_markup=back)
         if action == 'delete' and func in del_map:
             del_map[func](cid)
             await query.answer(tr(f"✅ {func.capitalize()} gelöscht.", get_lang(cid)), show_alert=True)
-            return await query.edit_message_text(tr(f"{func.capitalize()} entfernt.", get_lang(cid)), reply_markup=back)
+            return await query.edit_message_text(tr(f"{func.capitalize()} entfernt.", get_lang(cid)), reply_markup=back) # type: ignore
         if action == 'edit' and func in set_map:
             context.user_data['last_edit'] = (cid, f"{func}_edit")
             return await query.edit_message_text(f"✏️ Sende nun das neue {func}:", reply_markup=back)
@@ -192,7 +195,7 @@ async def menu_callback(update, context):
     # 5) RSS-Detail
     if data.endswith('_rss_setrss'):
         cid = int(data.split('_',1)[0])
-        if not get_rss_topic(cid):
+        if not get_rss_topic(cid): # pyright: ignore[reportCallIssue]
             await query.answer('❗ Kein RSS-Topic gesetzt.', show_alert=True)
             return await show_group_menu(query, cid)
         context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
@@ -200,12 +203,12 @@ async def menu_callback(update, context):
         return await query.edit_message_text('➡ Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
     if data.endswith('_rss_list'):
         cid = int(data.split('_',1)[0])
-        feeds = db_list_rss_feeds(cid)
+        feeds = db_list_rss_feeds(cid) # pyright: ignore[reportCallIssue]
         text = 'Keine RSS-Feeds.' if not feeds else 'Aktive Feeds:\n' + '\n'.join(feeds)
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f'group_{cid}')]]))
     if data.endswith('_rss_stop'):
         cid = int(data.split('_',1)[0])
-        remove_rss_feed(cid)
+        remove_rss_feed(cid) # type: ignore # pyright: ignore[reportCallIssue]
         await query.answer('✅ RSS gestoppt', show_alert=True)
         return await show_group_menu(query, cid)
 
@@ -232,9 +235,9 @@ async def menu_callback(update, context):
         return await show_group_menu(query, cid)
 
     # Fallback: Hauptmenü
-    selected = context.user_data.get('selected_chat_id')
-    if selected:
-        return await show_group_menu(query, selected)
+    cid = context.user_data.get('selected_chat_id')
+    if cid:
+        return await show_group_menu(query, cid)
 
     
 # /menu 
