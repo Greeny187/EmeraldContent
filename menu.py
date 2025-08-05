@@ -13,7 +13,6 @@ from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from user_manual import HELP_TEXT
 from access import get_visible_groups
-from translater import hybrid_translate # pyright: ignore[reportMissingImports]
 import logging, re
 
 logger = logging.getLogger(__name__)
@@ -94,7 +93,7 @@ async def menu_callback(update, context):
         lang = get_group_language(cid) or 'de'
         # HELP_TEXT verwenden statt Datei
         text = HELP_TEXT
-        translated = hybrid_translate(text, target_lang=lang)
+        translated = translate_hybrid(text, target_lang=lang)
         # Zwischenspeichern
         path = f'user_manual_{lang}.md'
         with open(path, 'w', encoding='utf-8') as f:
