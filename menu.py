@@ -55,6 +55,12 @@ async def show_group_menu(query_or_update, chat_id: int):
     else:
         await query_or_update.reply_text(title, reply_markup=markup)
 
+# /menu Command
+async def menu_command(update: Update, context):
+    chat_id = update.effective_chat.id
+    # Merke Gruppe für Help
+    context.user_data['selected_chat_id'] = chat_id
+    return await show_group_menu(update, chat_id)
 
 async def menu_callback(update, context):
     query = update.callback_query
