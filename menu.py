@@ -13,7 +13,7 @@ from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from user_manual import HELP_TEXT
 from access import get_visible_groups
-from translater import hybrid_translate
+from translater import hybrid_translate # pyright: ignore[reportMissingImports]
 import logging, re
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ LANGUAGES = {
 
 # Menü-Oberfläche: Zwei Spalten
 async def show_group_menu(query_or_update, chat_id: int):
-    lang = get_group_language(chat_id) or 'de'
+    lang = get_group_language(chat_id) or 'de' # pyright: ignore[reportCallIssue]
     status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
 
     buttons = [
