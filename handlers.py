@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
-from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, 
+from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, get_group_language,
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings)
 from statistic import stats_dev_command, DEVELOPER_IDS
 from patchnotes import __version__, PATCH_NOTES
@@ -15,8 +15,12 @@ from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler
 from menu import show_group_menu
 from access import get_visible_groups
+from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
+
+def tr(text: str, lang: str) -> str:
+    return translate_hybrid(text, target_lang=lang)
 
 async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
@@ -97,31 +101,27 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     message = update.message
-
+    chat_id = chat.id
+    
     # Spam-/Linkschutz
     if chat.type in ('group', 'supergroup') and message.text:
-        # Link erkannt?
-        if re.search(r'https?://|\bwww\.', message.text.lower()):
+        # nur, wenn Linkschutz aktiviert ist:
+        protection_on, warn_on, warn_text, except_on = get_link_settings(chat.id)
+        if protection_on and re.search(r'https?://|\bwww\.', message.text.lower()):
             # Admins inkl. Creator abfragen
             admins = await context.bot.get_chat_administrators(chat.id)
             is_admin       = any(m.user.id == user.id for m in admins if m.status in ("administrator","creator"))
             # Anonyme Inhaber/Admins: sender_chat == Gruppen-Chat selbst
             is_anon_admin  = hasattr(message, "sender_chat") and getattr(message, "sender_chat", None) and message.sender_chat.id == chat.id
-            # Themenbesitzer
-            is_topic_owner = has_topic(chat.id, user.id)
+            # Themenbesitzer nur, wenn Ausnahmen aktiviert
+            is_topic_owner = except_on and has_topic(chat.id, user.id)
 
             # Nur löschen, wenn keiner der Ausnahmen greift
             if not (is_admin or is_anon_admin or is_topic_owner):
-            # 0) Text in eine Variable auslagern
-                warning_text = (f"⚠️ @{user.username or user.first_name}, "
-                    "Linkposting ist nur für Administratoren, Inhaber und Themenbesitzer erlaubt."
-                )
+                # Lösch- und Warn-Logik
                 try:
-                    await context.bot.send_message(
-                        chat_id=chat.id,
-                        text=warning_text,
-                        parse_mode=None
-                    )
+                    if warn_on:
+                        await context.bot.send_message(chat_id, warn_text)
                     await message.delete()
                 except Exception as e:
                     logger.error(f"Löschen fehlgeschlagen: {e}")
@@ -162,21 +162,18 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]])
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
 
-async def mood_question_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Prüfen, ob wir auf eine Mood-Frage warten
-    if not context.user_data.get("awaiting_mood_question"):
-        return  # nichts tun, zurück an den normalen Handler
-
-    new_q = update.effective_message.text
-    chat_id = context.user_data.pop("mood_group_id")
-    # Frage speichern
-    set_mood_question(chat_id, new_q)
-    # Flag löschen
-    context.user_data.pop("awaiting_mood_question", None)
-
-    await update.effective_message.reply_text(
-        f"✅ Mood-Frage gesetzt auf:\n» {new_q}«"
-    )
+async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Speichert die neue Mood-Frage, wenn awaiting_mood_question gesetzt ist."""
+    message = update.effective_message
+    # nur reagieren, wenn wir im Edit-Modus sind
+    if context.user_data.get('awaiting_mood_question'):
+        grp = context.user_data.pop('mood_group_id')
+        new_question = message.text
+        set_mood_question(grp, new_question)
+        context.user_data.pop('awaiting_mood_question', None)
+        await message.reply_text(
+            tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp))
+        )
 
 async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -507,8 +504,8 @@ def register_handlers(app):
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mood_question_reply), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler),       group=2)
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_handler, block=False), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
 
     app.add_handler(help_handler)
