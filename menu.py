@@ -10,6 +10,7 @@ from database import (
 )
 from statistic import stats_command, export_stats_csv_command, stats_dev_command
 from utils import clean_delete_accounts_for_chat, tr
+from translator import translate_hybrid
 from user_manual import HELP_TEXT
 from access import get_visible_groups
 import logging, re

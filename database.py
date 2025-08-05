@@ -1,9 +1,8 @@
 import os
 import logging
-import psycopg2
 from urllib.parse import urlparse
 from datetime import date
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from psycopg2 import pool
 
 # Logger setup
@@ -309,10 +308,10 @@ def get_link_settings(cur, chat_id: int) -> Tuple[bool, bool, str, bool]:
 
 @_with_cursor
 def set_link_settings(cur, chat_id: int,
-                      protection: bool = None,
-                      warning_on: bool = None,
-                      warning_text: str = None,
-                      exceptions_on: bool = None):
+                        protection: Optional[bool] = None,
+                        warning_on: Optional[bool] = None,
+                        warning_text: Optional[str] = None,
+                        exceptions_on: Optional[bool] = None):
     # Baue dynamisches UPDATE
     parts, params = [], []
     if protection is not None:
