@@ -68,7 +68,7 @@ async def show_group_menu(*, query, chat_id: int, context):
             # Keine Änderung nötig
             await query.answer()  # schließe Callback gracefully
         else:
-            raise(*, query, chat_id: int, context):
+            raise
 
 async def menu_callback(update, context):
     query = update.callback_query
