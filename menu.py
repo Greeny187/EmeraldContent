@@ -83,7 +83,7 @@ async def menu_callback(update, context):
     if data.startswith('group_'):
         cid = int(data.split('_', 1)[1])
         context.user_data['selected_chat_id'] = cid
-        return await show_group_menu(query, cid)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 2) Direct callbacks
     if re.match(r'^\d+_toggle_stats$', data):
@@ -214,7 +214,7 @@ async def menu_callback(update, context):
         cid = int(data.split('_',1)[0])
         remove_rss_feed(cid) # type: ignore # pyright: ignore[reportCallIssue]
         await query.answer('✅ RSS gestoppt', show_alert=True)
-        return await show_group_menu(query, cid)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 6) Gelöschte Accounts entfernen
     if data.endswith('_clean_delete'):
@@ -236,12 +236,12 @@ async def menu_callback(update, context):
         cid = int(cid)
         set_group_language(cid, lang)
         await query.answer(tr(f"Gruppensprache gesetzt: {LANGUAGES[lang]}", lang), show_alert=True)
-        return await show_group_menu(query, cid)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
     if cid:
-        return await show_group_menu(query, cid)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     
 # /menu 
