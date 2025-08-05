@@ -37,7 +37,7 @@ async def show_group_menu(query_or_update, chat_id: int):
         [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{chat_id}_clean_delete"),
          InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{chat_id}_stats")],
         [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{chat_id}_stats_export"),
-         InlineKeyboardButton(tr('📊 Tagesstatistik {status}', lang).format(status=status), callback_data=f"{chat_id}_toggle_stats")],
+         InlineKeyboardButton(tr('📊 Tagesreport {status}', lang).format(status=status), callback_data=f"{chat_id}_toggle_stats")],
         [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{chat_id}_edit_mood_q"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{chat_id}_language")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
@@ -84,8 +84,26 @@ async def menu_callback(update, context):
         cid = int(data.split('_',1)[0])
         context.user_data.update(awaiting_mood_question=True, mood_group_id=cid)
         return await query.message.reply_text('Bitte sende deine neue Mood-Frage:', reply_markup=ForceReply(selective=True))
+
+        # Help-Handler: Handbuch als Datei mit Hybrid-Übersetzung
     if data == 'help':
-        return await query.message.reply_text(HELP_TEXT, parse_mode='Markdown')
+        cid = context.user_data.get('selected_chat_id') or context.bot_data.get('selected_chat_id')
+        lang = get_group_language(cid) or 'de'
+        # Benutzerhandbuch aus Datei laden
+        with open('user_manual.md', 'r', encoding='utf-8') as f:
+            text = f.read()
+        # Hybrid-Übersetzung
+        translated = hybrid_translate(text, target_lang=lang)
+        # Zwischenspeichern
+        path = f'user_manual_{lang}.md'
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(translated)
+        # Dokument versenden
+        await query.message.reply_document(
+            document=open(path, 'rb'),
+            filename=f'Handbuch_{lang}.md'
+        )
+        return
 
     # 3) Submenüs: welcome, rules, farewell, rss, exceptions, captcha
     # Splitting data into cid, func, [action]
