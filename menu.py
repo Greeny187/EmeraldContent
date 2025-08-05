@@ -59,12 +59,16 @@ async def show_group_menu(*, query, chat_id: int, context):
     title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
     markup = InlineKeyboardMarkup(buttons)
 
-    if hasattr(query_or_update, 'edit_message_text'):
-        await query_or_update.edit_message_text(title, reply_markup=markup)
-    elif hasattr(query_or_update, 'message'):
-        await query_or_update.message.reply_text(title, reply_markup=markup)
-    else:
-        await query_or_update.reply_text(title, reply_markup=markup)
+    # Versuche zu editieren, ignoriere 'Message is not modified'
+    from telegram.error import BadRequest
+    try:
+        await query.edit_message_text(title, reply_markup=markup)
+    except BadRequest as e:
+        if 'Message is not modified' in str(e):
+            # Keine Änderung nötig
+            await query.answer()  # schließe Callback gracefully
+        else:
+            raise(*, query, chat_id: int, context):
 
 async def menu_callback(update, context):
     query = update.callback_query
