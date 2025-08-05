@@ -98,34 +98,31 @@ async def message_logger(update, context):
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-    message = update.message
     chat_id = chat.id
-    
-    # Spam-/Linkschutz
-    if chat.type in ('group', 'supergroup') and message.text:
-        # nur, wenn Linkschutz aktiviert ist:
-        protection_on, warn_on, warn_text, except_on = get_link_settings(chat.id)
-        if protection_on and re.search(r'https?://|\bwww\.', message.text.lower()):
-            # Admins inkl. Creator abfragen
-            admins = await context.bot.get_chat_administrators(chat.id)
-            is_admin       = any(m.user.id == user.id for m in admins if m.status in ("administrator","creator"))
-            # Anonyme Inhaber/Admins: sender_chat == Gruppen-Chat selbst
-            is_anon_admin  = hasattr(message, "sender_chat") and getattr(message, "sender_chat", None) and message.sender_chat.id == chat.id
-            # Themenbesitzer nur, wenn Ausnahmen aktiviert
-            is_topic_owner = except_on and has_topic(chat.id, user.id)
 
-            # Nur löschen, wenn keiner der Ausnahmen greift
-            if not (is_admin or is_anon_admin or is_topic_owner):
-                # Lösch- und Warn-Logik
-                try:
-                    if warn_on:
-                        await context.bot.send_message(chat_id, warn_text)
-                    await message.delete()
-                except Exception as e:
-                    logger.error(f"Löschen fehlgeschlagen: {e}")
-                return
+    # Mood-Frage Antwort
+    if context.user_data.get('awaiting_mood_question'):
+        return await mood_question_handler(update, context)
+
+    # Linksperre-Check
+    prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
+    if prot_on and message.text and re.search(r'https?://|\bwww\.', message.text.lower()):
+        admins = await context.bot.get_chat_administrators(chat_id)
+        is_admin = any(a.user.id == user.id and a.status in ("administrator","creator") for a in admins)
+        is_anon_admin = bool(getattr(message, 'sender_chat', None) and message.sender_chat.id == chat_id)
+        is_topic_owner = except_on and has_topic(chat_id, user.id)
+        if not (is_admin or is_anon_admin or is_topic_owner):
+            try:
+                if warn_on:
+                    await context.bot.send_message(chat_id, warn_text)
+                await message.delete()
+            except Exception as e:
+                logger.error(f"Löschen fehlgeschlagen: {e}")
+            return
+
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Nur aktiv, wenn zuvor im Menü „Bearbeiten“ gedrückt wurde
@@ -163,17 +160,13 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
 
 async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Speichert die neue Mood-Frage, wenn awaiting_mood_question gesetzt ist."""
     message = update.effective_message
-    # nur reagieren, wenn wir im Edit-Modus sind
     if context.user_data.get('awaiting_mood_question'):
         grp = context.user_data.pop('mood_group_id')
         new_question = message.text
         set_mood_question(grp, new_question)
         context.user_data.pop('awaiting_mood_question', None)
-        await message.reply_text(
-            tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp))
-        )
+        await message.reply_text(tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp)))
 
 async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
