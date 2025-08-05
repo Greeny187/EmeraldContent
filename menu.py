@@ -12,6 +12,7 @@ from statistic import stats_command, export_stats_csv_command, stats_dev_command
 from utils import clean_delete_accounts_for_chat, tr
 from user_manual import HELP_TEXT
 from access import get_visible_groups
+from translater import hybrid_translate
 import logging, re
 
 logger = logging.getLogger(__name__)
@@ -85,14 +86,13 @@ async def menu_callback(update, context):
         context.user_data.update(awaiting_mood_question=True, mood_group_id=cid)
         return await query.message.reply_text('Bitte sende deine neue Mood-Frage:', reply_markup=ForceReply(selective=True))
 
-        # Help-Handler: Handbuch als Datei mit Hybrid-Übersetzung
+    # Help-Handler: Handbuch als Datei mit Hybrid-Übersetzung
     if data == 'help':
+        # ID aus context holen
         cid = context.user_data.get('selected_chat_id') or context.bot_data.get('selected_chat_id')
         lang = get_group_language(cid) or 'de'
-        # Benutzerhandbuch aus Datei laden
-        with open('user_manual.md', 'r', encoding='utf-8') as f:
-            text = f.read()
-        # Hybrid-Übersetzung
+        # HELP_TEXT verwenden statt Datei
+        text = HELP_TEXT
         translated = hybrid_translate(text, target_lang=lang)
         # Zwischenspeichern
         path = f'user_manual_{lang}.md'
