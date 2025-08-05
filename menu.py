@@ -173,6 +173,33 @@ async def menu_callback(update, context):
             ]
             return await query.edit_message_text(tr('🔐 Captcha-Einstellungen', lang), reply_markup=InlineKeyboardMarkup(kb))
 
+        # Captcha-Unterbefehle verarbeiten
+        if func == 'captcha' and sub == 'toggle':
+            # Status umschalten
+            en, ctype, behavior = get_captcha_settings(cid)
+            set_captcha_settings(cid, not en, ctype, behavior)
+            await query.answer(
+                tr(f"Captcha {'aktiviert' if not en else 'deaktiviert'}", lang),
+                show_alert=True
+            )
+            return await show_group_menu(query=query, chat_id=cid, context=context)
+
+        if func == 'captcha' and sub in ('type_button', 'type_math'):
+            # Typ ändern
+            en, ctype, behavior = get_captcha_settings(cid)
+            new_type = sub.split('_', 1)[1]  # 'button' oder 'math'
+            set_captcha_settings(cid, en, new_type, behavior)
+            await query.answer(tr("Captcha-Typ geändert", lang), show_alert=True)
+            return await show_group_menu(query=query, chat_id=cid, context=context)
+
+        if func == 'captcha' and sub in ('behavior_kick', 'behavior_timeout'):
+            # Verhalten ändern
+            en, ctype, behavior = get_captcha_settings(cid)
+            new_behavior = sub.split('_', 1)[1]  # 'kick' oder 'timeout'
+            set_captcha_settings(cid, en, ctype, new_behavior)
+            await query.answer(tr("Captcha-Verhalten geändert", lang), show_alert=True)
+            return await show_group_menu(query=query, chat_id=cid, context=context)
+
     # 4) Detail-Handler Actions (edit/show/delete etc.)
     parts = data.split('_')
     if len(parts) == 3:
@@ -189,7 +216,7 @@ async def menu_callback(update, context):
             text = rec[1] if rec else f"Keine {func}-Nachricht gesetzt."
             return await query.edit_message_text(text, reply_markup=back)
         if action == 'delete' and func in del_map:
-            del_map[func](cid)
+            del_map[func](cid) # type: ignore
             await query.answer(tr(f"✅ {func.capitalize()} gelöscht.", get_lang(cid)), show_alert=True)
             return await query.edit_message_text(tr(f"{func.capitalize()} entfernt.", get_lang(cid)), reply_markup=back) # type: ignore
         if action == 'edit' and func in set_map:
