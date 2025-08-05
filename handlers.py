@@ -64,7 +64,7 @@ async def menu_command(update, context):
         # noch keine Gruppe ausgewählt → in die Auswahl springen
         await update.message.reply_text("🚧 Keine Gruppe ausgewählt. Bitte zuerst /menu in einer Gruppe nutzen.")
         return
-    await show_group_menu(update, chat_id)
+    await show_group_menu(query=update, chat_id=chat_id, context=context)
 
     if not chat_id:
         # Kein Chat ausgewählt → nutzerfreundlich zurück auf Start-Logik
@@ -80,7 +80,7 @@ async def menu_command(update, context):
         keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
         markup = InlineKeyboardMarkup(keyboard)
         return await update.message.reply_text("🔧 Wähle zuerst eine Gruppe:", reply_markup=markup)
-    await show_group_menu(update, chat_id)
+    await show_group_menu(query=update, chat_id=chat_id, context=context)
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
