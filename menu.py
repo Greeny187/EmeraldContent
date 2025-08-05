@@ -216,6 +216,6 @@ async def menu_callback(update, context):
 # /menu 
 
 def register_menu(app):
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(?!(mood_)).*'))
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^cleanup$"))
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^\d+_captcha'))
+
+    app.add_handler(CallbackQueryHandler(menu_callback))
+

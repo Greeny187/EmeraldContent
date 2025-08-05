@@ -36,11 +36,15 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
     if not telethon_client.is_connected():
         await start_telethon()
-    for username in CHANNEL_USERNAMES:
+    # statt statischer Liste: alle registrierten Gruppen abfragen
+    for chat_id, _ in get_registered_groups():
         try:
-            full = await telethon_client(GetFullChannelRequest(username))
+            # über chat_id das Peer-Entity holen
+            entity = await telethon_client.get_entity(chat_id)
+            # Voll-Info abrufen (funktioniert für Gruppen und Channels)
+            full = await telethon_client(GetFullChannelRequest(entity))
             chat = full.chats[0]
-            chat_id = chat.id
+            # id bleibt chat_id
             admins = getattr(full.full_chat, "admins_count", 0) or 0
             members = getattr(full.full_chat, "participants_count", 0) or 0
             topics = getattr(getattr(full.full_chat, "forum_info", None), "total_count", 0) or 0
@@ -81,7 +85,7 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
                 )
             _db_pool.putconn(conn)
         except Exception as e:
-            logger.error(f"Fehler beim Abfragen von {username}: {e}")
+            logger.error(f"Fehler beim Abfragen von {chat_id}: {e}")
 
 async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
     try:
