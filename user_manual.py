@@ -130,7 +130,7 @@ async def send_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Sendet das Benutzerhandbuch in der Nutzersprache.
     """
     user_lang = update.effective_user.language_code or 'de'
-    translated = translate_hybrid(HELP_TEXT, target_language=user_lang)
+    translated = translate_hybrid(HELP_TEXT, target_lang=user_lang)
     await update.message.reply_text(translated, parse_mode='Markdown')
 
 help_handler = CommandHandler('help', send_manual)

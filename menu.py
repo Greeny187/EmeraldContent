@@ -78,19 +78,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["selected_chat_id"] = cid
         return await show_group_menu(query=query, chat_id=cid, context=context)
 
-    # 2) Alle weiteren Aktionen
-    parts = data.split("_", 2)
+    # Einheitliche Aufteilung der Callback-Daten
+    parts = data.split("_")
     if not parts[0].isdigit():
         cid = context.user_data.get("selected_chat_id")
         if not cid:
             return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
         return await show_group_menu(query=query, chat_id=cid, context=context)
 
-    # 3) Submenü oder Detail-Funktion
-    chat_id = int(parts[0])
+    cid = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
     action = parts[2] if len(parts) > 2 else None
-    lang = get_group_language(chat_id)
+    lang = get_group_language(cid)
 
     # 4) Tagesstatistiken Umschalten
     if func == 'toggle_stats':
