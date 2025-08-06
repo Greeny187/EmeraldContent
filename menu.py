@@ -75,16 +75,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # DEBUG: Zeige was geklickt wurde
     print(f"DEBUG: Callback data = {data}")
 
-    # 1) Gruppe wurde ausgewählt
+    # 1) Gruppe wurde ausgewählt (KORRIGIERT)
     if data.startswith("group_"):
         print(f"DEBUG: Group selected")
         parts = data.split("_", 1)
-        if len(parts) != 2 or not parts[1].isdigit():
-            # Ungültiges Format, Nutzer informieren und abbrechen
-            update.callback_query.answer(
-                "Ungültige Auswahl.", show_alert=True
-        )
-        return
+        # Korrigierte Prüfung für negative IDs
+        is_valid_id = len(parts) == 2 and (parts[1].isdigit() or (parts[1].startswith('-') and parts[1][1:].isdigit()))
+        if not is_valid_id:
+            await query.answer("Ungültige Auswahl.", show_alert=True)
+            return
+        
         cid = int(parts[1])
         context.user_data["selected_chat_id"] = cid
         return await show_group_menu(query=query, cid=cid, context=context)
