@@ -1,5 +1,6 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
+from telegram.error import BadRequest
 from database import (
     get_link_settings, set_link_settings, get_welcome, set_welcome, delete_welcome,
     get_rules, set_rules, delete_rules, get_captcha_settings,
@@ -26,11 +27,10 @@ LANGUAGES = {
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-async def show_group_menu(*, query=None, message=None, chat_id: int, context):
-    context.user_data['selected_chat_id'] = chat_id
+def build_group_menu(chat_id):
+    # TODO: Hier deine InlineKeyboardMarkup-Erstellung einbauen
     lang = get_group_language(chat_id) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
-
     buttons = [
         [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome"),
          InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{chat_id}_captcha")],
@@ -47,52 +47,42 @@ async def show_group_menu(*, query=None, message=None, chat_id: int, context):
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
          InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
-    markup = InlineKeyboardMarkup(buttons)
-    title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
+    return InlineKeyboardMarkup(buttons)
+
+async def show_group_menu(query=None, chat_id=None, context=None):
+    title = "📋 Gruppenmenü"
+    markup = build_group_menu(chat_id)
 
     if query:
-        await query.edit_message_text(title, reply_markup=markup)
-    elif message:
-        await message.reply_text(title, reply_markup=markup)
+        try:
+            if (query.message.text != title) or (query.message.reply_markup != markup):
+                await query.edit_message_text(title, reply_markup=markup)
+            else:
+                await query.edit_message_text(title + "\u200b", reply_markup=markup)
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                raise
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=title, reply_markup=markup)
 
-    from telegram.error import BadRequest
-    try:
-        if query:  # Aufruf über Button
-            await query.edit_message_text(title, reply_markup=markup)
-        elif message:  # Aufruf über /menu
-            await message.reply_text(title, reply_markup=markup)
-    except BadRequest as e:
-        if 'Message is not modified' in str(e):
-            if query:
-                await query.answer()
-
-
+# ⬇️ Callback-Handler
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
+    if query:
+        await query.answer()
+        data = query.data
 
-    # 1) Gruppen-Auswahl starten
-    if data == 'group_select':
-        from database import get_registered_groups
-        from access import get_visible_groups
+        try:
+            # ID extrahieren
+            parts = data.split("_", 1)
+            cid = int(parts[0])  # erwartet z. B. "123456_captcha_menu"
+        except (ValueError, IndexError):
+            return await query.message.reply_text("⚠️ Fehler: Ungültige Gruppen-ID.")
 
-        all_groups = get_registered_groups()
-        groups = await get_visible_groups(query.from_user.id, context.bot, all_groups)
-
-        if not groups:
-            return await query.edit_message_text("🚫 Keine Gruppen gefunden, in denen du Admin bist.")
-
-        buttons = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
-        return await query.edit_message_text('🔧 Wähle eine Gruppe:', reply_markup=InlineKeyboardMarkup(buttons))
-
-    # 2) Auf Gruppe wechseln
-    if data.startswith('group_'):
-        _, id_str = data.split('_', 1)
-        if id_str.isdigit():
-            cid = int(id_str)
-            context.user_data['selected_chat_id'] = cid
-            return await show_group_menu(query=query, chat_id=cid, context=context)
+        # Aufruf des eigentlichen Menüs
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 3) Numerische Callback-Pattern
     parts = data.split('_', 2)
