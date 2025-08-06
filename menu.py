@@ -115,10 +115,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cid = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
-    sub = parts[2] if len(parts) >= 3 else None
-    
-    print(f"DEBUG: cid={cid}, func={func}, sub={sub}")
-    
+    sub = parts[2] if len(parts) > 2 else None
+    lang = get_group_language(cid)
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]])
+
     # 4) SUBMENÜS ZUERST
     if func in ('welcome', 'rules', 'farewell') and sub is None:
         print(f"DEBUG: Welcome/Rules/Farewell submenu for {func}")
