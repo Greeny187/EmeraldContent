@@ -14,11 +14,13 @@ telethon_client = TelegramClient(StringSession(SESSION) if SESSION else StringSe
 ("TELETHON_SESSION")
 
 if not all([API_ID, API_HASH, SESSION]):
+    print(f"API_ID: {API_ID}, API_HASH: {'gesetzt' if API_HASH else 'fehlt'}, SESSION: {'gesetzt' if SESSION else 'fehlt'}")
     raise RuntimeError("TG_API_ID, TG_API_HASH und TELETHON_SESSION müssen als Env-Vars gesetzt sein!")
 
 async def start_telethon():
     """Stellt die Verbindung her und prüft die Autorisierung."""
     if not SESSION:
+        print(f"API_ID: {API_ID}, API_HASH: {'gesetzt' if API_HASH else 'fehlt'}, SESSION: {'gesetzt' if SESSION else 'fehlt'}")
         raise RuntimeError("Die Umgebungsvariable TELETHON_SESSION ist nicht gesetzt. Bitte SESSION erzeugen und in Heroku Config hinzufügen!")
     await telethon_client.connect()
     if not await telethon_client.is_user_authorized():
@@ -27,3 +29,9 @@ async def start_telethon():
     await telethon_client.connect()
     if not await telethon_client.is_user_authorized():
         raise RuntimeError("Telethon-Client ist nicht autorisiert! Bitte SESSION prüfen.")
+    
+async def generate_new_session():
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    await client.start()
+    print("Neue StringSession:")
+    print(client.session.save())
