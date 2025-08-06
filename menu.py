@@ -317,7 +317,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cid:
         return await show_group_menu(query=query, chat_id=cid, context=context)
 
-    
 # /menu 
 
 def register_menu(app):
