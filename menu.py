@@ -74,12 +74,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         data = query.data
 
-        try:
-            # ID extrahieren
-            parts = data.split("_", 1)
-            cid = int(parts[0])  # erwartet z. B. "123456_captcha_menu"
-        except (ValueError, IndexError):
-            return await query.message.reply_text("⚠️ Fehler: Ungültige Gruppen-ID.")
+        if data.startswith("group_"):
+            cid = int(data.split("_")[1])
+            context.user_data["selected_chat_id"] = cid
+            return await show_group_menu(query=query, chat_id=cid, context=context)
 
         # Aufruf des eigentlichen Menüs
         return await show_group_menu(query=query, chat_id=cid, context=context)
@@ -324,4 +322,4 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_menu(app):
 
-    app.add_handler(CallbackQueryHandler(menu_callback))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(group_|\d+_)'))

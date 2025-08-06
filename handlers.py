@@ -20,7 +20,7 @@ from translator import translate_hybrid
 logger = logging.getLogger(__name__)
 
 def tr(text: str, lang: str) -> str:
-    return translate_hybrid(text, target_lang=lang)
+    return translate_hybrid(text, lang=lang)
 
 async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
