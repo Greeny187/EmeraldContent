@@ -75,7 +75,7 @@ async def menu_command(update, context):
     if len(visible_groups) == 1:
         chat_id = visible_groups[0][0]
         context.user_data["selected_chat_id"] = chat_id
-        return await show_group_menu(message=update.message, chat_id=chat_id, context=context)
+        return await show_group_menu(query=None, cid=chat_id, context=context)  # <-- HIER: message= durch query=None ersetzen
 
     # Mehrere Gruppen → Auswahl anzeigen
     keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]

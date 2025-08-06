@@ -139,13 +139,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton(f"{'✅ ' if en else ''}{tr('Aktiviert', lang) if en else tr('Deaktiviert', lang)}", 
                                  callback_data=f"{cid}_captcha_toggle")],
-            [InlineKeyboardButton(f"{'✅ ' if ctype=='button' else ''}{tr('Button', lang)}", 
+            [InlineKeyboardButton(f"{'✅' if ctype=='button' else '☐'} {tr('Button', lang)}", 
                                  callback_data=f"{cid}_captcha_type_button"),
-             InlineKeyboardButton(f"{'✅ ' if ctype=='math' else ''}{tr('Rechenaufgabe', lang)}", 
+             InlineKeyboardButton(f"{'✅' if ctype=='math' else '☐'} {tr('Rechenaufgabe', lang)}", 
                                  callback_data=f"{cid}_captcha_type_math")],
-            [InlineKeyboardButton(f"{'✅ ' if behavior=='kick' else ''}{tr('Kick', lang)}", 
+            [InlineKeyboardButton(f"{'✅' if behavior=='kick' else '☐'} {tr('Kick', lang)}", 
                                  callback_data=f"{cid}_captcha_behavior_kick"),
-             InlineKeyboardButton(f"{'✅ ' if behavior=='timeout' else ''}{tr('Timeout', lang)}", 
+             InlineKeyboardButton(f"{'✅' if behavior=='timeout' else '☐'} {tr('Timeout', lang)}", 
                                  callback_data=f"{cid}_captcha_behavior_timeout")],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
@@ -255,7 +255,30 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await show_group_menu(query=query, cid=cid, context=context)
 
     # 6) DANACH die Einzelfunktionen...
-    # ... existing single function code ...
+    if func == 'toggle_stats':
+        cur = is_daily_stats_enabled(cid)
+        set_daily_stats(cid, not cur)
+        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", lang), show_alert=True)
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    elif func == 'clean_delete':
+        await query.answer('⏳ Bereinige…')
+        removed = await clean_delete_accounts_for_chat(cid, context.bot)
+        text = f"✅ {removed} Accounts entfernt."
+        return await query.edit_message_text(text, reply_markup=back)
+
+    elif func == 'stats_export':
+        return await export_stats_csv_command(update, context)
+
+    elif func == 'stats':
+        context.user_data['stats_group_id'] = cid
+        return await stats_command(update, context)
+
+    elif func == "edit_mood_q":
+        context.user_data['awaiting_mood_question'] = True
+        context.user_data['mood_group_id'] = cid
+        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
+                                              reply_markup=ForceReply(selective=True))
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
