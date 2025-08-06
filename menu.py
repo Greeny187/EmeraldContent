@@ -27,9 +27,7 @@ LANGUAGES = {
 }
 
 async def show_group_menu(*, query=None, message=None, chat_id: int, context):
-    # Immer ausgewählte Gruppe speichern
     context.user_data['selected_chat_id'] = chat_id
-
     lang = get_group_language(chat_id) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
 
@@ -49,8 +47,13 @@ async def show_group_menu(*, query=None, message=None, chat_id: int, context):
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
          InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
-    title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
     markup = InlineKeyboardMarkup(buttons)
+    title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
+
+    if query:
+        await query.edit_message_text(title, reply_markup=markup)
+    elif message:
+        await message.reply_text(title, reply_markup=markup)
 
     from telegram.error import BadRequest
     try:

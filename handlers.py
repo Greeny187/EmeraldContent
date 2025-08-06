@@ -58,30 +58,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
 
 async def menu_command(update, context):
-    user = update.effective_user
-    chat_id = context.user_data.get("selected_chat_id")
-
     from database import get_registered_groups
     from access import get_visible_groups
 
-    if not chat_id:
-        all_groups = get_registered_groups()
-        visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
+    user = update.effective_user
+    all_groups = get_registered_groups()
+    visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
 
-        if not visible_groups:
-            return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
-            )
+    if not visible_groups:
+        return await update.message.reply_text(
+            "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+            "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+        )
 
-        if len(visible_groups) == 1:
-            chat_id = visible_groups[0][0]
-            return await show_group_menu(message=update.message, chat_id=chat_id, context=context)
-        else:
-            keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-            return await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
+    # Wenn nur eine Gruppe → direkt Menü zeigen
+    if len(visible_groups) == 1:
+        chat_id = visible_groups[0][0]
+        context.user_data["selected_chat_id"] = chat_id
+        return await show_group_menu(message=update.message, chat_id=chat_id, context=context)
 
-    await show_group_menu(message=update.message, chat_id=chat_id, context=context)
+    # Mehrere Gruppen → Auswahl anzeigen
+    keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
+    await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
