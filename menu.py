@@ -113,8 +113,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = data.split("_", 2)
     print(f"DEBUG: parts = {parts}")
     
-    if not parts[0].isdigit():
-        print(f"DEBUG: First part not digit, fallback to main menu")
+    # KORREKTE PRÜFUNG FÜR POSITIVE UND NEGATIVE IDs
+    if not (parts[0].startswith('-') and parts[0][1:].isdigit()) and not parts[0].isdigit():
+        print(f"DEBUG: First part not a valid ID, fallback to main menu")
         cid = context.user_data.get("selected_chat_id")
         if not cid:
             return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
