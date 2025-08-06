@@ -195,6 +195,10 @@ def register_group(cur, chat_id: int, title: str, welcome_topic_id: int = 0):
         "ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title;",
         (chat_id, title, welcome_topic_id)
     )
+    cur.execute(
+        "INSERT INTO group_settings (chat_id, title) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
+        (chat_id, title)
+    )
 
 @_with_cursor
 def get_registered_groups(cur) -> List[Tuple[int, str]]:

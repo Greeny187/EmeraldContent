@@ -79,7 +79,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["selected_chat_id"] = cid
             return await show_group_menu(query=query, chat_id=cid, context=context)
 
-        # Aufruf des eigentlichen Menüs
+        # Wenn keine group_ Callback → versuche gespeichertes cid zu holen
+        cid = context.user_data.get("selected_chat_id")
+        if not cid:
+            return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
+
         return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 3) Numerische Callback-Pattern
