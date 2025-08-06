@@ -76,7 +76,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("group_"):
         cid = int(data.split("_")[1])
         context.user_data["selected_chat_id"] = cid
-        return await show_group_menu(query=query, chat_id=cid, context=context)
+        return await show_group_menu(query=query, cid=cid, context=context)  # <-- HIER geändert
 
     # 2) Einheitliche Aufteilung der Callback-Daten
     parts = data.split("_", 2)
@@ -84,7 +84,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cid = context.user_data.get("selected_chat_id")
         if not cid:
             return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
-        return await show_group_menu(query=query, chat_id=cid, context=context)
+        return await show_group_menu(query=query, cid=cid, context=context)  # <-- HIER geändert
 
     cid = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
