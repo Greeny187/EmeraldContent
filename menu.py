@@ -297,9 +297,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif func == 'clean_delete':
         await query.answer('⏳ Bereinige…')
-        removed = await clean_delete_accounts_for_chat(cid, context.bot)
-        text = f"✅ {removed} Accounts entfernt."
-        return await query.edit_message_text(text, reply_markup=back)
+        try:
+            # Debug-Ausgabe zur Fehleranalyse
+            print(f"DEBUG: Starting clean_delete for chat_id={cid}")
+            removed = await clean_delete_accounts_for_chat(cid, context.bot)
+            text = f"✅ {removed} Accounts entfernt."
+            return await query.edit_message_text(text, reply_markup=back)
+        except Exception as e:
+            # Fehler abfangen und loggen
+            print(f"ERROR in clean_delete: {str(e)}")
+            error_text = f"⚠️ Fehler bei der Bereinigung: {str(e)}"
+            return await query.edit_message_text(error_text, reply_markup=back)
 
     elif func == 'stats_export':
         return await export_stats_csv_command(update, context)
