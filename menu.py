@@ -6,8 +6,9 @@ from database import (
     set_captcha_settings, get_farewell, set_farewell, delete_farewell,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
     get_topic_owners, is_daily_stats_enabled, set_daily_stats,
-    get_group_language, set_group_language
+    get_group_language, set_group_language, get_registered_groups
 )
+from access import get_visible_groups
 from statistic import stats_command, export_stats_csv_command
 from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
@@ -25,7 +26,7 @@ LANGUAGES = {
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-async def show_group_menu(*, query, chat_id: int, context):
+async def show_group_menu(*, query=None, message=None, chat_id: int, context):
     # Immer ausgewählte Gruppe speichern
     context.user_data['selected_chat_id'] = chat_id
 
@@ -51,16 +52,17 @@ async def show_group_menu(*, query, chat_id: int, context):
     title = tr('🔧 Gruppe verwalten – wähle eine Funktion:', lang)
     markup = InlineKeyboardMarkup(buttons)
 
-    # Versuche zu editieren, ignoriere 'Message is not modified'
     from telegram.error import BadRequest
     try:
-        await query.edit_message_text(title, reply_markup=markup)
+        if query:  # Aufruf über Button
+            await query.edit_message_text(title, reply_markup=markup)
+        elif message:  # Aufruf über /menu
+            await message.reply_text(title, reply_markup=markup)
     except BadRequest as e:
         if 'Message is not modified' in str(e):
-            # Keine Änderung nötig
-            await query.answer()  # schließe Callback gracefully
-        else:
-            raise
+            if query:
+                await query.answer()
+
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -69,10 +71,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 1) Gruppen-Auswahl starten
     if data == 'group_select':
+        from database import get_registered_groups
         from access import get_visible_groups
-        groups = get_visible_groups(context.bot, query.from_user.id)
-        buttons = [[InlineKeyboardButton(str(cid), callback_data=f"group_{cid}")] for cid in groups]
-        return await query.edit_message_text('Wähle Gruppe:', reply_markup=InlineKeyboardMarkup(buttons))
+
+        all_groups = get_registered_groups()
+        groups = await get_visible_groups(query.from_user.id, context.bot, all_groups)
+
+        if not groups:
+            return await query.edit_message_text("🚫 Keine Gruppen gefunden, in denen du Admin bist.")
+
+        buttons = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
+        return await query.edit_message_text('🔧 Wähle eine Gruppe:', reply_markup=InlineKeyboardMarkup(buttons))
 
     # 2) Auf Gruppe wechseln
     if data.startswith('group_'):
