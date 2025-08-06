@@ -321,4 +321,4 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_menu(app):
 
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r'^(group_|\d+_)'))
+    app.add_handler(CallbackQueryHandler(menu_callback))
