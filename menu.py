@@ -27,31 +27,31 @@ LANGUAGES = {
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
-def build_group_menu(chat_id):
+def build_group_menu(cid):
     # TODO: Hier deine InlineKeyboardMarkup-Erstellung einbauen
-    lang = get_group_language(chat_id) or 'de'
-    status = tr('Aktiv', lang) if is_daily_stats_enabled(chat_id) else tr('Inaktiv', lang)
+    lang = get_group_language(cid) or 'de'
+    status = tr('Aktiv', lang) if is_daily_stats_enabled(cid) else tr('Inaktiv', lang)
     buttons = [
-        [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{chat_id}_welcome"),
-         InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{chat_id}_captcha")],
-        [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{chat_id}_rules"),
-         InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{chat_id}_farewell")],
-        [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{chat_id}_linkprot"),
-         InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{chat_id}_rss")],
-        [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{chat_id}_clean_delete"),
-         InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{chat_id}_stats")],
-        [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{chat_id}_stats_export"),
-         InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{chat_id}_toggle_stats")],
-        [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{chat_id}_edit_mood_q"),
-         InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{chat_id}_language")],
+        [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{cid}_welcome"),
+         InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{cid}_captcha")],
+        [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
+         InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
+        [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
+         InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss")],
+        [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{cid}_clean_delete"),
+         InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{cid}_stats")],
+        [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{cid}_stats_export"),
+         InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
+        [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{cid}_edit_mood_q"),
+         InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
          InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
     return InlineKeyboardMarkup(buttons)
 
-async def show_group_menu(query=None, chat_id=None, context=None):
+async def show_group_menu(query=None, cid=None, context=None):
     title = "📋 Gruppenmenü"
-    markup = build_group_menu(chat_id)
+    markup = build_group_menu(cid)
 
     if query:
         try:
@@ -65,7 +65,7 @@ async def show_group_menu(query=None, chat_id=None, context=None):
             else:
                 raise
     else:
-        await context.bot.send_message(chat_id=chat_id, text=title, reply_markup=markup)
+        await context.bot.send_message(chat_id=cid, text=title, reply_markup=markup)
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -78,8 +78,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["selected_chat_id"] = cid
         return await show_group_menu(query=query, chat_id=cid, context=context)
 
-    # Einheitliche Aufteilung der Callback-Daten
-    parts = data.split("_")
+    # 2) Einheitliche Aufteilung der Callback-Daten
+    parts = data.split("_", 2)
     if not parts[0].isdigit():
         cid = context.user_data.get("selected_chat_id")
         if not cid:
@@ -88,91 +88,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cid = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
-    action = parts[2] if len(parts) > 2 else None
-    lang = get_group_language(cid)
+    sub = parts[2] if len(parts) >= 3 else None
+    lang = get_lang(cid)
+    
+    # Define back button consistently
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]])
 
-    # 4) Tagesstatistiken Umschalten
-    if func == 'toggle_stats':
-        cur = is_daily_stats_enabled(chat_id)
-        set_daily_stats(chat_id, not cur)
-        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", lang), show_alert=True)
-        return await show_group_menu(query=query, chat_id=chat_id, context=context)
-
-    # 5) Linksperre-Menü
-    if func == "linkprot" and action is None:
-        prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
-        kb = [
-            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}",
-                                  callback_data=f"{chat_id}_linkprot_toggle")],
-            [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warn-Text senden', lang)}",
-                                  callback_data=f"{chat_id}_linkprot_warn_toggle")],
-            [InlineKeyboardButton(tr('Warn-Text bearbeiten', lang), callback_data=f"{chat_id}_linkprot_edit")],
-            [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Settopic)', lang)}",
-                                  callback_data=f"{chat_id}_linkprot_exc_toggle")],
-            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{chat_id}")],
-        ]
-        return await query.edit_message_text(tr('🔧 Linksperre-Einstellungen:', lang), reply_markup=InlineKeyboardMarkup(kb))
-
-    # 6) Aktionen der Linksperre
-    if func == "linkprot":
-        prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
-        if action == "toggle":
-            set_link_settings(chat_id, protection=not prot_on)
-            await query.answer(tr(f"Linkschutz {'aktiviert' if not prot_on else 'deaktiviert'}", lang), show_alert=True)
-        elif action == "warn_toggle":
-            set_link_settings(chat_id, warning_on=not warn_on)
-            await query.answer(tr(f"Warn-Text {'aktiviert' if not warn_on else 'deaktiviert'}", lang), show_alert=True)
-        elif action == "exc_toggle":
-            set_link_settings(chat_id, exceptions_on=not except_on)
-            await query.answer(tr(f"Ausnahmen {'aktiviert' if not except_on else 'deaktiviert'}", lang), show_alert=True)
-        elif action == "edit":
-            context.user_data['awaiting_link_warn'] = True
-            context.user_data['link_warn_group'] = chat_id
-            return await query.message.reply_text(tr("Sende jetzt deinen neuen Warn-Text:", lang),
-                                                  reply_markup=ForceReply(selective=True))
-        return await show_group_menu(query=query, chat_id=chat_id, context=context)
-
-    # 7) Mood-Frage bearbeiten
-    if func == "edit_mood_q":
-        context.user_data['awaiting_mood_question'] = True
-        context.user_data['mood_group_id'] = chat_id
-        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
-                                              reply_markup=ForceReply(selective=True))
-
-    if re.match(r'^\d+_stats_export$', data):
-        return await export_stats_csv_command(update, context)
-
-    if re.match(r'^\d+_stats$', data):
-        context.user_data['stats_group_id'] = int(data.split('_')[0])
-        return await stats_command(update, context)
-
-    # Handbuch
-    if data == 'help':
-        cid = context.user_data.get('selected_chat_id')
-        lang = get_group_language(cid) or 'de'
-        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
-        path = f'user_manual_{lang}.md'
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(translated)
-        await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
-        return await show_group_menu(query=query, chat_id=cid, context=context)
-
-    # 3) Submenüs: welcome, rules, farewell, rss, exceptions, captcha
-    # Splitting data into cid, func, [action]
-    parts = data.split('_',2)
-    if len(parts) >= 2 and parts[1] in ('welcome','rules','farewell','rss','exceptions','captcha','language'):
-        cid = int(parts[0])
-        func = parts[1]
-        sub = parts[2] if len(parts)>=3 else None
-        lang = get_lang(cid)
-        message = update.effective_message
-        chat = update.effective_chat
-        user = update.effective_user
-        chat_id = chat.id
-        back = InlineKeyboardMarkup([[InlineKeyboardButton('⬅️ Zurück', callback_data=f'group_{cid}')]])
-
+    # 3) Submenüs ZUERST prüfen
+    if func in ('welcome', 'rules', 'farewell', 'rss', 'exceptions', 'captcha', 'language'):
         # Welcome/Rules/Farewell Menü
-        if func in ('welcome','rules','farewell') and not sub:
+        if func in ('welcome', 'rules', 'farewell') and not sub:
             kb = [
                 [InlineKeyboardButton(tr('Bearbeiten', lang), callback_data=f"{cid}_{func}_edit"),
                  InlineKeyboardButton(tr('Anzeigen', lang), callback_data=f"{cid}_{func}_show")],
@@ -242,6 +167,73 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_captcha_settings(cid, en, ctype, new_behavior)
             await query.answer(tr("Captcha-Verhalten geändert", lang), show_alert=True)
             return await show_group_menu(query=query, chat_id=cid, context=context)
+
+
+    # 4) Tagesstatistiken Umschalten
+    if func == 'toggle_stats':
+        cur = is_daily_stats_enabled(cid)
+        set_daily_stats(cid, not cur)
+        await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", lang), show_alert=True)
+        return await show_group_menu(query=query, chat_id=cid, context=context)
+
+    # 5) Linksperre-Menü
+    if func == "linkprot" and sub is None:  # Hier sub statt action verwenden!
+        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
+        kb = [
+            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}",
+                                  callback_data=f"{cid}_linkprot_toggle")],
+            [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warn-Text senden', lang)}",
+                                  callback_data=f"{cid}_linkprot_warn_toggle")],
+            [InlineKeyboardButton(tr('Warn-Text bearbeiten', lang), callback_data=f"{cid}_linkprot_edit")],
+            [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Settopic)', lang)}",
+                                  callback_data=f"{cid}_linkprot_exc_toggle")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")],
+        ]
+        return await query.edit_message_text(tr('🔧 Linksperre-Einstellungen:', lang), reply_markup=InlineKeyboardMarkup(kb))
+
+    # 6) Aktionen der Linksperre
+    if func == "linkprot" and sub:  # Hier sub statt action verwenden!
+        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
+        if sub == "toggle":  # sub statt action
+            set_link_settings(cid, protection=not prot_on)
+            await query.answer(tr(f"Linkschutz {'aktiviert' if not prot_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "warn_toggle":  # sub statt action
+            set_link_settings(cid, warning_on=not warn_on)
+            await query.answer(tr(f"Warn-Text {'aktiviert' if not warn_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "exc_toggle":  # sub statt action
+            set_link_settings(cid, exceptions_on=not except_on)
+            await query.answer(tr(f"Ausnahmen {'aktiviert' if not except_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "edit":  # sub statt action
+            context.user_data['awaiting_link_warn'] = True
+            context.user_data['link_warn_group'] = cid
+            return await query.message.reply_text(tr("Sende jetzt deinen neuen Warn-Text:", lang),
+                                              reply_markup=ForceReply(selective=True))
+        return await show_group_menu(query=query, chat_id=cid, context=context)
+    
+    # 7) Mood-Frage bearbeiten
+    if func == "edit_mood_q":
+        context.user_data['awaiting_mood_question'] = True
+        context.user_data['mood_group_id'] = cid
+        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
+                                              reply_markup=ForceReply(selective=True))
+
+    if re.match(r'^\d+_stats_export$', data):
+        return await export_stats_csv_command(update, context)
+
+    if re.match(r'^\d+_stats$', data):
+        context.user_data['stats_group_id'] = int(data.split('_')[0])
+        return await stats_command(update, context)
+
+    # Handbuch
+    if data == 'help':
+        cid = context.user_data.get('selected_chat_id')
+        lang = get_group_language(cid) or 'de'
+        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
+        path = f'user_manual_{lang}.md'
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(translated)
+        await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
     # 4) Detail-Handler Actions (edit/show/delete etc.)
     parts = data.split('_')
