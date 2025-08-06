@@ -127,11 +127,32 @@ HELP_TEXT = '''
 
 async def send_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Sendet das Benutzerhandbuch in der Nutzersprache.
+    Sendet das Benutzerhandbuch in der Nutzersprache als Datei
+    oder als kurze Nachricht mit Datei, abhängig vom Kontext.
     """
     user_lang = update.effective_user.language_code or 'de'
     translated = translate_hybrid(HELP_TEXT, target_lang=user_lang)
-    await update.message.reply_text(translated, parse_mode='Markdown')
+    
+    # Kurze Einleitung senden
+    intro_text = translate_hybrid("*GreenyGroupManager - Handbuch*\n\nHier ist das vollständige Benutzerhandbuch als Datei:", 
+                                 target_lang=user_lang)
+    await update.message.reply_text(intro_text, parse_mode='Markdown')
+    
+    # Handbuch als Datei senden
+    file_name = f"GreenyGroupManager_Manual_{user_lang}.txt"
+    with open(file_name, 'w', encoding='utf-8') as f:
+        f.write(translated)
+    
+    with open(file_name, 'rb') as f:
+        await update.message.reply_document(
+            document=f,
+            filename=file_name,
+            caption=translate_hybrid("Benutzerhandbuch", target_lang=user_lang)
+        )
+    
+    # Optional: Temporäre Datei löschen
+    import os
+    os.remove(file_name)
 
 help_handler = CommandHandler('help', send_manual)
 
