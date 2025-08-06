@@ -78,7 +78,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1) Gruppe wurde ausgewählt
     if data.startswith("group_"):
         print(f"DEBUG: Group selected")
-        cid = int(data.split("_")[1])
+        parts = data.split("_", 1)
+        if len(parts) != 2 or not parts[1].isdigit():
+            # Ungültiges Format, Nutzer informieren und abbrechen
+            update.callback_query.answer(
+                "Ungültige Auswahl.", show_alert=True
+        )
+        return
+        cid = int(parts[1])
         context.user_data["selected_chat_id"] = cid
         return await show_group_menu(query=query, cid=cid, context=context)
 

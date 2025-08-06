@@ -3,8 +3,10 @@ import datetime
 import logging
 import statistic
 import asyncio
-from telegram.ext import ApplicationBuilder, filters, MessageHandler
+import signal
+from telegram.ext import ApplicationBuilder, filters, MessageHandler, Application
 from telethon_client import telethon_client, start_telethon
+from telethon import TelegramClient
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
@@ -30,6 +32,17 @@ PORT = int(os.getenv("PORT", 8443))
 async def log_update(update, context):
     logging.debug(f"Update angekommen: {update}")
 
+async def shutdown(signal, loop, client: TelegramClient, app: Application):
+    # Stoppe Telegram-Handlers
+    await app.stop()
+    # Trenne Telethon-Client
+    await client.disconnect()
+    # Alle übrigen Tasks abbrechen
+    tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task(loop)]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
 def main():
     setup_logging()
