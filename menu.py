@@ -238,7 +238,24 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await query.edit_message_text('➡ Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
             elif sub == 'list':
                 feeds = db_list_rss_feeds(cid)
-                text = 'Keine RSS-Feeds.' if not feeds else 'Aktive Feeds:\n' + '\n'.join(feeds)
+                if not feeds:
+                    text = 'Keine RSS-Feeds.'
+                else:
+                    # Konvertiere die Tupel in lesbare Strings
+                    feed_strings = []
+                    for feed in feeds:
+                        if isinstance(feed, tuple):
+                            # Prüfe ob es sich um ein (url, title) Tupel handelt
+                            if len(feed) >= 2:
+                                feed_strings.append(f"{feed[1]}: {feed[0]}")
+                            else:
+                                feed_strings.append(str(feed[0]))
+                        else:
+                            # Falls es bereits ein String ist
+                            feed_strings.append(str(feed))
+        
+                    text = 'Aktive Feeds:\n' + '\n'.join(feed_strings)
+    
                 return await query.edit_message_text(text, reply_markup=back)
             elif sub == 'stop':
                 remove_rss_feed(cid)
@@ -291,11 +308,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['stats_group_id'] = cid
         return await stats_command(update, context)
 
+    # Mood-Frage ändern (korrigierter Handler)
+    elif func == 'edit' and sub == 'mood_q':
+        print("DEBUG: Mood-Frage ändern erkannt!")
+        context.user_data['awaiting_mood_question'] = True
+        context.user_data['mood_group_id'] = cid
+        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
+                                          reply_markup=ForceReply(selective=True))
+                                          
+    # Original-Handler beibehalten für Abwärtskompatibilität
     elif func == "edit_mood_q":
         context.user_data['awaiting_mood_question'] = True
         context.user_data['mood_group_id'] = cid
         return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
-                                              reply_markup=ForceReply(selective=True))
+                                          reply_markup=ForceReply(selective=True))
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
