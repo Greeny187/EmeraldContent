@@ -67,34 +67,26 @@ async def show_group_menu(query=None, chat_id=None, context=None):
     else:
         await context.bot.send_message(chat_id=chat_id, text=title, reply_markup=markup)
 
-# ⬇️ Callback-Handler
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-        data = query.data
+    await query.answer()
+    data = query.data
 
-        if data.startswith("group_"):
-            cid = int(data.split("_")[1])
-            context.user_data["selected_chat_id"] = cid
-            return await show_group_menu(query=query, chat_id=cid, context=context)
+    # 1) Gruppe wurde ausgewählt
+    if data.startswith("group_"):
+        cid = int(data.split("_")[1])
+        context.user_data["selected_chat_id"] = cid
+        return await show_group_menu(query=query, chat_id=cid, context=context)
 
-        # Weiterverarbeitung für Submenüs und Aktionen
-        parts = data.split('_', 2)
-        if not parts[0].isdigit():
-            cid = context.user_data.get("selected_chat_id")
-            if not cid:
-                return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
-            return await show_group_menu(query=query, chat_id=cid, context=context)
-
-    # 3) Numerische Callback-Pattern
-    parts = data.split('_', 2)
+    # 2) Alle weiteren Aktionen
+    parts = data.split("_", 2)
     if not parts[0].isdigit():
-        # Fallback zurück ins Hauptmenü
-        cid = context.user_data.get('selected_chat_id')
-        if cid:
-            return await show_group_menu(query=query, chat_id=cid, context=context)
-        return
+        cid = context.user_data.get("selected_chat_id")
+        if not cid:
+            return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
+        return await show_group_menu(query=query, chat_id=cid, context=context)
+
+    # 3) Submenü oder Detail-Funktion
     chat_id = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
     action = parts[2] if len(parts) > 2 else None
