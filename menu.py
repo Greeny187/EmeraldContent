@@ -71,15 +71,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    
+    # DEBUG: Zeige was geklickt wurde
+    print(f"DEBUG: Callback data = {data}")
 
     # 1) Gruppe wurde ausgewählt
     if data.startswith("group_"):
+        print(f"DEBUG: Group selected")
         cid = int(data.split("_")[1])
         context.user_data["selected_chat_id"] = cid
         return await show_group_menu(query=query, cid=cid, context=context)
 
     # 2) Spezielle Handler (help, group_select)
     if data == 'help':
+        print(f"DEBUG: Help clicked")
         cid = context.user_data.get('selected_chat_id')
         lang = get_group_language(cid) or 'de'
         translated = translate_hybrid(HELP_TEXT, target_lang=lang)
@@ -90,6 +95,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_group_menu(query=query, cid=cid, context=context)
 
     if data == 'group_select':
+        print(f"DEBUG: Group select clicked")
         groups = get_visible_groups(update.effective_user.id)
         if not groups:
             return await query.edit_message_text("⚠️ Keine Gruppen verfügbar.")
@@ -98,7 +104,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 3) Parse Callback-Daten
     parts = data.split("_", 2)
+    print(f"DEBUG: parts = {parts}")
+    
     if not parts[0].isdigit():
+        print(f"DEBUG: First part not digit, fallback to main menu")
         cid = context.user_data.get("selected_chat_id")
         if not cid:
             return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
@@ -107,12 +116,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
     sub = parts[2] if len(parts) >= 3 else None
-    lang = get_lang(cid)
-    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]])
-
-    # 4) SUBMENÜS ZUERST - direkt nach dem Parsing!
-    # Welcome/Rules/Farewell Submenü
+    
+    print(f"DEBUG: cid={cid}, func={func}, sub={sub}")
+    
+    # 4) SUBMENÜS ZUERST
     if func in ('welcome', 'rules', 'farewell') and sub is None:
+        print(f"DEBUG: Welcome/Rules/Farewell submenu for {func}")
         kb = [
             [InlineKeyboardButton(tr('Bearbeiten', lang), callback_data=f"{cid}_{func}_edit"),
              InlineKeyboardButton(tr('Anzeigen', lang), callback_data=f"{cid}_{func}_show")],
@@ -122,8 +131,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = tr(f"⚙️ {func.capitalize()} verwalten:", lang)
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-    # RSS Submenü
     elif func == 'rss' and sub is None:
+        print(f"DEBUG: RSS submenu")
         kb = [
             [InlineKeyboardButton(tr('Auflisten', lang), callback_data=f"{cid}_rss_list"),
              InlineKeyboardButton(tr('Feed hinzufügen', lang), callback_data=f"{cid}_rss_setrss")],
