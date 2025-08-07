@@ -55,10 +55,21 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
             # id bleibt chat_id
             admins = getattr(full.full_chat, "admins_count", 0) or 0
             members = getattr(full.full_chat, "participants_count", 0) or 0
-            topics = getattr(getattr(full.full_chat, "forum_info", None), "total_count", 0) or 0
+
+            # Korrekte Topic-Zählung: forum_info kann fehlen oder total_count kann None sein
+            forum_info = getattr(full.full_chat, "forum_info", None)
+            if forum_info and hasattr(forum_info, "topics"):
+                topics = len(forum_info.topics or [])
+            elif forum_info and hasattr(forum_info, "total_count"):
+                topics = forum_info.total_count or 0
+            else:
+                topics = 0
+
             bots = len(getattr(full.full_chat, "bot_info", []) or [])
             description = getattr(full.full_chat, "about", "") or ""
             title = getattr(chat, "title", "–")
+
+            logger.info(f"[telethon_stats_job] Gruppe {chat_id}: topics={topics}")
 
             conn = _db_pool.getconn()
             conn.autocommit = True
