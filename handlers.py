@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, get_group_language,
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings)
-from statistic import stats_dev_command, DEVELOPER_IDS
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler
@@ -492,7 +491,6 @@ def register_handlers(app):
     
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("dashboard", stats_dev_command, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
