@@ -50,7 +50,7 @@ def build_group_menu(cid):
     return InlineKeyboardMarkup(buttons)
 
 async def show_group_menu(query=None, cid=None, context=None):
-    title = ("📋 Gruppenmenü", get_group_language(cid) or 'de')
+    title = tr("📋 Gruppenmenü", get_group_language(cid) or 'de')
     markup = build_group_menu(cid)
 
     if query:
