@@ -81,11 +81,7 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
 
 async def fetch_rss_feed(context: CallbackContext):
     for chat_id, url, topic_id in get_rss_feeds():
-        # Hole nur die letzten 100 Links aus der DB
-        posted_links = list(get_posted_links(chat_id))
-        # Optional: sortieren, falls Reihenfolge wichtig ist (z.B. nach Einfügezeit)
-        # posted_links = sorted(posted_links)  # falls du ein Zeitfeld hast, sonst einfach als Liste
-        posted = set(posted_links[-100:])
+        posted = get_posted_links(chat_id)
         feed = feedparser.parse(url)
         entries = sorted(feed.entries, key=lambda e: getattr(e, "published_parsed", 0) or 0)
         for entry in entries:
