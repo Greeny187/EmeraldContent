@@ -202,8 +202,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if sub == 'show' and func in get_map:
                 rec = get_map[func](cid)
-                text = rec[1] if rec else f"Keine {func}-Nachricht gesetzt."
-                return await query.edit_message_text(text, reply_markup=back)
+                # Annahme: rec = (id, text, media) oder (id, text) falls kein media
+                if rec:
+                    text = rec[1]
+                    media = rec[2] if len(rec) > 2 else None
+                    if media:
+                        await query.message.reply_photo(photo=media, caption=text, reply_markup=back)
+                    else:
+                        await query.edit_message_text(text, reply_markup=back)
+                else:
+                    await query.edit_message_text(f"Keine {func}-Nachricht gesetzt.", reply_markup=back)
+                return
             elif sub == 'delete' and func in del_map:
                 del_map[func](cid)
                 await query.answer(tr(f"✅ {func.capitalize()} gelöscht.", lang), show_alert=True)
