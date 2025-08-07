@@ -521,14 +521,14 @@ def get_rss_feeds(cur) -> List[Tuple[int, str, int]]:
     return cur.fetchall()
 
 @_with_cursor
-def get_posted_links(cur, chat_id: int) -> set:
-    cur.execute("SELECT link FROM last_posts WHERE chat_id = %s;", (chat_id,))
-    return {row[0] for row in cur.fetchall()}
+def get_posted_links(cur, chat_id: int) -> list:
+    cur.execute("SELECT link FROM last_posts WHERE chat_id = %s ORDER BY posted_at DESC;", (chat_id,))
+    return [row[0] for row in cur.fetchall()]
 
 @_with_cursor
 def add_posted_link(cur, chat_id: int, link: str):
     cur.execute(
-        "INSERT INTO last_posts (chat_id, link) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
+        "INSERT INTO last_posts (chat_id, link, posted_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;",
         (chat_id, link)
     )
 
@@ -538,10 +538,10 @@ def prune_posted_links(chat_id, keep_last=100):
             cur.execute("""
                 DELETE FROM last_posts
                  WHERE chat_id = %s
-                   AND id NOT IN (
-                       SELECT id FROM last_posts
+                   AND link NOT IN (
+                       SELECT link FROM last_posts
                         WHERE chat_id = %s
-                        ORDER BY id DESC
+                        ORDER BY posted_at DESC
                         LIMIT %s
                    )
             """, (chat_id, chat_id, keep_last))
@@ -609,6 +609,9 @@ def migrate_db():
         logging.info("Starte Migration für bestehende Tabellen...")
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
+        )
+        cur.execute(
+            "ALTER TABLE last_posts ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP DEFAULT NOW();"
         )
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS language_code TEXT NOT NULL DEFAULT 'de';"
