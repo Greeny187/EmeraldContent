@@ -23,22 +23,16 @@ async def list_chats():
 
 async def import_members(group_identifier: str):
     from telethon.sessions import StringSession
-    client = TelegramClient(StringSession(os.getenv("SESSION_STRING")),
-    api_id, api_hash)
+    client = TelegramClient(StringSession(os.getenv("SESSION_STRING")), api_id, api_hash)
     await client.start()
     
     try:
-        if group_identifier.lstrip('-').isdigit():
-            target = None
-            async for dialog in client.iter_dialogs():
-                if dialog.entity.id == int(group_identifier):
-                    target = dialog.entity
-                    break
-            if not target:
-                raise ValueError("ID nicht in deinen Chats gefunden.")
-            entity = target
-        else:
-            entity = await client.get_entity(group_identifier)
+        identifier = (
+            int(group_identifier)
+            if group_identifier.lstrip('-').isdigit()
+            else group_identifier
+        )
+        entity = await client.get_entity(identifier)
     except Exception as e:
         print(f"Fehler beim Laden der Gruppe '{group_identifier}': {e}")
         await client.disconnect()
@@ -46,10 +40,8 @@ async def import_members(group_identifier: str):
 
     # Bestimme die richtige chat_id für die DB
     if isinstance(entity, Channel):
-        # Supergroups und Kanäle: Bot-API-Chat-ID benötigt den -100 Präfix
         chat_id_db = int(f"-100{entity.id}")
     else:
-        # Normale Gruppen/Chats haben ihre ID direkt
         chat_id_db = entity.id
 
     print(f"\nImportiere Mitglieder von: {entity.title or entity.username} (DB chat_id={chat_id_db})\n")
@@ -63,9 +55,12 @@ async def import_members(group_identifier: str):
     await client.disconnect()
 
 async def main():
-    parser = argparse.ArgumentParser(description="Importiere Telegram-Mitglieder und speichere sie in der vorhandenen Datenbank")
+    parser = argparse.ArgumentParser(
+        description="Importiere Telegram-Mitglieder und speichere sie in der vorhandenen Datenbank"
+    )
     parser.add_argument("--list", action="store_true", help="Liste alle verfügbaren Gruppen/Kanäle auf")
     parser.add_argument("--group", "-g", help="ID oder Username (z.B. @channel) der Gruppe")
+    parser.add_argument("--yes", action="store_true", help="Bestätigt den Import automatisch (für nicht-interaktive Umgebungen)")
     args = parser.parse_args()
 
     if args.list:
@@ -76,11 +71,12 @@ async def main():
         print("Nutze --list, um zuerst alle Chats aufzulisten, oder gib mit --group eine ID/Username an.")
         return
 
-    confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren und in der DB speichern? [j/N] ")
-    if confirm.lower() != 'j':
-        print("Abgebrochen.")
-        return
-
+    if not args.yes:
+        confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren und in der DB speichern? [j/N] ")
+        if confirm.lower() != 'j':
+            print("Abgebrochen.")
+            return
+    
     await import_members(args.group)
 
 if __name__ == '__main__':
