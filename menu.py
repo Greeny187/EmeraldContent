@@ -281,21 +281,24 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                   reply_markup=ForceReply(selective=True))
             return await show_group_menu(query=query, cid=cid, context=context)
 
-        # Language setzen
-        elif sub.startswith('setlang_'):
-            lang_code = sub.split('_', 1)[1]
+        # === Sprachcode setzen ===
+        elif func == 'setlang' and sub:
+            lang_code = sub  # sub enthält z.B. 'de', 'en', ...
             set_group_language(cid, lang_code)
-            await query.answer(tr(f"Gruppensprache gesetzt: {LANGUAGES[lang_code]}", lang_code), show_alert=True)
-            return await show_group_menu(query=query, cid=cid, context=context)
+            # Bestätigung im gewählten Ziel-Langcode
+            await query.answer(
+                tr(f"Gruppensprache gesetzt: {LANGUAGES.get(lang_code, lang_code)}", lang_code),
+                show_alert=True
+            )
 
     # 6) DANACH die Einzelfunktionen...
-    if func == 'toggle_stats':
+    if func == 'toggle' and sub == 'stats':
         cur = is_daily_stats_enabled(cid)
         set_daily_stats(cid, not cur)
         await query.answer(tr(f"Tagesstatistik {'aktiviert' if not cur else 'deaktiviert'}", lang), show_alert=True)
         return await show_group_menu(query=query, cid=cid, context=context)
 
-    elif func == 'clean_delete':
+    elif func == 'clean' and sub == 'delete':
         await query.answer('⏳ Bereinige…')
         try:
             # Debug-Ausgabe zur Fehleranalyse
@@ -309,10 +312,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_text = f"⚠️ Fehler bei der Bereinigung: {str(e)}"
             return await query.edit_message_text(error_text, reply_markup=back)
 
-    elif func == 'stats_export':
+    elif func == 'stats' and sub == 'export':
+        # Rufe den CSV-Export auf
         return await export_stats_csv_command(update, context)
 
-    elif func == 'stats':
+    elif func == 'stats' and not sub:
         context.user_data['stats_group_id'] = cid
         return await stats_command(update, context)
 
