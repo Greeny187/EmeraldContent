@@ -207,7 +207,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text = rec[1]
                     media = rec[2] if len(rec) > 2 else None
                     if media:
-                        await query.message.reply_photo(photo=media, caption=text, reply_markup=back)
+                        # Prüfe, ob es eine Telegram File-ID ist (beginnt meist mit "AgAC" oder "CQAC")):
+                        if isinstance(media, str) and (media.startswith("AgAC") or media.startswith("CQAC")):
+                            await query.message.reply_photo(photo=media, caption=text, reply_markup=back)
+                        else:
+                            # Andernfalls als Datei öffnen (lokaler Pfad)
+                            try:
+                                with open(media, "rb") as f:
+                                    await query.message.reply_photo(photo=f, caption=text, reply_markup=back)
+                            except Exception as e:
+                                await query.edit_message_text(f"{text}\n\n⚠️ Bild konnte nicht geladen werden: {e}", reply_markup=back)
                     else:
                         await query.edit_message_text(text, reply_markup=back)
                 else:
