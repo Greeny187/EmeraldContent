@@ -532,6 +532,20 @@ def add_posted_link(cur, chat_id: int, link: str):
         (chat_id, link)
     )
 
+def prune_posted_links(chat_id, keep_last=100):
+    with _db_pool.getconn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM posted_links
+                 WHERE chat_id = %s
+                   AND id NOT IN (
+                       SELECT id FROM posted_links
+                        WHERE chat_id = %s
+                        ORDER BY id DESC
+                        LIMIT %s
+                   )
+            """, (chat_id, chat_id, keep_last))
+
 def get_all_group_ids():
     conn = _db_pool.getconn()
     try:

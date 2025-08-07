@@ -81,7 +81,8 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
 
 async def fetch_rss_feed(context: CallbackContext):
     for chat_id, url, topic_id in get_rss_feeds():
-        posted = get_posted_links(chat_id)
+        # Hole nur die letzten 100 Links aus der DB
+        posted = set(get_posted_links(chat_id)[-100:])
         feed = feedparser.parse(url)
         entries = sorted(feed.entries, key=lambda e: getattr(e, "published_parsed", 0) or 0)
         for entry in entries:
@@ -97,6 +98,12 @@ async def fetch_rss_feed(context: CallbackContext):
             except Exception as e:
                 logger.error(f"Failed to send RSS entry: {e}")
             add_posted_link(chat_id, entry.link)
+        # Bereinige die gespeicherten Links auf die letzten 100
+        all_links = get_posted_links(chat_id)
+        if len(all_links) > 100:
+            # Schreibe eine Funktion in deiner DB, die alte Links entfernt:
+            from database import prune_posted_links
+            prune_posted_links(chat_id, keep_last=100)
 
 async def rss_url_reply(update, context):
     """
