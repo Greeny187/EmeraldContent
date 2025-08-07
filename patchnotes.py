@@ -1,10 +1,12 @@
-__version__ = "0.5"
+__version__ = "0.8"
+
 PATCH_NOTES = (
-     "• Statische FAQ entfernt\n"
-     "• Alle weiteren Funktionen über das Menü bearbeiten, anzeigen und löschen\n"
-     "• Kleine Fehlerbehebungen\n"
-     "• Datenbank ausgelagert (database.py), modularer Aufbau\n"
-     "• Botcode verschlankt\n"
-     "• Versionsinfo mit Patchnotes hinzugefügt\n"
-     "• Nur Inhaber und Admins können den Bot starten und Einstellungen bearbeiten\n"
+    "• Captcha bei Gruppenbeitritt\n"
+    "• Linksperre individualisiert\n"
+    "• Bugfixes bei der Statistik\n"
+    "• Handbuch erweitert\n"
+    "• Verbesserte Berechtigungsprüfungen für Inhaber und Admins\n"
+    "• Datenbankdaten um Telethon-Integration erweitert\n"
+    "• Performance-Optimierungen im Datenbankzugriff\n"
+    "• Kleine Fehlerbehebungen und Feinschliff\n"
 )
