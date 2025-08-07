@@ -536,10 +536,10 @@ def prune_posted_links(chat_id, keep_last=100):
     with _db_pool.getconn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                DELETE FROM last_post
+                DELETE FROM last_posts
                  WHERE chat_id = %s
                    AND id NOT IN (
-                       SELECT id FROM last_post
+                       SELECT id FROM last_posts
                         WHERE chat_id = %s
                         ORDER BY id DESC
                         LIMIT %s
