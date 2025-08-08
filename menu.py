@@ -45,7 +45,8 @@ def build_group_menu(cid):
         [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{cid}_edit_mood_q"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
-         InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
+        [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -352,6 +353,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mood_group_id'] = cid
         return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
                                           reply_markup=ForceReply(selective=True))
+
+    # Patchnotes-Handler
+    if data == 'patchnotes':
+        from patchnotes import PATCH_NOTES, __version__
+        lang = get_group_language(context.user_data.get('selected_chat_id')) or 'de'
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{PATCH_NOTES}"
+        await query.message.reply_text(text, parse_mode="HTML")
+        cid = context.user_data.get('selected_chat_id')
+        return await show_group_menu(query=query, cid=cid, context=context)
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
