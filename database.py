@@ -629,6 +629,9 @@ def migrate_db():
             "ALTER TABLE last_posts ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP DEFAULT NOW();"
         )
         cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_last_posts_feed ON last_posts(chat_id, feed_url);"
+        )
+        cur.execute(
             "ALTER TABLE last_posts ADD COLUMN IF NOT EXISTS feed_url TEXT;"
         )
         cur.execute(
