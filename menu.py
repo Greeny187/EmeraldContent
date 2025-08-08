@@ -13,6 +13,7 @@ from access import get_visible_groups
 from statistic import stats_command, export_stats_csv_command
 from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
+from patchnotes import PATCH_NOTES, __version__
 from user_manual import HELP_TEXT
 import logging, re
 
@@ -78,9 +79,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Patchnotes-Handler direkt nach data = query.data
     if data == 'patchnotes':
-        from patchnotes import PATCH_NOTES, __version__
         lang = get_group_language(context.user_data.get('selected_chat_id')) or 'de'
-        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{PATCH_NOTES}"
+        notes = PATCH_NOTES
+        if lang != 'de':
+            notes = translate_hybrid(PATCH_NOTES, target_lang=lang)
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
         await query.message.reply_text(text, parse_mode="HTML")
         cid = context.user_data.get('selected_chat_id')
         return await show_group_menu(query=query, cid=cid, context=context)
