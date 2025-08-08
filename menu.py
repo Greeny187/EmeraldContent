@@ -76,6 +76,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # DEBUG: Zeige was geklickt wurde
     print(f"DEBUG: Callback data = {data}")
 
+    # Patchnotes-Handler direkt nach data = query.data
+    if data == 'patchnotes':
+        from patchnotes import PATCH_NOTES, __version__
+        lang = get_group_language(context.user_data.get('selected_chat_id')) or 'de'
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{PATCH_NOTES}"
+        await query.message.reply_text(text, parse_mode="HTML")
+        cid = context.user_data.get('selected_chat_id')
+        return await show_group_menu(query=query, cid=cid, context=context)
+
     # 1) Gruppe wurde ausgewählt (KORRIGIERT)
     if data.startswith("group_"):
         print(f"DEBUG: Group selected")
@@ -353,15 +362,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mood_group_id'] = cid
         return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
                                           reply_markup=ForceReply(selective=True))
-
-    # Patchnotes-Handler
-    if data == 'patchnotes':
-        from patchnotes import PATCH_NOTES, __version__
-        lang = get_group_language(context.user_data.get('selected_chat_id')) or 'de'
-        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{PATCH_NOTES}"
-        await query.message.reply_text(text, parse_mode="HTML")
-        cid = context.user_data.get('selected_chat_id')
-        return await show_group_menu(query=query, cid=cid, context=context)
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
