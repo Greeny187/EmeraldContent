@@ -9,7 +9,7 @@ if not TOKEN:
     raise ValueError("BOT_TOKEN nicht gesetzt")
 
 # Chat-ID manuell eintragen oder als Umgebungsvariable
-CHAT_ID = 1002873784403
+CHAT_ID = -1002873784403
 
 async def import_group():
     bot = Bot(TOKEN)
