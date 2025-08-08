@@ -532,6 +532,21 @@ def add_posted_link(cur, chat_id: int, link: str):
         (chat_id, link)
     )
 
+@_with_cursor
+def get_last_posted_link(cur, chat_id: int, feed_url: str) -> str:
+    cur.execute("SELECT link FROM last_posts WHERE chat_id = %s AND feed_url = %s;", (chat_id, feed_url))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+@_with_cursor
+def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
+    cur.execute("""
+        INSERT INTO last_posts (chat_id, feed_url, link, posted_at)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (chat_id, feed_url) DO UPDATE
+            SET link = EXCLUDED.link, posted_at = EXCLUDED.posted_at;
+    """, (chat_id, feed_url, link))
+
 def prune_posted_links(chat_id, keep_last=100):
     with _db_pool.getconn() as conn:
         with conn.cursor() as cur:
@@ -612,6 +627,9 @@ def migrate_db():
         )
         cur.execute(
             "ALTER TABLE last_posts ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP DEFAULT NOW();"
+        )
+        cur.execute(
+            "ALTER TABLE last_posts ADD COLUMN IF NOT EXISTS feed_url TEXT;"
         )
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS language_code TEXT NOT NULL DEFAULT 'de';"

@@ -3,7 +3,7 @@ import logging
 from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
 from database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed,
-    get_rss_feeds, set_rss_topic, get_posted_links, add_posted_link, get_rss_topic)
+    get_rss_feeds, set_rss_topic, get_posted_links, add_posted_link, get_rss_topic, get_last_posted_link, set_last_posted_link)
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +81,20 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
 
 async def fetch_rss_feed(context: CallbackContext):
     for chat_id, url, topic_id in get_rss_feeds():
-        posted = get_posted_links(chat_id)
+        last_link = get_last_posted_link(chat_id, url)
         feed = feedparser.parse(url)
         entries = sorted(feed.entries, key=lambda e: getattr(e, "published_parsed", 0) or 0)
+        # Nur posten, was nach dem letzten Link kommt
+        to_post = []
+        found_last = last_link is None
         for entry in entries:
-            if entry.link in posted:
+            if not found_last:
+                if entry.link == last_link:
+                    found_last = True
                 continue
+            to_post.append(entry)
+        if to_post:
+            entry = to_post[-1]  # nur den neuesten posten
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
@@ -94,14 +102,9 @@ async def fetch_rss_feed(context: CallbackContext):
                     text=f"📰 *{entry.title}*\n{entry.link}",
                     parse_mode="Markdown"
                 )
+                set_last_posted_link(chat_id, url, entry.link)
             except Exception as e:
                 logger.error(f"Failed to send RSS entry: {e}")
-            add_posted_link(chat_id, entry.link)
-        # Bereinige die gespeicherten Links auf die letzten 100
-        all_links = list(get_posted_links(chat_id))
-        if len(all_links) > 100:
-            from database import prune_posted_links
-            prune_posted_links(chat_id, keep_last=100)
 
 async def rss_url_reply(update, context):
     """
@@ -134,4 +137,4 @@ def register_rss(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)
     
     # Job zum Einlesen
-    app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=10)
+    app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)
