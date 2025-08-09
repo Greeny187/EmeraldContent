@@ -4,7 +4,7 @@ from datetime import date, time
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes
 from telethon_client import telethon_client, start_telethon
-from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
 from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
 from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
@@ -29,15 +29,30 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             top3 = get_group_stats(chat_id, today)
             if not top3:
                 continue
-            lines = [
-                f"{i+1}. <a href='tg://user?id={uid}'>User</a>: {cnt} Nachrichten"
-                for i, (uid, cnt) in enumerate(top3)
-            ]
+            
+            # Create lines with proper HTML formatting
+            lines = []
+            for i, (uid, cnt) in enumerate(top3):
+                try:
+                    # Try to get user info
+                    user = await bot.get_chat_member(chat_id, uid)
+                    name = user.user.first_name
+                    mention = f"<a href='tg://user?id={uid}'>{name}</a>"
+                except Exception:
+                    # Fallback if user info can't be retrieved
+                    mention = f"User {uid}"
+                
+                lines.append(f"{i+1}. {mention}: {cnt} Nachrichten")
+            
+            # Format message with proper HTML
             text = (
-                f"📊 *Tagesstatistik {today.isoformat()}*\n"
-                f"📝 Top 3 aktive Mitglieder:\n" + "\n".join(lines)
+                f"📊 <b>Tagesstatistik {today.isoformat()}</b>\n"
+                f"📝 Top {len(lines)} aktive Mitglieder:\n" + "\n".join(lines)
             )
-            await bot.send_message(chat_id, text, parse_mode="HTML")
+            
+            # Only send if we have data
+            if lines:
+                await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
 
@@ -56,14 +71,21 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
             admins = getattr(full.full_chat, "admins_count", 0) or 0
             members = getattr(full.full_chat, "participants_count", 0) or 0
 
-            # Korrekte Topic-Zählung: forum_info kann fehlen oder total_count kann None sein
-            forum_info = getattr(full.full_chat, "forum_info", None)
-            if forum_info and hasattr(forum_info, "topics"):
-                topics = len(forum_info.topics or [])
-            elif forum_info and hasattr(forum_info, "total_count"):
-                topics = forum_info.total_count or 0
-            else:
-                topics = 0
+            # Robust topic count
+            topics = 0
+            try:
+                res = await telethon_client(GetForumTopicsRequest(
+                    channel=entity, offset_date=None, offset_id=0, offset_topic=0, limit=1
+                ))
+                topics = getattr(res, "count", 0) or 0
+            except Exception:
+                forum_info = getattr(full.full_chat, "forum_info", None)
+                if forum_info and hasattr(forum_info, "topics"):
+                    topics = len(forum_info.topics or [])
+                elif forum_info and hasattr(forum_info, "total_count"):
+                    topics = forum_info.total_count or 0
+                else:
+                    topics = 0
 
             bots = len(getattr(full.full_chat, "bot_info", []) or [])
             description = getattr(full.full_chat, "about", "") or ""
@@ -88,19 +110,6 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
                      WHERE chat_id = %s;
                     """,
                     (title, description, members, admins, topics, bots, chat_id)
-                )
-
-                # 2) daily_stats Tabelle aktualisieren
-                cur.execute(
-                    """
-                    INSERT INTO daily_stats (chat_id, stat_date, members, admins)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (chat_id, stat_date)
-                    DO UPDATE SET
-                        members = EXCLUDED.members,
-                        admins  = EXCLUDED.admins;
-                    """,
-                    (chat_id, date.today(), members, admins)
                 )
             _db_pool.putconn(conn)
         except Exception as e:
