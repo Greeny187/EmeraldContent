@@ -4,11 +4,13 @@ import re
 import logging
 import random, datetime
 from datetime import date, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, get_group_language,
-remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings)
+remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
+get_night_mode, set_night_mode, get_group_language)  # <-- NEU
+from zoneinfo import ZoneInfo  # <-- NEU)
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler
@@ -20,6 +22,105 @@ logger = logging.getLogger(__name__)
 
 def tr(text: str, lang: str) -> str:
     return translate_hybrid(text, target_lang=lang)
+
+def _now_minutes_in_tz(tz_str: str) -> int:
+    now = datetime.datetime.now(ZoneInfo(tz_str))
+    return now.hour * 60 + now.minute
+
+def _is_quiet_now(start_min: int, end_min: int, now_min: int) -> bool:
+    # Fenster über Mitternacht: start > end -> quiet wenn now >= start oder now < end
+    if start_min == end_min:
+        return False  # 0-Länge Fenster
+    if start_min < end_min:
+        return start_min <= now_min < end_min
+    else:
+        return now_min >= start_min or now_min < end_min
+
+async def _apply_hard_permissions(context, chat_id: int, active: bool):
+    try:
+        if active:
+            await context.bot.set_chat_permissions(
+                chat_id=chat_id,
+                permissions=ChatPermissions(can_send_messages=False)
+            )
+        else:
+            # vorsichtig nur Text wieder freigeben
+            await context.bot.set_chat_permissions(
+                chat_id=chat_id,
+                permissions=ChatPermissions(can_send_messages=True)
+            )
+    except Exception as e:
+        logger.warning(f"Nachtmodus (hard) set_chat_permissions fehlgeschlagen: {e}")
+
+def _parse_hhmm(txt: str) -> int | None:
+    m = re.match(r'^\s*(\d{1,2}):(\d{2})\s*$', txt)
+    if not m: 
+        return None
+    hh, mm = int(m.group(1)), int(m.group(2))
+    if 0 <= hh < 24 and 0 <= mm < 60:
+        return hh*60 + mm
+    return None
+
+async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_group_language(cid) or 'de'
+    flag = context.user_data.get('awaiting_nm_time')
+    if not flag:
+        return
+    kind, cid = flag
+    txt = (update.effective_message.text or "").strip()
+    val = _parse_hhmm(txt)
+    if val is None:
+        return await update.effective_message.reply_text(tr("⚠️ Bitte im Format HH:MM senden, z. B. 22:00.", lang))
+    if kind == 'start':
+        set_night_mode(cid, start_minute=val)
+        await update.effective_message.reply_text(tr("✅ Startzeit gespeichert:", lang) + f" {txt}")
+    else:
+        set_night_mode(cid, end_minute=val)
+        await update.effective_message.reply_text(tr("✅ Endzeit gespeichert:", lang) + f" {txt}")
+    context.user_data.pop('awaiting_nm_time', None)
+
+def _parse_duration(s: str) -> datetime.timedelta | None:
+    s = (s or "").strip().lower()
+    if not s:
+        return None
+    m = re.match(r'^(\d+)\s*([hm])$', s)
+    if not m:
+        return None
+    val = int(m.group(1))
+    unit = m.group(2)
+    return datetime.timedelta(hours=val) if unit == 'h' else datetime.timedelta(minutes=val)
+
+async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat  # Add this line to define chat
+    lang = get_group_language(chat.id) or 'de'
+    if chat.type not in ("group","supergroup"):
+        return await update.message.reply_text(tr("Bitte im Gruppenchat verwenden.", lang))
+
+    # Admin-Gate
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+        if update.effective_user.id not in {a.user.id for a in admins}:
+            return await update.message.reply_text(tr("Nur Admins dürfen die Ruhephase starten.", lang))
+    except Exception:
+        pass
+
+    args = context.args or []
+    dur = _parse_duration(args[0]) if args else datetime.timedelta(hours=8)
+    if not dur:
+        return await update.message.reply_text(tr("Format: /quietnow 30m oder /quietnow 2h", lang))
+
+    en, s, e, del_non_admin, warn_once, tz, hard_mode, _ = get_night_mode(chat.id)
+    now = datetime.datetime.now(ZoneInfo(tz))
+    until = now + dur
+    set_night_mode(chat.id, override_until=until)
+
+    if hard_mode:
+        # sofort sperren
+        await _apply_hard_permissions(context, chat.id, True)
+        context.chat_data.setdefault("nm_flags", {})["hard_applied"] = True
+
+    human = until.strftime("%H:%M")
+    await update.message.reply_text(tr("🌙 Sofortige Ruhephase aktiv bis", lang) + f" {human} ({tz}).")
 
 async def error_handler(update, context):
     """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
@@ -165,6 +266,66 @@ async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TY
         set_mood_question(grp, new_question)
         context.user_data.pop('awaiting_mood_question', None)
         await message.reply_text(tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp)))
+
+async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_group_language(chat.id) or 'de'
+    msg = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not msg or not chat or chat.type not in ("group","supergroup") or not user:
+        return
+
+    en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(chat.id)
+    now_local = datetime.datetime.now(ZoneInfo(tz))
+    now_min = now_local.hour*60 + now_local.minute
+
+    quiet_scheduled = en and _is_quiet_now(s, e, now_min)
+    quiet_override  = bool(override_until and now_local < override_until)
+    is_quiet = quiet_scheduled or quiet_override
+
+    # Admins ausnehmen
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+    except Exception:
+        admins = []
+    is_admin = any(a.user.id == user.id for a in admins)
+    is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat.id)
+    if is_admin or is_anon_admin:
+        # Falls harter Modus aktiv ist, Admins sind eh ausgenommen
+        return
+
+    # Status-Flag im ChatContext (um set_chat_permissions nicht zu spammen)
+    flags = context.chat_data.setdefault("nm_flags", {"hard_applied": False})
+
+    if is_quiet:
+        if hard_mode:
+            if not flags["hard_applied"]:
+                await _apply_hard_permissions(context, chat.id, True)
+                flags["hard_applied"] = True
+            # Nichts weiter tun – Permissions kümmern sich um die Sperre
+            return
+        else:
+            # Weicher Modus: löschen und optional warnen
+            try:
+                if del_non_admin:
+                    await msg.delete()
+                if warn_once:
+                    key = (now_local.date().isoformat(), user.id)
+                    warned = context.chat_data.setdefault("nm_warned", set())
+                    if key not in warned:
+                        warned.add(key)
+                        await context.bot.send_message(chat.id, tr("🌙 Ruhezeit aktiv – bitte poste wieder nach Ende der Nachtphase.", lang))
+            except Exception as e:
+                logger.warning(f"Nachtmodus (soft) Eingriff fehlgeschlagen: {e}")
+            return
+    else:
+        # Ruhe vorbei: ggf. harte Sperre aufheben
+        if hard_mode and flags.get("hard_applied"):
+            await _apply_hard_permissions(context, chat.id, False)
+            flags["hard_applied"] = False
+        # Abgelaufene Overrides aufräumen (optional)
+        if override_until and now_local >= override_until:
+            set_night_mode(chat.id, override_until=None)
 
 async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -488,16 +649,18 @@ def register_handlers(app):
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("settopic", set_topic))
-    
+    app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
-
+    
+    app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_handler, block=False), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
-
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, nightmode_time_input), group=1)
+    
     app.add_handler(help_handler)
 
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=1)

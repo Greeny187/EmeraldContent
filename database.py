@@ -715,23 +715,26 @@ def set_group_language(cur, chat_id: int, lang: str):
 @_with_cursor
 def get_night_mode(cur, chat_id: int):
     cur.execute("""
-        SELECT enabled, start_minute, end_minute, delete_non_admin_msgs, warn_once, timezone
-          FROM night_mode WHERE chat_id = %s;
+      SELECT enabled, start_minute, end_minute, delete_non_admin_msgs, warn_once, timezone, 
+             COALESCE(hard_mode, FALSE), override_until
+        FROM night_mode WHERE chat_id = %s;
     """, (chat_id,))
     row = cur.fetchone()
-    # Defaults wie im Schema
     if not row:
-        return (False, 1320, 360, True, True, 'Europe/Berlin')
+        # Defaults wie im Schema
+        return (False, 1320, 360, True, True, 'Europe/Berlin', False, None)
     return row
 
 @_with_cursor
 def set_night_mode(cur, chat_id: int,
-                   enabled: bool | None = None,
-                   start_minute: int | None = None,
-                   end_minute: int | None = None,
-                   delete_non_admin_msgs: bool | None = None,
-                   warn_once: bool | None = None,
-                   timezone: str | None = None):
+                   enabled=None,
+                   start_minute=None,
+                   end_minute=None,
+                   delete_non_admin_msgs=None,
+                   warn_once=None,
+                   timezone=None,
+                   hard_mode=None,
+                   override_until=None):
     parts, params = [], []
     if enabled is not None: parts.append("enabled=%s"); params.append(enabled)
     if start_minute is not None: parts.append("start_minute=%s"); params.append(start_minute)
@@ -739,11 +742,14 @@ def set_night_mode(cur, chat_id: int,
     if delete_non_admin_msgs is not None: parts.append("delete_non_admin_msgs=%s"); params.append(delete_non_admin_msgs)
     if warn_once is not None: parts.append("warn_once=%s"); params.append(warn_once)
     if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
+    if hard_mode is not None: parts.append("hard_mode=%s"); params.append(hard_mode)
+    if override_until is not None: parts.append("override_until=%s"); params.append(override_until)
+
     if not parts:
         return
     sql = "INSERT INTO night_mode (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
     cur.execute(sql, [chat_id] + params)
-
+    
 # --- Legacy Migration Utility ---
 def migrate_db():
     import psycopg2
@@ -786,7 +792,13 @@ def migrate_db():
         ADD COLUMN IF NOT EXISTS link_warning_text       TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
         ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS mood_topic_id BIGINT NOT NULL DEFAULT 0;
-    """)
+        """)
+        cur.execute("""
+            ALTER TABLE night_mode
+            ADD COLUMN IF NOT EXISTS hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS override_until TIMESTAMPTZ NULL;
+        """)
+        
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
     except Exception as e:

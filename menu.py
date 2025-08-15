@@ -6,16 +6,19 @@ from database import (
     get_rules, set_rules, delete_rules, get_captcha_settings,
     set_captcha_settings, get_farewell, set_farewell, delete_farewell,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    get_topic_owners, is_daily_stats_enabled, set_daily_stats,
-    get_group_language, set_group_language, get_registered_groups
+    is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic,
+    get_group_language, set_group_language,
+    get_night_mode, set_night_mode
 )
+from zoneinfo import ZoneInfo
 from access import get_visible_groups
 from statistic import stats_command, export_stats_csv_command
 from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from patchnotes import PATCH_NOTES, __version__
 from user_manual import HELP_TEXT
-import logging, re
+import logging
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +41,12 @@ def build_group_menu(cid):
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
         [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
-         InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss")],
-        [InlineKeyboardButton(tr('🗑 Bereinigen', lang), callback_data=f"{cid}_clean_delete"),
+         InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],  # <-- NEU
+        [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
          InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{cid}_stats")],
         [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{cid}_stats_export"),
          InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
-        [InlineKeyboardButton(tr('✍️ Mood-Frage ändern', lang), callback_data=f"{cid}_edit_mood_q"),
+        [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
@@ -189,6 +192,89 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')])
         return await query.edit_message_text(tr('🌐 Wähle Sprache:', cur), reply_markup=InlineKeyboardMarkup(kb))
 
+    elif func == 'night' and sub is None:
+        en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(cid)
+        def mm_to_str(m): return f"{m//60:02d}:{m%60:02d}"
+        ov_txt = override_until.strftime("%d.%m. %H:%M") if override_until else "–"
+        text = (
+            f"🌙 <b>{tr('Nachtmodus', lang)}</b>\n\n"
+            f"{tr('Status', lang)}: {'✅ ' + tr('Aktiv', lang) if en else '❌ ' + tr('Inaktiv', lang)}\n"
+            f"{tr('Start', lang)}: {mm_to_str(s)}  •  {tr('Ende', lang)}: {mm_to_str(e)}  •  TZ: {tz}\n"
+            f"{tr('Harter Modus', lang)}: {'✅' if hard_mode else '❌'}\n"
+            f"{tr('Nicht-Admin-Nachrichten löschen', lang)}: {'✅' if del_non_admin else '❌'}\n"
+            f"{tr('Nur einmal pro Nacht warnen', lang)}: {'✅' if warn_once else '❌'}\n"
+            f"{tr('Sofortige Ruhephase (Override) bis', lang)}: {ov_txt}"
+        )
+        kb = [
+            [InlineKeyboardButton(f"{'✅' if en else '☐'} {tr('Aktivieren/Deaktivieren', lang)}",
+                                callback_data=f"{cid}_night_toggle")],
+            [InlineKeyboardButton(tr('Startzeit ändern', lang), callback_data=f"{cid}_night_set_start"),
+            InlineKeyboardButton(tr('Endzeit ändern', lang), callback_data=f"{cid}_night_set_end")],
+            [InlineKeyboardButton(f"{'✅' if hard_mode else '☐'} {tr('Harter Modus', lang)}",
+                                callback_data=f"{cid}_night_hard_toggle")],
+            [InlineKeyboardButton(f"{'✅' if del_non_admin else '☐'} {tr('Nicht-Admin löschen', lang)}",
+                                callback_data=f"{cid}_night_del_toggle")],
+            [InlineKeyboardButton(f"{'✅' if warn_once else '☐'} {tr('Einmal warnen', lang)}",
+                                callback_data=f"{cid}_night_warnonce_toggle")],
+            [InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 15m", callback_data=f"{cid}_night_quiet_15m"),
+            InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 1h",  callback_data=f"{cid}_night_quiet_1h"),
+            InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 8h",  callback_data=f"{cid}_night_quiet_8h")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    elif func == 'mood' and sub is None:
+        q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
+        topic_id = get_mood_topic(cid)
+        topic_txt = str(topic_id) if topic_id else tr('Nicht gesetzt', lang)
+        text = (
+            f"🧠 <b>{tr('Mood-Einstellungen', lang)}</b>\n\n"
+            f"• {tr('Aktuelle Frage', lang)}:\n{q}\n\n"
+            f"• {tr('Topic-ID', lang)}: {topic_txt}"
+        )
+        kb = [
+            [InlineKeyboardButton(tr('Frage anzeigen', lang), callback_data=f"{cid}_mood_show"),
+            InlineKeyboardButton(tr('Frage ändern', lang), callback_data=f"{cid}_edit_mood_q")],
+            [InlineKeyboardButton(tr('Jetzt senden (Topic)', lang), callback_data=f"{cid}_mood_send")],
+            [InlineKeyboardButton(tr('Topic setzen (Hilfe)', lang), callback_data=f"{cid}_mood_topic_help")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    # Nachtmodus Aktionen (lokalisiert)
+    elif func == 'night' and sub:
+        en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(cid)
+        if sub == 'toggle':
+            set_night_mode(cid, enabled=not en)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        elif sub == 'hard_toggle':
+            set_night_mode(cid, hard_mode=not hard_mode)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        elif sub == 'del_toggle':
+            set_night_mode(cid, delete_non_admin_msgs=not del_non_admin)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        elif sub == 'warnonce_toggle':
+            set_night_mode(cid, warn_once=not warn_once)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        elif sub == 'set_start':
+            context.user_data['awaiting_nm_time'] = ('start', cid)
+            return await query.message.reply_text(tr('Bitte Startzeit im Format HH:MM senden (z. B. 22:00).', lang),
+                                                reply_markup=ForceReply(selective=True))
+        elif sub == 'set_end':
+            context.user_data['awaiting_nm_time'] = ('end', cid)
+            return await query.message.reply_text(tr('Bitte Endzeit im Format HH:MM senden (z. B. 06:00).', lang),
+                                                reply_markup=ForceReply(selective=True))
+        elif sub.startswith('quiet_'):
+            dur_map = {'15m': 15, '1h': 60, '8h': 480}
+            key = sub.split('_', 1)[1]
+            minutes = dur_map.get(key)
+            if minutes:
+                now = datetime.datetime.now(ZoneInfo(tz))
+                set_night_mode(cid, override_until=now + datetime.timedelta(minutes=minutes))
+                await query.answer(tr('Ruhephase bis', lang) + f" {(now + datetime.timedelta(minutes=minutes)).strftime('%H:%M')}", show_alert=True)
+        # Re-render Submenü
+        return await menu_callback(update, context)
+
     # Linksperre Submenü
     elif func == 'linkprot' and sub is None:
         prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
@@ -321,6 +407,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tr(f"Gruppensprache gesetzt: {LANGUAGES.get(lang_code, lang_code)}", lang_code),
                 show_alert=True
             )
+
+        # Mood Aktionen
+        elif func == 'mood':
+            if sub == 'show':
+                q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
+                return await query.edit_message_text(f"📖 {tr('Aktuelle Mood-Frage', lang)}:\n\n{q}",
+                                                     reply_markup=InlineKeyboardMarkup(
+                                                         [[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{cid}_mood")]]
+                                                     ))
+            elif sub == 'send':
+                q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
+                topic_id = get_mood_topic(cid)
+                if not topic_id:
+                    await query.answer(tr('❗ Kein Mood-Topic gesetzt. Sende /setmoodtopic im gewünschten Thema.', lang), show_alert=True)
+                    return await menu_callback(update, context)
+                # Inline-Buttons wie im Mood-Feature
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("👍", callback_data="mood_like"),
+                    InlineKeyboardButton("👎", callback_data="mood_dislike"),
+                    InlineKeyboardButton("🤔", callback_data="mood_think"),
+                ]])
+                await context.bot.send_message(chat_id=cid, text=q, reply_markup=kb, message_thread_id=topic_id)
+                await query.answer(tr('✅ Mood-Frage gesendet.', lang), show_alert=True)
+                return await menu_callback(update, context)
+            elif sub == 'topic_help':
+                help_txt = (
+                    "🧵 <b>Topic setzen</b>\n\n"
+                    "1) Öffne das gewünschte Forum-Thema.\n"
+                    "2) Sende dort <code>/setmoodtopic</code>\n"
+                    f"   {tr('(oder antworte in dem Thema auf eine Nachricht und sende den Befehl)', lang)}.\n"
+                    "3) Fertig – zukünftige Mood-Fragen landen in diesem Thema."
+                )
+                return await query.edit_message_text(help_txt, parse_mode="HTML",
+                                                     reply_markup=InlineKeyboardMarkup(
+                                                        [[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{cid}_mood")]]
+                                                     ))
 
     # 6) DANACH die Einzelfunktionen...
     if func == 'toggle' and sub == 'stats':
