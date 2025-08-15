@@ -616,6 +616,26 @@ def record_reply_time(cur, chat_id: int,
         ON CONFLICT DO NOTHING;
     """, (chat_id, question_msg_id, question_user, answer_msg_id, answer_user, delta_ms))
 
+def _ensure_agg_group_day(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS agg_group_day (
+          chat_id BIGINT,
+          stat_date DATE,
+          messages_total INT,
+          active_users INT,
+          joins INT,
+          leaves INT,
+          kicks INT,
+          reply_median_ms BIGINT,
+          reply_p90_ms BIGINT,
+          autoresp_hits INT,
+          autoresp_helpful INT,
+          spam_actions INT,
+          night_deletes INT,
+          PRIMARY KEY (chat_id, stat_date)
+        );
+    """)
+
 @_with_cursor
 def upsert_agg_group_day(cur, chat_id:int, stat_date, payload:dict):
     cur.execute("""
@@ -1432,6 +1452,7 @@ def init_all_schemas():
     """Initialize all database schemas and ensure migrations are applied"""
     logger.info("Initializing all database schemas...")
     init_db()
+    migrate_db()
     migrate_stats_rollup()
     ensure_spam_topic_schema()
     ensure_forum_topics_schema()

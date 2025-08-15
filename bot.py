@@ -10,7 +10,7 @@ from telethon import TelegramClient
 from handlers import register_handlers, error_handler
 from menu import register_menu
 from rss import register_rss
-from database import init_db, migrate_db, init_all_schemas
+from database import init_all_schemas
 from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
@@ -47,8 +47,6 @@ async def shutdown(signal, loop, client: TelegramClient, app: Application):
 def main():
     setup_logging()
     init_all_schemas()
-    migrate_db()
-    init_db()
     statistic.init_stats_db()
 
     # Telethon (User-Session) verbinden
