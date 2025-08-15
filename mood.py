@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
-from database import save_mood, get_mood_counts, get_mood_question
+from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, filters
+from database import save_mood, get_mood_counts, get_mood_question, set_mood_topic, get_mood_topic
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Frage aus Datenbank laden
     question = get_mood_question(chat.id)
+    topic_id = get_mood_topic(chat.id)  # 0 => kein gesetztes Topic
 
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("👍", callback_data="mood_like"),
@@ -68,8 +69,31 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.exception("Fehler beim Editieren der Mood-Nachricht")
 
+async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+
+    if chat.type not in ("group", "supergroup"):
+        return await msg.reply_text("❌ `/setmoodtopic` nur in Gruppen möglich.")
+
+    # 1) Topic aus current thread
+    topic_id = msg.message_thread_id or None
+    # 2) Fallback auf Reply
+    if not topic_id and msg.reply_to_message:
+        topic_id = msg.reply_to_message.message_thread_id
+
+    if not topic_id:
+        return await msg.reply_text(
+          "⚠️ Bitte führe `/setmoodtopic` in dem gewünschten Forum-Thema aus "
+          "oder antworte auf eine Nachricht darin."
+        )
+
+    set_mood_topic(chat.id, topic_id)
+    await msg.reply_text(f"✅ Mood-Frage-Topic gesetzt auf ID {topic_id}.")
+
 # Registrierungs-Funktion
 
 def register_mood(app):
     app.add_handler(CommandHandler("mood", mood_command))
     app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"))
+    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS))

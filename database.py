@@ -82,6 +82,7 @@ def init_db(cur):
             daily_stats_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             rss_topic_id BIGINT NOT NULL DEFAULT 0,
             mood_question TEXT NOT NULL DEFAULT 'Wie fühlst du dich heute?',
+            mood_topic_id BIGINT NOT NULL DEFAULT 0,
             language_code TEXT NOT NULL DEFAULT 'de',
             captcha_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             captcha_type TEXT NOT NULL DEFAULT 'button',
@@ -126,6 +127,10 @@ def init_db(cur):
             chat_id BIGINT,
             url TEXT,
             topic_id BIGINT,
+            last_etag TEXT,
+            last_modified TEXT,
+            post_images BOOLEAN DEFAULT FALSE,
+            enabled BOOLEAN DEFAULT TRUE
             PRIMARY KEY (chat_id, url)
         );
         """
@@ -186,6 +191,84 @@ def init_db(cur):
         );
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS spam_policy (
+            chat_id BIGINT PRIMARY KEY,
+            level TEXT NOT NULL DEFAULT 'off',       
+            link_whitelist TEXT[] DEFAULT '{}',
+            user_whitelist BIGINT[] DEFAULT '{}',
+            domain_blacklist TEXT[] DEFAULT '{}',
+            emoji_max_per_msg INT DEFAULT 20,
+            emoji_max_per_min INT DEFAULT 60,
+            max_msgs_per_10s INT DEFAULT 7,
+            new_member_link_block BOOLEAN DEFAULT TRUE,
+            action_primary TEXT DEFAULT 'delete',    
+            action_secondary TEXT DEFAULT 'mute',    
+            escalation_threshold INT DEFAULT 3,      
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS night_mode (
+            chat_id BIGINT PRIMARY KEY,
+            enabled BOOLEAN DEFAULT FALSE,
+            start_minute INT DEFAULT 1320,  -- 22:00 => 22*60
+            end_minute INT DEFAULT 360,     -- 06:00 => 6*60
+            delete_non_admin_msgs BOOLEAN DEFAULT TRUE,
+            warn_once BOOLEAN DEFAULT TRUE,
+            timezone TEXT DEFAULT 'Europe/Berlin'
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reply_times (
+            chat_id BIGINT,
+            question_msg_id BIGINT,
+            question_user BIGINT,
+            answer_msg_id BIGINT,
+            answer_user BIGINT,
+            delta_ms BIGINT,
+            ts TIMESTAMP DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auto_responses (
+            chat_id BIGINT,
+            trigger TEXT,
+            matched_confidence NUMERIC,
+            used_snippet TEXT,
+            latency_ms BIGINT,
+            ts TIMESTAMP DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS topics_vocab (
+            chat_id BIGINT,
+            topic_id INT,
+            keywords TEXT[],
+            PRIMARY KEY (chat_id, topic_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS faq_snippets (
+            chat_id BIGINT,
+            trigger TEXT,
+            answer TEXT,
+            PRIMARY KEY (chat_id, trigger)
+        );
+        """
+    )
+
 
 # --- Group Management ---
 @_with_cursor
@@ -406,6 +489,20 @@ def set_mood_question(cur, chat_id: int, question: str):
         "ON CONFLICT (chat_id) DO UPDATE SET mood_question = EXCLUDED.mood_question;",
         (chat_id, question)
     )
+@_with_cursor
+def set_mood_topic(cur, chat_id: int, topic_id: int):
+    cur.execute(
+      "INSERT INTO group_settings (chat_id, daily_stats_enabled, rss_topic_id, mood_topic_id) "
+      "VALUES (%s, TRUE, COALESCE((SELECT rss_topic_id FROM group_settings WHERE chat_id=%s), 0), %s) "
+      "ON CONFLICT (chat_id) DO UPDATE SET mood_topic_id = EXCLUDED.mood_topic_id;",
+      (chat_id, chat_id, topic_id)
+    )
+
+@_with_cursor
+def get_mood_topic(cur, chat_id: int) -> int:
+    cur.execute("SELECT mood_topic_id FROM group_settings WHERE chat_id = %s;", (chat_id,))
+    row = cur.fetchone()
+    return row[0] if row else 0
 
 # --- Welcome / Rules / Farewell ---
 @_with_cursor
@@ -654,7 +751,8 @@ def migrate_db():
         ADD COLUMN IF NOT EXISTS link_protection_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS link_warning_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS link_warning_text       TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
-        ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+        ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS mood_topic_id BIGINT NOT NULL DEFAULT 0;
     """)
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
