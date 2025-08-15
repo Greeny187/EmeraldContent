@@ -273,6 +273,26 @@ def init_db(cur):
         );
         """
     )
+    # ADD MISSING TABLES FOR STATISTICS
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS message_logs (
+            chat_id BIGINT,
+            user_id BIGINT,
+            timestamp TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS member_events (
+            chat_id BIGINT,
+            user_id BIGINT,
+            ts TIMESTAMPTZ DEFAULT NOW(),
+            event_type TEXT -- 'join', 'leave', 'kick'
+        );
+        """
+    )
     # ADD MISSING EVENT TABLES HERE
     cur.execute(
         """
@@ -1304,6 +1324,13 @@ def migrate_db():
     cur = conn.cursor()
     try:
         logging.info("Starte Migration für bestehende Tabellen...")
+        # FIX FOR reply_times TABLE
+        try:
+            cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
+        except psycopg2.Error as e:
+            logging.warning(f"Could not alter reply_times, might not exist yet: {e}")
+            conn.rollback() # Rollback this specific transaction
+        
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
         )
