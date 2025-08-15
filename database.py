@@ -312,10 +312,6 @@ def init_db(cur):
     cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS ts      TIMESTAMPTZ DEFAULT NOW();")
     cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS event_type TEXT;")
 
-    # ---- Indizes jetzt sicher anlegen ----
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_chat_ts ON message_logs(chat_id, timestamp DESC);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_chat_ts ON member_events(chat_id, ts DESC);")
-
     # ADD MISSING EVENT TABLES HERE
     cur.execute(
         """
@@ -1416,6 +1412,10 @@ def migrate_db():
         cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS ai_faq_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
         cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS ai_rss_summary BOOLEAN NOT NULL DEFAULT FALSE;")
         cur.execute("ALTER TABLE auto_responses ADD COLUMN IF NOT EXISTS was_helpful BOOLEAN;")
+        
+            # ---- Indizes jetzt sicher anlegen ----
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_chat_ts ON message_logs(chat_id, timestamp DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_chat_ts ON member_events(chat_id, ts DESC);")
         
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")

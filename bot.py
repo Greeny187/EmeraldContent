@@ -46,8 +46,8 @@ async def shutdown(signal, loop, client: TelegramClient, app: Application):
 
 def main():
     setup_logging()
-    migrate_db()
     init_all_schemas()
+    migrate_db()
     init_db()
     statistic.init_stats_db()
 
