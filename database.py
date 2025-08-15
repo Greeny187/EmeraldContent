@@ -231,7 +231,6 @@ def init_db(cur):
         """
     )
 
-   
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS reply_times (
