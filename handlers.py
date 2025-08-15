@@ -13,7 +13,7 @@ from database import (register_group, get_registered_groups, get_rules, set_welc
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
 delete_spam_policy_topic, effective_spam_policy, add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
-toggle_topic_router_rule, get_matching_router_rule
+toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
@@ -306,6 +306,26 @@ async def menu_command(update, context):
     # Mehrere Gruppen → Auswahl anzeigen
     keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
     await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def forum_topic_registry_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat = update.effective_chat
+    if not msg or not chat or chat.type != "supergroup":  # Topics gibt's in Foren-Supergroups
+        return
+
+    tid = getattr(msg, "message_thread_id", None)
+    if tid:
+        # normaler Beitrag in einem Topic -> last_seen updaten
+        upsert_forum_topic(chat.id, tid, None)
+
+    # Topic erstellt/editiert? (Service-Messages)
+    ftc = getattr(msg, "forum_topic_created", None)
+    if ftc and tid:
+        upsert_forum_topic(chat.id, tid, getattr(ftc, "name", None) or None)
+
+    fte = getattr(msg, "forum_topic_edited", None)
+    if fte and tid and getattr(fte, "name", None):
+        rename_forum_topic(chat.id, tid, fte.name)
 
 async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
@@ -710,6 +730,74 @@ async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Gelöschte Accounts entfernt: {count}"
     )
 
+async def spamlevel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+    topic_id = getattr(msg, "message_thread_id", None)
+    args = [a.lower() for a in (context.args or [])]
+
+    # Anzeige (ohne Args)
+    if not args:
+        cur = get_spam_policy_topic(chat.id, topic_id or 0)
+        return await msg.reply_text(
+            "Nutze: /spamlevel off|light|medium|strict\n"
+            "Optionale Flags:\n"
+            " emoji=N  emoji_per_min=N  flood10s=N\n"
+            " whitelist=dom1,dom2  blacklist=dom3,dom4\n"
+            f"Aktuell (Topic {topic_id or 0}): {cur or 'keine Overrides'}"
+        )
+
+    level = args[0] if args[0] in ("off","light","medium","strict") else None
+    fields = {}
+    for a in args[1:]:
+        if "=" in a:
+            k,v = a.split("=",1)
+            if k=="emoji": fields["emoji_max_per_msg"] = int(v)
+            elif k in ("emoji_per_min","emojimin"): fields["emoji_max_per_min"] = int(v)
+            elif k in ("flood10s","rate"): fields["max_msgs_per_10s"] = int(v)
+            elif k=="whitelist": fields["link_whitelist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
+            elif k=="blacklist": fields["domain_blacklist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
+    if level: fields["level"] = level
+    set_spam_policy_topic(chat.id, topic_id or 0, **fields)
+    await msg.reply_text(f"✅ Spam-Policy gesetzt (Topic {topic_id or 0}).")
+
+async def router_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+    args = context.args or []
+
+    if not args or args[0] == "list":
+        rules = list_topic_router_rules(chat.id)
+        if not rules:
+            return await msg.reply_text("Keine Router-Regeln. Beispiel:\n/router add 12345 keywords=kaufen,verkaufen")
+        lines = [f"#{rid} → topic {tgt} | {'ON' if en else 'OFF'} | del={do} warn={wn} | kw={kws or []} dom={doms or []}"
+                 for (rid,tgt,en,do,wn,kws,doms) in rules]
+        return await msg.reply_text("Regeln:\n" + "\n".join(lines))
+
+    sub = args[0]
+    if sub == "add":
+        # Format: /router add <topic_id> keywords=a,b  ODER  /router add <topic_id> domains=x.com,y.com
+        if len(args) < 3 or not args[1].isdigit():
+            return await msg.reply_text("Format:\n/router add <topic_id> keywords=a,b\n/router add <topic_id> domains=x.com,y.com")
+        tgt = int(args[1]); kws=[]; doms=[]
+        for a in args[2:]:
+            if a.startswith("keywords="): kws = [x.strip() for x in a.split("=",1)[1].split(",") if x.strip()]
+            if a.startswith("domains="):  doms = [x.strip().lower() for x in a.split("=",1)[1].split(",") if x.strip()]
+        if not kws and not doms:
+            return await msg.reply_text("Bitte keywords=… oder domains=… angeben.")
+        rid = add_topic_router_rule(chat.id, tgt, kws or None, doms or None)
+        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tgt} angelegt.")
+
+    if sub == "del" and len(args) >= 2 and args[1].isdigit():
+        delete_topic_router_rule(chat.id, int(args[1]))
+        return await msg.reply_text("🗑 Regel gelöscht.")
+
+    if sub == "toggle" and len(args) >= 3 and args[1].isdigit():
+        toggle_topic_router_rule(chat.id, int(args[1]), args[2].lower() in ("on","true","1"))
+        return await msg.reply_text("🔁 Regel umgeschaltet.")
+
+    return await msg.reply_text("Unbekannter Router-Befehl.")
+
 async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dev = os.getenv("DEVELOPER_CHAT_ID")
     if str(update.effective_user.id) != dev:
@@ -779,19 +867,19 @@ def register_handlers(app):
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
-    
+    app.add_handler(CommandHandler("spamlevel", spamlevel_command, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("router", router_command, filters=filters.ChatType.GROUPS))
     app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)
+    app.add_handler(MessageHandler(filters.ALL, forum_topic_registry_tracker), group=0)  # ← NEU: sehr früh
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, spam_enforcer), group=1)
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_handler, block=False), group=1)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=2)
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, nightmode_time_input), group=1)
-    
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, nightmode_time_input), group=1) 
     app.add_handler(help_handler)
-
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=1)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
-
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))

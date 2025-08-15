@@ -1,14 +1,14 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
 from telegram.error import BadRequest
+import re
 from database import (
-    get_link_settings, set_link_settings, get_welcome, set_welcome, delete_welcome,
-    get_rules, set_rules, delete_rules, get_captcha_settings,
-    set_captcha_settings, get_farewell, set_farewell, delete_farewell,
+    get_link_settings, set_link_settings, get_welcome, set_welcome, delete_welcome, set_spam_policy_topic, get_spam_policy_topic,
+    get_rules, set_rules, delete_rules, get_captcha_settings, list_topic_router_rules, add_topic_router_rule, delete_topic_router_rule,
+    set_captcha_settings, get_farewell, set_farewell, delete_farewell, toggle_topic_router_rule,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic,
-    get_group_language, set_group_language,
-    get_night_mode, set_night_mode
+    get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
@@ -41,7 +41,9 @@ def build_group_menu(cid):
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
         [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
-         InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],  # <-- NEU
+         InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
+        [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam"),
+         InlineKeyboardButton(tr('🧭 Topic-Router', lang), callback_data=f"{cid}_router")],
         [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
          InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{cid}_stats")],
         [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{cid}_stats_export"),
@@ -275,6 +277,104 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Re-render Submenü
         return await menu_callback(update, context)
 
+    elif func == 'router' and sub is None:
+        rules = list_topic_router_rules(cid) or []
+        lines = [f"#{rid} → topic {tgt} | {'ON' if en else 'OFF'} | del={do} warn={wn} | kw={kws or []} dom={doms or []}"
+                for (rid,tgt,en,do,wn,kws,doms) in rules]
+        text = "🧭 <b>Topic-Router</b>\n\n" + ("\n".join(lines) if lines else "Keine Regeln.")
+        kb = [
+            [InlineKeyboardButton("Regeln auffrischen", callback_data=f"{cid}_router")],
+            [InlineKeyboardButton("➕ Keywords-Regel (Topic wählen)", callback_data=f"{cid}_router_tsel_kw"),
+            InlineKeyboardButton("➕ Domains-Regel (Topic wählen)",  callback_data=f"{cid}_router_tsel_dom")],
+            [InlineKeyboardButton("🗑 Regel löschen",   callback_data=f"{cid}_router_del"),
+            InlineKeyboardButton("🔁 Regel togglen",  callback_data=f"{cid}_router_toggle")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    elif func == 'router' and sub:
+        if sub == 'add_kw':
+            context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid)
+            return await query.message.reply_text("Format: <topic_id>; wort1, wort2, ...",
+                                                reply_markup=ForceReply(selective=True))
+        if sub == 'add_dom':
+            context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid)
+            return await query.message.reply_text("Format: <topic_id>; domain1.tld, domain2.tld",
+                                                reply_markup=ForceReply(selective=True))
+        if sub == 'del':
+            context.user_data.update(awaiting_router_delete=True, router_group_id=cid)
+            return await query.message.reply_text("Gib die Regel-ID an, die gelöscht werden soll:",
+                                                reply_markup=ForceReply(selective=True))
+        if sub == 'toggle':
+            context.user_data.update(awaiting_router_toggle=True, router_group_id=cid)
+            return await query.message.reply_text("Format: <regel_id> on|off",
+                                                reply_markup=ForceReply(selective=True))
+        return await menu_callback(update, context)
+
+    elif func == 'spam' and sub is None:
+        pol = get_spam_policy_topic(cid, 0) or {}
+        level = pol.get('level','off')
+        emsg = pol.get('emoji_max_per_msg', 0) or 0
+        rate = pol.get('max_msgs_per_10s', 0) or 0
+        wl = ", ".join(pol.get('link_whitelist') or []) or "–"
+        bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
+        text = (
+            "🧹 <b>Spamfilter (Default / Topic 0)</b>\n\n"
+            f"Level: <b>{level}</b>\n"
+            f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
+            f"Whitelist: {wl}\nBlacklist: {bl}\n\n"
+            "ℹ️ <i>Topic-spezifische Regeln setzt du am besten direkt im jeweiligen Topic mit</i> "
+            "<code>/spamlevel …</code>."
+        )
+        kb = [
+            [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_lvl_cycle")],
+            [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_minus"),
+            InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_plus")],
+            [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_minus"),
+            InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_plus")],
+            [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit"),
+            InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit")],
+            [InlineKeyboardButton("Topic auswählen", callback_data=f"{cid}_spam_tsel")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    elif func == 'spam' and sub == 'tsel':
+        return await query.edit_message_text(
+            "🧹 <b>Spamfilter: Topic wählen</b>",
+            reply_markup=_topics_keyboard(cid, page=0, purpose="spam"),
+            parse_mode="HTML"
+        )
+
+    elif func == 'spam' and sub and sub.startswith('tp_'):
+        # Paginierung: sub = 'tp_<page>'
+        page = int(sub.split('_',1)[1])
+        return await query.edit_message_reply_markup(reply_markup=_topics_keyboard(cid, page, purpose="spam"))
+
+    elif func == 'spam' and sub and sub.startswith('t_'):
+        # Auswahl: sub = 't_<topicid>'
+        topic_id = int(sub.split('_',1)[1])
+        pol = get_spam_policy_topic(cid, topic_id) or {}
+        level = pol.get('level','off'); emsg = pol.get('emoji_max_per_msg',0) or 0; rate = pol.get('max_msgs_per_10s',0) or 0
+        wl = ", ".join(pol.get('link_whitelist') or []) or "–"
+        bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
+
+        text = (f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
+                f"Level: <b>{level}</b>\n"
+                f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
+                f"Whitelist: {wl}\nBlacklist: {bl}")
+        kb = [
+            [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
+            [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_-_{topic_id}"),
+            InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
+            [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
+            InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
+            [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
+            InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
+            [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_spam_tsel")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
     # Linksperre Submenü
     elif func == 'linkprot' and sub is None:
         prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
@@ -379,6 +479,66 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer('✅ RSS gestoppt', show_alert=True)
                 return await show_group_menu(query=query, cid=cid, context=context)
 
+        elif func == 'spam' and sub and sub.startswith('setlvl_'):
+            topic_id = int(sub.split('_',1)[1])
+            pol = get_spam_policy_topic(cid, topic_id) or {'level':'off'}
+            order = ['off','light','medium','strict']
+            nxt = order[(order.index(pol.get('level','off'))+1) % len(order)]
+            set_spam_policy_topic(cid, topic_id, level=nxt)
+            await query.answer(f"Level: {nxt}", show_alert=True)
+            # Re-render Topic-Detail
+            update.callback_query.data = f"{cid}_spam_t_{topic_id}"
+            return await menu_callback(update, context)
+
+        elif func == 'spam' and sub and (sub.startswith('emj_') or sub.startswith('rate_') or sub.startswith('wl_edit_') or sub.startswith('bl_edit_')):
+            parts = sub.split('_')
+            if parts[0] == 'emj':
+                op, topic_id = parts[1], int(parts[2])
+                pol = get_spam_policy_topic(cid, topic_id) or {}
+                cur = (pol.get('emoji_max_per_msg') or 0) + (1 if op == '+' else -1)
+                set_spam_policy_topic(cid, topic_id, emoji_max_per_msg=max(0, cur))
+                update.callback_query.data = f"{cid}_spam_t_{topic_id}"
+                return await menu_callback(update, context)
+            if parts[0] == 'rate':
+                op, topic_id = parts[1], int(parts[2])
+                pol = get_spam_policy_topic(cid, topic_id) or {}
+                cur = (pol.get('max_msgs_per_10s') or 0) + (1 if op == '+' else -1)
+                set_spam_policy_topic(cid, topic_id, max_msgs_per_10s=max(0, cur))
+                update.callback_query.data = f"{cid}_spam_t_{topic_id}"
+                return await menu_callback(update, context)
+            if parts[0] in ('wl','bl') and parts[1]=='edit':
+                topic_id = int(parts[2])
+                if parts[0] == 'wl':
+                    context.user_data.update(awaiting_spam_whitelist=True, spam_group_id=cid, spam_topic_id=topic_id)
+                    return await query.message.reply_text("Sende Whitelist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
+                else:
+                    context.user_data.update(awaiting_spam_blacklist=True, spam_group_id=cid, spam_topic_id=topic_id)
+                    return await query.message.reply_text("Sende Blacklist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
+
+        elif func == 'router' and sub in ('tsel_kw','tsel_dom'):
+            purpose = 'router_kw' if sub.endswith('kw') else 'router_dom'
+            return await query.edit_message_text(
+                "🧭 <b>Router: Ziel-Topic wählen</b>",
+                reply_markup=_topics_keyboard(cid, page=0, purpose=purpose),
+                parse_mode="HTML"
+            )
+
+        elif func in ('router_kw','router_dom') and sub and sub.startswith('tp_'):
+            # Paginierung: func ist 'router_kw' oder 'router_dom'
+            page = int(sub.split('_',1)[1])
+            return await query.edit_message_reply_markup(
+                reply_markup=_topics_keyboard(cid, page=page, purpose=func)
+            )
+
+        elif func == 'router' and sub and (sub.startswith('pick_kw_') or sub.startswith('pick_dom_')):
+            topic_id = int(sub.split('_')[-1])
+            if 'pick_kw_' in sub:
+                context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid, router_target_tid=topic_id)
+                return await query.message.reply_text("Sende Keywords (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+            else:
+                context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid, router_target_tid=topic_id)
+                return await query.message.reply_text("Sende Domains (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+                
         # Linksperre Aktionen
         elif func == 'linkprot':
             prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
@@ -493,8 +653,95 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cid:
         return await show_group_menu(query=query, cid=cid, context=context)
 
+async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg  = update.effective_message
+    text = (msg.text or "").strip()
+    # 1) Link-Warntext (bestehend)
+    if context.user_data.pop('awaiting_link_warn', False):
+        cid = context.user_data.pop('link_warn_group')
+        set_link_settings(cid, warning_text=text)
+        return await msg.reply_text("✅ Warn-Text gespeichert.")
+    # 2) Spam-Whitelist (jetzt auch Topic-spezifisch)
+    if context.user_data.pop('awaiting_spam_whitelist', False):
+        cid = context.user_data.pop('spam_group_id')
+        tid = context.user_data.pop('spam_topic_id', 0)
+        wl = [d.strip().lower() for d in text.split(",") if d.strip()]
+        set_spam_policy_topic(cid, tid, link_whitelist=wl)
+        return await msg.reply_text(f"✅ Whitelist gespeichert (Topic {tid}).")
+
+    # 3) Spam-Blacklist (Topic-spezifisch)
+    if context.user_data.pop('awaiting_spam_blacklist', False):
+        cid = context.user_data.pop('spam_group_id')
+        tid = context.user_data.pop('spam_topic_id', 0)
+        bl = [d.strip().lower() for d in text.split(",") if d.strip()]
+        set_spam_policy_topic(cid, tid, domain_blacklist=bl)
+        return await msg.reply_text(f"✅ Blacklist gespeichert (Topic {tid}).")
+
+    # 4) Router: add keywords (mit Ziel-Topic)
+    if context.user_data.pop('awaiting_router_add_keywords', False):
+        cid = context.user_data.pop('router_group_id')
+        tid = context.user_data.pop('router_target_tid', None)
+        kws = [w.strip() for w in text.split(",") if w.strip()]
+        if not tid or not kws:
+            return await msg.reply_text("Bitte Keywords angeben.")
+        rid = add_topic_router_rule(cid, tid, keywords=kws)
+        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Keywords) angelegt.")
+
+    # 5) Router: add domains (mit Ziel-Topic)
+    if context.user_data.pop('awaiting_router_add_domains', False):
+        cid = context.user_data.pop('router_group_id')
+        tid = context.user_data.pop('router_target_tid', None)
+        doms = [d.strip().lower() for d in text.split(",") if d.strip()]
+        if not tid or not doms:
+            return await msg.reply_text("Bitte Domains angeben.")
+        rid = add_topic_router_rule(cid, tid, domains=doms)
+        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Domains) angelegt.")
+    # 6) Router: delete
+    if context.user_data.pop('awaiting_router_delete', False):
+        cid = context.user_data.pop('router_group_id')
+        if not text.isdigit():
+            return await msg.reply_text("Bitte eine numerische Regel-ID senden.")
+        delete_topic_router_rule(cid, int(text))
+        return await msg.reply_text("🗑 Regel gelöscht.")
+    # 7) Router: toggle
+    if context.user_data.pop('awaiting_router_toggle', False):
+        cid = context.user_data.pop('router_group_id')
+        m = re.match(r'^\s*(\d+)\s+(on|off)\s*$', text, re.I)
+        if not m:
+            return await msg.reply_text("Format: <regel_id> on|off")
+        rid = int(m.group(1)); on = m.group(2).lower() == "on"
+        toggle_topic_router_rule(cid, rid, on)
+        return await msg.reply_text("🔁 Regel umgeschaltet.")
+    
+TOPICS_PAGE_SIZE = 10
+
+def _topics_keyboard(cid:int, page:int, purpose:str):
+    # purpose: 'spam' | 'router_kw' | 'router_dom'
+    offset = page * TOPICS_PAGE_SIZE
+    rows = list_forum_topics(cid, limit=TOPICS_PAGE_SIZE, offset=offset)
+    total = count_forum_topics(cid)
+    kb = []
+    for topic_id, name, _ in rows:
+        if purpose == "spam":
+            cb = f"{cid}_spam_t_{topic_id}"
+        elif purpose == "router_kw":
+            cb = f"{cid}_router_pick_kw_{topic_id}"
+        else:
+            cb = f"{cid}_router_pick_dom_{topic_id}"
+        kb.append([InlineKeyboardButton(name[:56], callback_data=cb)])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"{cid}_{purpose}_tp_{page-1}"))
+    if offset + TOPICS_PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"{cid}_{purpose}_tp_{page+1}"))
+    if nav: kb.append(nav)
+    kb.append([InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")])
+    return InlineKeyboardMarkup(kb)
+
 # /menu 
 
 def register_menu(app):
 
     app.add_handler(CallbackQueryHandler(menu_callback))
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, menu_free_text_handler), group=1)

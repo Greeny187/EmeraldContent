@@ -138,9 +138,11 @@ def init_db(cur):
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS last_posts (
-            chat_id BIGINT,
-            link TEXT,
-            PRIMARY KEY (chat_id, link)
+            chat_id   BIGINT,
+            feed_url  TEXT,
+            link      TEXT,
+            posted_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (chat_id, feed_url)
         );
         """
     )
@@ -385,6 +387,53 @@ def purge_deleted_members(cur, chat_id: Optional[int] = None):
             "DELETE FROM members WHERE chat_id = %s AND is_deleted = TRUE;",
             (chat_id,)
         )
+
+@_with_cursor
+def ensure_forum_topics_schema(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS forum_topics (
+          chat_id   BIGINT,
+          topic_id  BIGINT,
+          name      TEXT,
+          last_seen TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (chat_id, topic_id)
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_forum_topics_seen ON forum_topics(chat_id, last_seen DESC);")
+
+@_with_cursor
+def upsert_forum_topic(cur, chat_id:int, topic_id:int, name:str|None=None):
+    cur.execute("""
+        INSERT INTO forum_topics (chat_id, topic_id, name, last_seen)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (chat_id, topic_id) DO UPDATE
+           SET name = COALESCE(EXCLUDED.name, forum_topics.name),
+               last_seen = NOW();
+    """, (chat_id, topic_id, name))
+
+@_with_cursor
+def rename_forum_topic(cur, chat_id:int, topic_id:int, new_name:str):
+    cur.execute("""
+        UPDATE forum_topics
+           SET name=%s, last_seen=NOW()
+         WHERE chat_id=%s AND topic_id=%s;
+    """, (new_name, chat_id, topic_id))
+
+@_with_cursor
+def list_forum_topics(cur, chat_id:int, limit:int=50, offset:int=0):
+    cur.execute("""
+        SELECT topic_id, COALESCE(NULLIF(name, ''), CONCAT('Topic ', topic_id)) AS name, last_seen
+          FROM forum_topics
+         WHERE chat_id=%s
+         ORDER BY last_seen DESC
+         LIMIT %s OFFSET %s;
+    """, (chat_id, limit, offset))
+    return cur.fetchall()
+
+@_with_cursor
+def count_forum_topics(cur, chat_id:int) -> int:
+    cur.execute("SELECT COUNT(*) FROM forum_topics WHERE chat_id=%s;", (chat_id,))
+    return cur.fetchone()[0]
 
 # --- Themenzuweisung für Linksperre-Ausnahme ---
 @_with_cursor
@@ -1203,4 +1252,6 @@ def migrate_db():
 # --- Entry Point ---
 if __name__ == "__main__":
     init_db()
+    ensure_spam_topic_schema()
+    ensure_forum_topics_schema()
     logger.info("✅ Schema initialisiert und Pool bereit.")
