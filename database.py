@@ -231,10 +231,7 @@ def init_db(cur):
         """
     )
 
-    # (Optional) sinnvolle Indizes für bessere Abfragen
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_chat_ts ON message_logs(chat_id, timestamp DESC);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_chat_ts ON member_events(chat_id, ts DESC);")
-    
+   
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS reply_times (
