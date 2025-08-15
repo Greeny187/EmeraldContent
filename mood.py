@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, filters
 from database import save_mood, get_mood_counts, get_mood_question, set_mood_topic, get_mood_topic
 import logging
@@ -71,10 +71,20 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    msg  = update.effective_message
+    msg = update.effective_message
+    user = update.effective_user
 
     if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("❌ `/setmoodtopic` nur in Gruppen möglich.")
+        return await msg.reply_text("❌ Dieser Befehl ist nur in Gruppen nutzbar.")
+
+    # Check if user is admin
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+        if user.id not in {admin.user.id for admin in admins}:
+            return await msg.reply_text("❌ Nur Administratoren können das Mood-Topic festlegen.")
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
+        return await msg.reply_text("⚠️ Fehler bei der Überprüfung der Administratorrechte.")
 
     # 1) Topic aus current thread
     topic_id = msg.message_thread_id or None
@@ -84,12 +94,17 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not topic_id:
         return await msg.reply_text(
-          "⚠️ Bitte führe `/setmoodtopic` in dem gewünschten Forum-Thema aus "
-          "oder antworte auf eine Nachricht darin."
+            "⚠️ Bitte führe /setmoodtopic in dem gewünschten Forum-Thema aus "
+            "oder antworte auf eine Nachricht darin.",
+            parse_mode=None  # Explicit no parse mode to avoid formatting issues
         )
 
-    set_mood_topic(chat.id, topic_id)
-    await msg.reply_text(f"✅ Mood-Frage-Topic gesetzt auf ID {topic_id}.")
+    try:
+        set_mood_topic(chat.id, topic_id)
+        await msg.reply_text(f"✅ Mood-Frage-Topic gesetzt auf ID {topic_id}.")
+    except Exception as e:
+        logger.error(f"Error setting mood topic: {e}")
+        await msg.reply_text("⚠️ Fehler beim Speichern des Mood-Topics in der Datenbank.")
 
 # Registrierungs-Funktion
 

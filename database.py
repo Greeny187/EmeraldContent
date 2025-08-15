@@ -268,7 +268,35 @@ def init_db(cur):
         );
         """
     )
-
+    
+@_with_cursor
+def migrate_stats_rollup(cur):
+    # Tages-Rollup pro Gruppe & Datum
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS agg_group_day (
+          chat_id          BIGINT,
+          stat_date        DATE,
+          messages_total   INT,
+          active_users     INT,
+          joins            INT,
+          leaves           INT,
+          kicks            INT,
+          reply_median_ms  BIGINT,
+          reply_p90_ms     BIGINT,
+          autoresp_hits    INT,
+          autoresp_helpful INT,
+          spam_actions     INT,
+          night_deletes    INT,
+          PRIMARY KEY (chat_id, stat_date)
+        );
+    """)
+    # sinnvolle Indizes auf Rohdaten (idempotent)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_chat_ts ON reply_times(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_chat_ts ON auto_responses(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_trigger ON auto_responses(chat_id, trigger);")
+    # optional, falls noch nicht vorhanden:
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_spam_events_chat_ts ON spam_events(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_night_events_chat_ts ON night_events(chat_id, ts DESC);")
 
 # --- Group Management ---
 @_with_cursor
@@ -454,6 +482,206 @@ def set_daily_stats(cur, chat_id: int, enabled: bool):
         """,
         (chat_id, enabled)
     )
+
+@_with_cursor
+def record_reply_time(cur, chat_id: int,
+                      question_msg_id: int, question_user: int,
+                      answer_msg_id: int, answer_user: int,
+                      delta_ms: int):
+    cur.execute("""
+        INSERT INTO reply_times (
+            chat_id, question_msg_id, question_user,
+            answer_msg_id, answer_user, delta_ms, ts
+        ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT DO NOTHING;
+    """, (chat_id, question_msg_id, question_user, answer_msg_id, answer_user, delta_ms))
+
+@_with_cursor
+def upsert_agg_group_day(cur, chat_id:int, stat_date, payload:dict):
+    cur.execute("""
+        INSERT INTO agg_group_day (
+            chat_id, stat_date, messages_total, active_users, joins, leaves, kicks,
+            reply_median_ms, reply_p90_ms, autoresp_hits, autoresp_helpful, spam_actions, night_deletes
+        ) VALUES (%(chat_id)s, %(stat_date)s, %(messages_total)s, %(active_users)s, %(joins)s, %(leaves)s, %(kicks)s,
+                  %(reply_median_ms)s, %(reply_p90_ms)s, %(autoresp_hits)s, %(autoresp_helpful)s, %(spam_actions)s, %(night_deletes)s)
+        ON CONFLICT (chat_id, stat_date) DO UPDATE SET
+            messages_total=EXCLUDED.messages_total,
+            active_users=EXCLUDED.active_users,
+            joins=EXCLUDED.joins, leaves=EXCLUDED.leaves, kicks=EXCLUDED.kicks,
+            reply_median_ms=EXCLUDED.reply_median_ms, reply_p90_ms=EXCLUDED.reply_p90_ms,
+            autoresp_hits=EXCLUDED.autoresp_hits, autoresp_helpful=EXCLUDED.autoresp_helpful,
+            spam_actions=EXCLUDED.spam_actions, night_deletes=EXCLUDED.night_deletes;
+    """, dict(payload, chat_id=chat_id, stat_date=stat_date))
+
+@_with_cursor
+def compute_agg_group_day(cur, chat_id:int, stat_date):
+    # Start/Ende UTC für den Tag
+    cur.execute("SELECT %s::date, (%s::date + INTERVAL '1 day')", (stat_date, stat_date))
+    d0, d1 = cur.fetchone()
+
+    # messages_total & active_users – zuerst daily_stats versuchen, sonst message_logs
+    cur.execute("""
+        WITH s AS (
+          SELECT COALESCE(SUM(messages),0) AS m, COUNT(DISTINCT user_id) AS au
+          FROM daily_stats
+          WHERE chat_id=%s AND stat_date=%s
+        )
+        SELECT m, au FROM s
+    """, (chat_id, d0))
+    row = cur.fetchone() or (0,0)
+    messages_total, active_users = row if row != (None, None) else (0,0)
+
+    if messages_total == 0:
+        cur.execute("""
+            SELECT COUNT(*), COUNT(DISTINCT user_id)
+            FROM message_logs
+            WHERE chat_id=%s AND timestamp >= %s AND timestamp < %s
+        """, (chat_id, d0, d1))
+        messages_total, active_users = cur.fetchone() or (0,0)
+
+    # member events
+    cur.execute("""
+        SELECT
+          COUNT(*) FILTER (WHERE event_type='join')  AS joins,
+          COUNT(*) FILTER (WHERE event_type='leave') AS leaves,
+          COUNT(*) FILTER (WHERE event_type='kick')  AS kicks
+        FROM member_events
+        WHERE chat_id=%s AND ts >= %s AND ts < %s
+    """, (chat_id, d0, d1))
+    joins, leaves, kicks = cur.fetchone() or (0,0,0)
+
+    # reply percentiles
+    cur.execute("""
+        SELECT
+          PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY delta_ms),
+          PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY delta_ms)
+        FROM reply_times
+        WHERE chat_id=%s AND ts >= %s AND ts < %s
+    """, (chat_id, d0, d1))
+    p50, p90 = cur.fetchone() or (None, None)
+
+    # autoresponses
+    cur.execute("""
+        SELECT COUNT(*),
+               COUNT(*) FILTER (WHERE was_helpful IS TRUE)
+        FROM auto_responses
+        WHERE chat_id=%s AND ts >= %s AND ts < %s
+    """, (chat_id, d0, d1))
+    ar_hits, ar_helpful = cur.fetchone() or (0,0)
+
+    # moderation
+    cur.execute("SELECT COUNT(*) FROM spam_events WHERE chat_id=%s AND ts >= %s AND ts < %s",
+                (chat_id, d0, d1))
+    spam_actions = cur.fetchone()[0] if cur.rowcount != -1 else 0
+
+    # night deletes
+    cur.execute("""
+        SELECT COALESCE(SUM(count),0)
+        FROM night_events
+        WHERE chat_id=%s AND kind='delete' AND ts >= %s AND ts < %s
+    """, (chat_id, d0, d1))
+    night_deletes = cur.fetchone()[0] or 0
+
+    return {
+        "messages_total":   int(messages_total or 0),
+        "active_users":     int(active_users or 0),
+        "joins":            int(joins or 0),
+        "leaves":           int(leaves or 0),
+        "kicks":            int(kicks or 0),
+        "reply_median_ms":  int(p50) if p50 is not None else None,
+        "reply_p90_ms":     int(p90) if p90 is not None else None,
+        "autoresp_hits":    int(ar_hits or 0),
+        "autoresp_helpful": int(ar_helpful or 0),
+        "spam_actions":     int(spam_actions or 0),
+        "night_deletes":    int(night_deletes or 0),
+    }
+
+@_with_cursor
+def get_agg_summary(cur, chat_id:int, d_start, d_end):
+    # Summierte Kacheln + frische Percentiles aus reply_times (Range)
+    cur.execute("""
+        SELECT
+          COALESCE(SUM(messages_total),0),
+          COALESCE(SUM(active_users),0),
+          COALESCE(SUM(joins),0),
+          COALESCE(SUM(leaves),0),
+          COALESCE(SUM(kicks),0),
+          COALESCE(SUM(autoresp_hits),0),
+          COALESCE(SUM(autoresp_helpful),0),
+          COALESCE(SUM(spam_actions),0),
+          COALESCE(SUM(night_deletes),0)
+        FROM agg_group_day
+        WHERE chat_id=%s AND stat_date BETWEEN %s AND %s
+    """, (chat_id, d_start, d_end))
+    (msgs, aus, joins, leaves, kicks, ar_hits, ar_help, spam, night_del) = cur.fetchone()
+
+    cur.execute("""
+        SELECT
+          PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY delta_ms),
+          PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY delta_ms)
+        FROM reply_times
+        WHERE chat_id=%s AND DATE(ts) BETWEEN %s AND %s
+    """, (chat_id, d_start, d_end))
+    p50, p90 = cur.fetchone() or (None, None)
+
+    return {
+        "messages_total":   int(msgs or 0),
+        "active_users":     int(aus or 0),
+        "joins":            int(joins or 0),
+        "leaves":           int(leaves or 0),
+        "kicks":            int(kicks or 0),
+        "reply_median_ms":  int(p50) if p50 is not None else None,
+        "reply_p90_ms":     int(p90) if p90 is not None else None,
+        "autoresp_hits":    int(ar_hits or 0),
+        "autoresp_helpful": int(ar_help or 0),
+        "spam_actions":     int(spam or 0),
+        "night_deletes":    int(night_del or 0),
+    }
+
+@_with_cursor
+def get_heatmap(cur, chat_id:int, ts_start, ts_end):
+    # 0=Sonntag in PostgreSQL => wir mappen auf 1=Mo ... 7=So
+    cur.execute("""
+        SELECT ((EXTRACT(DOW FROM timestamp)::INT + 6) % 7) + 1 AS dow,  -- 1..7 (Mo..So)
+               EXTRACT(HOUR FROM timestamp)::INT AS hour,
+               COUNT(*) AS cnt
+        FROM message_logs
+        WHERE chat_id=%s AND timestamp >= %s AND timestamp < %s
+        GROUP BY 1,2
+    """, (chat_id, ts_start, ts_end))
+    rows = cur.fetchall() or []
+    # in Python zu einem 7x24-Grid formen
+    grid = [[0]*24 for _ in range(7)]  # [1..7]=Mo..So -> index 0..6
+    for dow, hour, cnt in rows:
+        grid[dow-1][hour] = int(cnt)
+    return grid
+
+@_with_cursor
+def get_agg_rows(cur, chat_id: int, d_start, d_end):
+    cur.execute("""
+        SELECT stat_date, messages_total, active_users, joins, leaves, kicks,
+               reply_median_ms, reply_p90_ms, autoresp_hits, autoresp_helpful,
+               spam_actions, night_deletes
+        FROM agg_group_day
+        WHERE chat_id=%s AND stat_date BETWEEN %s AND %s
+        ORDER BY stat_date;
+    """, (chat_id, d_start, d_end))
+    return cur.fetchall()
+
+@_with_cursor
+def get_top_responders(cur, chat_id: int, d_start, d_end, limit: int = 10):
+    cur.execute("""
+        SELECT answer_user,
+               COUNT(*)              AS answers,
+               AVG(delta_ms)::BIGINT AS avg_ms
+        FROM reply_times
+        WHERE chat_id=%s AND DATE(ts) BETWEEN %s AND %s
+        GROUP BY answer_user
+        ORDER BY answers DESC, avg_ms ASC
+        LIMIT %s;
+    """, (chat_id, d_start, d_end, limit))
+    rows = cur.fetchall() or []
+    return [(int(u), int(c), int(a)) for (u, c, a) in rows]
 
 # --- Mood Meter ---
 @_with_cursor

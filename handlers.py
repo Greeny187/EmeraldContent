@@ -9,8 +9,8 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
-get_night_mode, set_night_mode, get_group_language)  # <-- NEU
-from zoneinfo import ZoneInfo  # <-- NEU)
+get_night_mode, set_night_mode, get_group_language)
+from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler

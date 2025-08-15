@@ -4,13 +4,16 @@ import logging
 import csv
 from openai import OpenAI
 from collections import Counter
-from datetime import datetime, timedelta
-from telegram import Update, Message, ChatMemberUpdated
+from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
+from telegram import Update, Message, ChatMemberUpdated, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ChatMemberHandler, PollAnswerHandler
 from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from database import _with_cursor, _db_pool
+from database import (_with_cursor, _db_pool, record_reply_time, get_group_language, migrate_stats_rollup, compute_agg_group_day, 
+upsert_agg_group_day, get_agg_summary, get_heatmap, get_agg_rows, get_group_stats, get_top_responders
+)
 from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
@@ -188,20 +191,45 @@ def init_stats_db(cur):
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_poll_responses_group ON poll_responses(group_id);")
 
-    # 5) Reply-Zeiten für Engagement-Metriken (unverändert)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS reply_times (
-            group_id         BIGINT,
-            response_delay_s REAL,
-            replied_at       TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS spam_events (
+          chat_id    BIGINT,
+          user_id    BIGINT,
+          rule       TEXT,      -- 'link'|'emoji_per_msg'|'flood'|...
+          action     TEXT,      -- 'delete'|'mute'|'ban'|'warn'
+          details    JSONB,
+          ts         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
-        """
-    )
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_group ON reply_times(group_id);")
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_spam_events_chat_ts ON spam_events(chat_id, ts DESC);")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS night_events (
+          chat_id    BIGINT,
+          kind       TEXT,      -- 'delete'|'warn'|'hard_on'|'hard_off'|'quietnow'
+          count      INT DEFAULT 1,
+          until_ts   TIMESTAMPTZ NULL,
+          ts         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_night_events_chat_ts ON night_events(chat_id, ts DESC);")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS feature_interactions (
+          chat_id  BIGINT,
+          user_id  BIGINT,
+          feature  TEXT,      -- 'menu:night', 'menu:linksperre', 'faq:thumbs_up', ...
+          meta     JSONB,
+          ts       TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_feature_interactions_chat_ts ON feature_interactions(chat_id, ts DESC);")
 
+    # --- Auto-Responses (Helpful/Answer-ID) für FAQ/Assist auswertbar machen ---
+    cur.execute("ALTER TABLE auto_responses ADD COLUMN IF NOT EXISTS was_helpful BOOLEAN;")
+    cur.execute("ALTER TABLE auto_responses ADD COLUMN IF NOT EXISTS answer_msg_id BIGINT;")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_chat_ts ON auto_responses(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_trigger ON auto_responses(chat_id, trigger);")
 
 # --- Befehls-Logging ---
 @_with_cursor
@@ -275,6 +303,7 @@ def get_top_groups(cur, start_date: datetime, end_date: datetime, limit: int = 5
 
 @_with_cursor
 def log_message(cur, chat_id: int, msg):
+    text = msg.text or msg.caption or None
     cur.execute(
         """
         INSERT INTO message_logs
@@ -282,24 +311,25 @@ def log_message(cur, chat_id: int, msg):
            is_photo, is_video, is_sticker, is_voice,
            is_location, is_reply, timestamp, last_message_time)
         VALUES
-          (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+          (%s, %s, %s, %s, %s,
+           %s, %s, %s, %s,
+           %s, %s, NOW(), NOW())
         ON CONFLICT DO NOTHING;
         """,
         (
-            msg.chat_id,
-            getattr(msg, 'chat_id', None),
+            msg.chat.id,                 # chat_id
+            msg.chat.id,                 # group_id (vereinheitlicht)
             msg.message_id,
-            msg.from_user.id if msg.from_user else None,
-            msg.text or None,
+            (msg.from_user.id if msg.from_user else None),
+            text,
             bool(msg.photo),
             bool(msg.video),
             bool(msg.sticker),
             bool(msg.voice),
-            bool(msg.location),
+            bool(getattr(msg, "location", None)),
             bool(msg.reply_to_message)
         )
     )
-    # last_message_time kann später per UPDATE angepasst werden
 
 @_with_cursor
 def log_member_event(cur, group_id: int, user_id: int, event: str):
@@ -324,21 +354,117 @@ def log_poll_response(cur, chat_id: int, user_id: int, poll_id: int):
     )
 
 @_with_cursor
-def log_reply_time(cur, group_id: int, delay_s: float):
-    cur.execute(
-        """
-        INSERT INTO reply_times (group_id, response_delay_s, replied_at)
-        VALUES (%s, %s, NOW())
-        ON CONFLICT DO NOTHING;
-        """,
-        (group_id, delay_s)
-    )
+def log_spam_event(cur, chat_id: int, user_id: int, rule: str, action: str, details: dict | None = None):
+    cur.execute("""
+        INSERT INTO spam_events (chat_id, user_id, rule, action, details)
+        VALUES (%s, %s, %s, %s, %s);
+    """, (chat_id, user_id, rule, action, details))
+
+@_with_cursor
+def log_night_event(cur, chat_id: int, kind: str, count: int = 1, until_ts = None):
+    cur.execute("""
+        INSERT INTO night_events (chat_id, kind, count, until_ts)
+        VALUES (%s, %s, %s, %s);
+    """, (chat_id, kind, count, until_ts))
+
+@_with_cursor
+def log_feature_interaction(cur, chat_id: int, user_id: int, feature: str, meta: dict | None = None):
+    cur.execute("""
+        INSERT INTO feature_interactions (chat_id, user_id, feature, meta)
+        VALUES (%s, %s, %s, %s);
+    """, (chat_id, user_id, feature, meta))
+
+def _safe_user_id(m) -> int | None:
+    u = getattr(m, "from_user", None)
+    return u.id if u else None
+
+def _safe_msg_id(m) -> int | None:
+    return getattr(m, "message_id", None)
+
+def _range_for_key(key:str, tz:str):
+    now = datetime.now(ZoneInfo(tz))
+    today = now.date()
+    if key == "today":
+        return today, today
+    if key == "yesterday":
+        y = today - timedelta(days=1)
+        return y, y
+    if key == "7d":
+        return today - timedelta(days=6), today
+    if key == "30d":
+        return today - timedelta(days=29), today
+    # Fallback
+    return today - timedelta(days=6), today
+
+def _stats_keyboard(cid:int, sel:str, lang:str):
+    def btn(label, key):
+        mark = "●" if key==sel else "○"
+        return InlineKeyboardButton(f"{mark} {label}", callback_data=f"{cid}_stats_range_{key}")
+    return InlineKeyboardMarkup([
+        [btn("Heute", "today"), btn("Gestern", "yesterday")],
+        [btn("7 Tage", "7d"),   btn("30 Tage", "30d")],
+        [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")]
+    ])
+    
+def _format_ms(ms:int|None):
+    if ms is None: return "–"
+    s = ms/1000
+    if s < 60: return f"{s:.1f}s"
+    m = int(s//60); r = int(s%60)
+    return f"{m}m {r}s"
+
+def _render_heatmap_ascii(grid:list[list[int]]):
+    # einfache 5-Pegel-Darstellung mit Blöcken ░▄█ (kompakt)
+    # Dow: 0..6 = Mo..So, Stunden 0..23
+    # Normalisieren pro Gesamtmax
+    flat = [c for row in grid for c in row]
+    mx = max(flat) if flat else 0
+    steps = [' ', '░', '▒', '▓', '█']
+    def cell(v):
+        if mx<=0: return ' '
+        q = v*4//mx
+        return steps[q]
+    # Kopfzeile (Stunden)
+    head = "    " + "".join(f"{h:02d}"[-1] for h in range(24))
+    lines = [head]
+    wd = ["Mo","Di","Mi","Do","Fr","Sa","So"]
+    for i, row in enumerate(grid):
+        lines.append(f"{wd[i]} |" + "".join(cell(v) for v in row))
+    return "```\n" + "\n".join(lines) + "\n```"
+
+# Neue Version: schreibt in database.reply_times
+def log_reply_time(group_id: int, question_msg, answer_msg):
+    q_mid = _safe_msg_id(question_msg)
+    a_mid = _safe_msg_id(answer_msg)
+    q_uid = _safe_user_id(question_msg)
+    a_uid = _safe_user_id(answer_msg)
+    if not (q_mid and a_mid and q_uid and a_uid):
+        return
+    delta_ms = int((answer_msg.date - question_msg.date).total_seconds() * 1000)
+    record_reply_time(group_id, q_mid, q_uid, a_mid, a_uid, delta_ms)
 
 async def reply_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg: Message = update.effective_message
-    if msg.reply_to_message:
-        delay = (msg.date - msg.reply_to_message.date).total_seconds()
-        log_reply_time(context.bot, msg.chat.id, delay)
+    if not msg or not msg.reply_to_message:
+        return
+    # Nur sinnvolle Replies (kein Bot-eigener Echo etc.). Optional: Admin-Check hier.
+    try:
+        chat_id = msg.chat.id
+        orig = msg.reply_to_message
+        # erste Antwort? – Optional: per Cache/Redis prüfen. Minimal: wir loggen jeden Reply.
+        log_reply_time(chat_id, orig, msg)
+    except Exception as e:
+        logger.warning(f"reply_time_handler Fehler: {e}")
+
+async def _resolve_user_name(bot, chat_id: int, user_id: int) -> str:
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        first = member.user.first_name or ""
+        last  = member.user.last_name or ""
+        name  = (first + " " + last).strip() or f"User {user_id}"
+        return f"<a href='tg://user?id={user_id}'>{name}</a>"
+    except Exception:
+        return f"User {user_id}"
 
 async def poll_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Loggt Poll-Antworten, wenn Nutzer abstimmen."""
@@ -379,6 +505,7 @@ async def universal_logger(update, context):
     msg = update.effective_message
     if msg:
         log_message(msg.chat.id, msg)
+        
 async def fetch_message_stats(chat_id: int, days: int = 7):
     if telethon_client is None:
         # keine Telethon-Stats möglich → leere Struktur zurückgeben
@@ -575,109 +702,300 @@ async def summarize_conversation(chat_id: int, days: int = 1):
     return resp.choices[0].message.content
 
 async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = context.user_data.get("stats_group_id") or update.effective_chat.id
-    start = datetime.utcnow() - timedelta(days=7)
-    end = datetime.utcnow()
+    chat = update.effective_chat
+    bot  = context.bot
+    args = context.args or []
 
-    # Basisdaten aus group_settings
+    # range= today | yesterday | 7d | 30d  (Default: 7d)
+    params = {k: v for a in args if "=" in a for k, v in [a.split("=", 1)]}
+    key = params.get("range", "7d")
+    tz  = "Europe/Berlin"
+    d0, d1 = _range_for_key(key, tz)
+    ts_start = datetime.combine(d0, datetime.min.time())
+    ts_end   = datetime.combine(d1 + timedelta(days=1), datetime.min.time())
+
+    # --- 1) Tages-Rollups & Top-Responder
+    rows = get_agg_rows(chat.id, d0, d1)
+    top  = get_top_responders(chat.id, d0, d1, limit=10)
+
+    # --- 2) Command-Usage
+    cmd_usage = get_command_usage(chat.id, ts_start, ts_end)
+
+    # --- 3) Engagement (Reply-Rate & Ø-Delay)
+    engage = get_engagement_metrics(chat.id, ts_start, ts_end)
+
+    # --- 4) Message-Insights (Medientypen/Polls)
+    insights = get_message_insights(chat.id, ts_start, ts_end)
+
+    # --- 5) Aktivität nach Wochentag
+    by_weekday = get_activity_by_weekday(chat.id, ts_start, ts_end)  # [(dow, total), ...]
+
+    # --- 6) Stundenverteilung (0..23) + weitere DB-Queries
+    #    Spam-Events (rule/action), Night-Events (kind), Member-Events (event), Top-Poster
+    from psycopg2.extras import DictCursor
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=DictCursor)
+
         cur.execute("""
-            SELECT chat_id, title, description, member_count, admin_count, topic_count, bot_count, group_activity_score
-            FROM group_settings
-            WHERE chat_id = %s
-        """, (chat_id,))
-        group_row = cur.fetchone()
+            SELECT EXTRACT(HOUR FROM timestamp)::INT AS hour, COUNT(*) AS cnt
+            FROM message_logs
+            WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+            GROUP BY 1 ORDER BY 1
+        """, (chat.id, ts_start, ts_end))
+        by_hour = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT rule, COUNT(*) AS cnt
+            FROM spam_events
+            WHERE chat_id=%s AND ts BETWEEN %s AND %s
+            GROUP BY rule ORDER BY cnt DESC
+        """, (chat.id, ts_start, ts_end))
+        spam_by_rule = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT action, COUNT(*) AS cnt
+            FROM spam_events
+            WHERE chat_id=%s AND ts BETWEEN %s AND %s
+            GROUP BY action ORDER BY cnt DESC
+        """, (chat.id, ts_start, ts_end))
+        spam_by_action = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT kind, COALESCE(SUM(count),0) AS cnt
+            FROM night_events
+            WHERE chat_id=%s AND ts BETWEEN %s AND %s
+            GROUP BY kind ORDER BY cnt DESC
+        """, (chat.id, ts_start, ts_end))
+        night_by_kind = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT event, COUNT(*) AS cnt
+            FROM member_events
+            WHERE group_id=%s AND event_time BETWEEN %s AND %s
+            GROUP BY event ORDER BY cnt DESC
+        """, (chat.id, ts_start, ts_end))
+        member_by_event = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT user_id, COUNT(*) AS msgs
+            FROM message_logs
+            WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+            GROUP BY user_id
+            ORDER BY msgs DESC
+            LIMIT 20
+        """, (chat.id, ts_start, ts_end))
+        top_posters = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT trigger, COUNT(*) AS hits,
+                   SUM(CASE WHEN was_helpful IS TRUE THEN 1 ELSE 0 END) AS helpful
+            FROM auto_responses
+            WHERE chat_id=%s AND ts BETWEEN %s AND %s
+            GROUP BY trigger
+            ORDER BY hits DESC
+            LIMIT 20
+        """, (chat.id, ts_start, ts_end))
+        autoresp_by_trigger = cur.fetchall() or []
+
     finally:
         _db_pool.putconn(conn)
 
-    # Statistiken berechnen
-    members  = get_member_stats(chat_id, start)
-    insights = get_message_insights(chat_id, start, end)
-    engage   = get_engagement_metrics(chat_id, start, end)
-    trends   = get_trend_analysis(chat_id, periods=4)
+    # --- CSV schreiben
+    fname = f"/tmp/stats_{chat.id}_{d0.isoformat()}_{d1.isoformat()}.csv"
+    with open(fname, "w", encoding="utf-8", newline="") as f:
+        wr = csv.writer(f, delimiter=";")
 
-    # CSV schreiben
-    fname = f"/tmp/full_stats_{chat_id}.csv"
-    with open(fname, "w", encoding="utf-8", newline='') as f:
-        writer = csv.writer(f, delimiter=";")
-        # Header
-        writer.writerow([
-            "chat_id", "title", "description", "member_count", "admin_count", "topic_count", "bot_count", "group_activity_score",
-            "new_members", "left_members", "inactive_members",
-            "messages_total", "photo", "video", "sticker", "voice", "location", "polls",
-            "reply_rate_pct", "avg_delay_s",
-            "trend_week_start", "trend_messages"
+        # Kopf: Metadaten
+        wr.writerow(["chat_id", "range", "from", "to"])
+        wr.writerow([chat.id, key, d0.isoformat(), d1.isoformat()])
+
+        # 1) Tages-Rollups
+        wr.writerow([])
+        wr.writerow(["# Tages-Rollups (agg_group_day)"])
+        wr.writerow([
+            "date","messages_total","active_users","joins","leaves","kicks",
+            "reply_median_ms","reply_p90_ms","autoresp_hits","autoresp_helpful",
+            "spam_actions","night_deletes"
         ])
-        # Trends als separate Zeilen
-        for week_start, trend_count in trends.items():
-            writer.writerow([
-                *(group_row if group_row else [chat_id, "", "", 0, 0, 0, 0, 0]),
-                members["new"], members["left"], members["inactive"],
-                insights["total"], insights["photo"], insights["video"], insights["sticker"], insights["voice"], insights["location"], insights["polls"],
-                engage["reply_rate_pct"], engage["avg_delay_s"],
-                week_start, trend_count
-            ])
-    await update.effective_message.reply_document(open(fname, "rb"))
+        for (stat_date, m, au, j, l, k, p50, p90, ar_h, ar_hp, spam, ng) in rows or []:
+            wr.writerow([stat_date, m, au, j, l, k, p50, p90, ar_h, ar_hp, spam, ng])
+
+        # 2) Top-Responder
+        wr.writerow([])
+        wr.writerow(["# Top-Responder (IDs; Namen optional in App anzeigen)"])
+        wr.writerow(["user_id","answers","avg_delay_ms"])
+        for uid, answers, avg_ms in top:
+            wr.writerow([uid, answers, avg_ms])
+
+        # 3) Command-Usage
+        wr.writerow([])
+        wr.writerow(["# Command-Usage"])
+        wr.writerow(["command","count"])
+        for cmd, cnt in (cmd_usage or []):
+            wr.writerow([cmd, cnt])
+
+        # 4) Engagement
+        wr.writerow([])
+        wr.writerow(["# Engagement"])
+        wr.writerow(["reply_rate_pct","avg_delay_s"])
+        wr.writerow([engage.get("reply_rate_pct", 0), engage.get("avg_delay_s")])
+
+        # 5) Message-Insights
+        wr.writerow([])
+        wr.writerow(["# Message-Insights"])
+        wr.writerow(["total","photo","video","sticker","voice","location","polls"])
+        wr.writerow([
+            insights.get("total",0), insights.get("photo",0), insights.get("video",0),
+            insights.get("sticker",0), insights.get("voice",0), insights.get("location",0),
+            insights.get("polls",0)
+        ])
+
+        # 6) Aktivität nach Wochentag
+        wr.writerow([])
+        wr.writerow(["# Aktivität nach Wochentag (0=Sonntag, 1=Montag, ... 6=Samstag)"])
+        wr.writerow(["weekday","messages"])
+        for dow, total in (by_weekday or []):
+            wr.writerow([int(dow), int(total or 0)])
+
+        # 7) Stundenverteilung
+        wr.writerow([])
+        wr.writerow(["# Stundenverteilung (0..23)"])
+        wr.writerow(["hour","messages"])
+        for row in by_hour:
+            wr.writerow([int(row["hour"]), int(row["cnt"])])
+
+        # 8) Spam-Events
+        wr.writerow([])
+        wr.writerow(["# Spam-Events nach Regel"])
+        wr.writerow(["rule","count"])
+        for row in spam_by_rule:
+            wr.writerow([row["rule"], int(row["cnt"])])
+
+        wr.writerow([])
+        wr.writerow(["# Spam-Events nach Aktion"])
+        wr.writerow(["action","count"])
+        for row in spam_by_action:
+            wr.writerow([row["action"], int(row["cnt"])])
+
+        # 9) Nachtmodus-Events
+        wr.writerow([])
+        wr.writerow(["# Nachtmodus-Events"])
+        wr.writerow(["kind","count"])
+        for row in night_by_kind:
+            wr.writerow([row["kind"], int(row["cnt"])])
+
+        # 10) Member-Events
+        wr.writerow([])
+        wr.writerow(["# Member-Events"])
+        wr.writerow(["event","count"])
+        for row in member_by_event:
+            wr.writerow([row["event"], int(row["cnt"])])
+
+        # 11) Auto-Responses nach Trigger
+        wr.writerow([])
+        wr.writerow(["# Auto-Responses pro Trigger"])
+        wr.writerow(["trigger","hits","helpful"])
+        for row in autoresp_by_trigger:
+            wr.writerow([row["trigger"], int(row["hits"]), int(row["helpful"] or 0)])
+
+        # 12) Top-Poster
+        wr.writerow([])
+        wr.writerow(["# Top-Poster"])
+        wr.writerow(["user_id","messages"])
+        for row in top_posters:
+            wr.writerow([int(row["user_id"]), int(row["msgs"])])
+
+    await update.effective_message.reply_document(
+        open(fname, "rb"),
+        filename=f"stats_{chat.id}_{d0}_{d1}.csv"
+    )
 
 # --- Stats-Command ---
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Parameter verarbeiten
-    group_id = context.user_data.pop("stats_group_id", None)
-    args     = context.args or []
-    params   = {k: v for arg in args if "=" in arg for k, v in [arg.split("=", 1)]}
-    if group_id is None:
-        group_id = int(params.get("group", update.effective_chat.id))
-    m = re.match(r"(\d+)([dw])", params.get("range", "7d"))
-    days = int(m.group(1)) * (7 if m and m.group(2) == "w" else 1) if m else 7
-    # Ziel-Sprache für Übersetzung (Standard: Deutsch)
-    target_lang = params.get("lang", "de")
+async def stats_command(update, context):
+    chat = update.effective_chat
+    lang = get_group_language(chat.id) or 'de'
+    # Standard: 7 Tage
+    sel = "7d"
+    tz = "Europe/Berlin"  # optional aus Gruppensettings
+    d0, d1 = _range_for_key(sel, tz)
 
-    # Zeitfenster berechnen
-    end = datetime.utcnow()
-    start = end - timedelta(days=days)
+    # Summen/Kacheln laden
+    summary = get_agg_summary(chat.id, d0, d1)
+    heat = get_heatmap(chat.id, datetime.combine(d0, datetime.min.time()), datetime.combine(d1+timedelta(days=1), datetime.min.time()))
 
-    # 1) Message-Insights
-    insights = get_message_insights(group_id, start, end)
-    # 2) Engagement
-    engage   = get_engagement_metrics(group_id, start, end)
-    # 3) Aktive Nutzer
-    active_users = get_active_users_count(group_id, start, end)
-    # 4) Befehlsnutzung
-    command_usage = get_command_usage(group_id, start, end)
-    cmd_lines = [f"{cmd}: {cnt}" for cmd, cnt in command_usage]
-    # 5) Aktivität nach Wochentag
-    weekday_stats = get_activity_by_weekday(group_id, start, end)
-    weekday_map = {0: 'Mo',1:'Di',2:'Mi',3:'Do',4:'Fr',5:'Sa',6:'So'}
-    day_lines = [f"{weekday_map[int(dow)]}: {total}" for dow, total in weekday_stats]
-    # 6) Mitglieder-Stats
-    members = get_member_stats(group_id, start)
+    text = (
+        f"📊 <b>Statistiken</b> ({d0.strftime('%d.%m.%Y')}–{d1.strftime('%d.%m.%Y')})\n"
+        f"\n<b>Engagement</b>"
+        f"\n• Nachrichten: <b>{summary['messages_total']}</b>"
+        f"\n• Aktive Nutzer: <b>{summary['active_users']}</b>"
+        f"\n• Joins/Leaves/Kicks: <b>{summary['joins']}/{summary['leaves']}/{summary['kicks']}</b>"
+        f"\n\n<b>Antwortzeiten</b>"
+        f"\n• Median (p50): <b>{_format_ms(summary['reply_median_ms'])}</b>"
+        f"\n• p90: <b>{_format_ms(summary['reply_p90_ms'])}</b>"
+        f"\n\n<b>Assist (FAQ/Auto)</b>"
+        f"\n• Treffer: <b>{summary['autoresp_hits']}</b>"
+        f"\n• Hilfreich: <b>{summary['autoresp_helpful']}</b>"
+        f"\n\n<b>Moderation</b>"      
+        f"\n• Spam-Aktionen: <b>{summary['spam_actions']}</b>"
+        f"\n• Nacht-Löschungen: <b>{summary['night_deletes']}</b>"
+        f"\n\n<b>Heatmap (Stunde × Wochentag)</b>\n"
+        f"{_render_heatmap_ascii(heat)}"
+    )
+    # Top-Responder separat anhängen
+    top = get_top_responders(chat.id, d0, d1, limit=5)
+    top_lines = []
+    for uid, answers, avg_ms in top:
+        name = await _resolve_user_name(context.bot, chat.id, uid)
+        s = avg_ms / 1000
+        s_str = f"{int(s//60)}m {int(s%60)}s" if s >= 60 else f"{s:.1f}s"
+        top_lines.append(f"• {name}: <b>{answers}</b> Antworten, Ø {s_str}")
+    text += ("\n<b>Top-Responder</b>\n" + ("\n".join(top_lines) if top_lines else "–"))
 
-    # Formatierung (Basis-Sprache: Deutsch)
-    avg = engage.get('avg_delay_s')
-    rate = engage.get('reply_rate_pct')
-    avg_str = f"{avg:.1f}s" if avg is not None else "–"
-    rate_str = f"{rate:.1f}%" if rate is not None else "–"
+    await update.message.reply_text(text, reply_markup=_stats_keyboard(chat.id, sel, lang), parse_mode="HTML")
 
-    lines = [
-        f"Statistiken für Gruppe {group_id} (letzte {days} Tage)",
-        f"Aktive Nutzer: {active_users}",
-        f"Nachrichten gesamt: {insights['total']}",
-        f"Fotos: {insights['photo']}, Videos: {insights['video']}, Sticker: {insights['sticker']}",
-        f"Voice: {insights['voice']}, Location: {insights['location']}, Polls: {insights['polls']}",
-        f"Antwort-Rate: {rate_str}, Ø-Delay: {avg_str}",
-        "Aktivität nach Wochentag: " + ", ".join(day_lines),
-        "Top-Befehle: " + ", ".join(cmd_lines[:5]) if cmd_lines else "Keine Befehle verwendet",  
-        f"Neu beigetreten: {members['new']}, Verlassen: {members['left']}, Inaktiv: {members['inactive']}"
-    ]
-    # Zusammenführen
-    text = "\n".join(lines)
-    # Übersetzen wenn nötig
-    if target_lang and target_lang != "de":
-        text = translate_hybrid(text, target_lang)
+async def stats_callback(update, context):
+    query = update.callback_query
+    data = query.data  # z.B. "123456_stats_range_7d"
+    try:
+        cid, _, _, key = data.split("_", 3)  # cid_stats_range_KEY
+        cid = int(cid)
+    except Exception:
+        return
+    lang = get_group_language(cid) or 'de'
+    tz = "Europe/Berlin"
+    d0, d1 = _range_for_key(key, tz)
+    summary = get_agg_summary(cid, d0, d1)
+    heat = get_heatmap(cid, datetime.combine(d0, datetime.min.time()), datetime.combine(d1+timedelta(days=1), datetime.min.time()))
+    text = (
+        f"📊 <b>Statistiken</b> ({d0.strftime('%d.%m.%Y')}–{d1.strftime('%d.%m.%Y')})\n"
+        f"\n<b>Engagement</b>"
+        f"\n• Nachrichten: <b>{summary['messages_total']}</b>"
+        f"\n• Aktive Nutzer: <b>{summary['active_users']}</b>"
+        f"\n• Joins/Leaves/Kicks: <b>{summary['joins']}/{summary['leaves']}/{summary['kicks']}</b>"
+        f"\n\n<b>Antwortzeiten</b>"
+        f"\n• Median (p50): <b>{_format_ms(summary['reply_median_ms'])}</b>"
+        f"\n• p90: <b>{_format_ms(summary['reply_p90_ms'])}</b>"
+        f"\n\n<b>Assist (FAQ/Auto)</b>"
+        f"\n• Treffer: <b>{summary['autoresp_hits']}</b>"
+        f"\n• Hilfreich: <b>{summary['autoresp_helpful']}</b>"
+        f"\n\n<b>Moderation</b>"
+        f"\n• Spam-Aktionen: <b>{summary['spam_actions']}</b>"
+        f"\n• Nacht-Löschungen: <b>{summary['night_deletes']}</b>"
+        f"\n\n<b>Heatmap (Stunde × Wochentag)</b>\n"
+        f"{_render_heatmap_ascii(heat)}"
+    )
+    # Top-Responder separat + korrektes cid
+    top = get_top_responders(cid, d0, d1, limit=5)
+    top_lines = []
+    for uid, answers, avg_ms in top:
+        name = await _resolve_user_name(context.bot, cid, uid)
+        s = avg_ms / 1000
+        s_str = f"{int(s//60)}m {int(s%60)}s" if s >= 60 else f"{s:.1f}s"
+        top_lines.append(f"• {name}: <b>{answers}</b> Antworten, Ø {s_str}")
+    text += ("\n<b>Top-Responder</b>\n" + ("\n".join(top_lines) if top_lines else "–"))
 
-    await update.effective_message.reply_text(text, parse_mode="Markdown")
+    await query.edit_message_text(text, reply_markup=_stats_keyboard(cid, key, lang), parse_mode="HTML")
 
 
 async def get_group_meta(chat_id: int) -> dict:
@@ -835,13 +1153,13 @@ def get_engagement_metrics(chat_id: int, start: datetime, end: datetime) -> dict
         rate = round((replies/total*100) if total else 0, 1)
         # Reaktionszeiten: hier exemplarisch aus reply_times-Tabelle
         cur.execute("""
-            SELECT response_delay_s FROM reply_times
-             WHERE group_id=%s AND replied_at BETWEEN %s AND %s
+            SELECT delta_ms FROM reply_times
+             WHERE chat_id=%s AND ts BETWEEN %s AND %s
         """, (chat_id, start, end))
-        delays = [r[0] for r in cur.fetchall()]
+        delays_ms = [r[0] for r in cur.fetchall()]
         return {
             "reply_rate_pct": rate,
-            "avg_delay_s":    round(mean(delays),1) if delays else None,
+            "avg_delay_s":    round(mean([d/1000 for d in delays_ms]), 1) if delays_ms else None,
         }
     finally:
         _db_pool.putconn(conn)

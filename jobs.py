@@ -1,8 +1,9 @@
 import os
 import logging
-from datetime import date, time
+import datetime as dt
+from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, Application
 from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
 from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
@@ -10,10 +11,9 @@ from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
     compute_response_times, fetch_media_and_poll_stats, get_member_stats,
     get_message_insights, get_engagement_metrics, get_trend_analysis,
-    update_group_activity_score
+    update_group_activity_score, migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day
 )
 from telegram.constants import ParseMode
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
@@ -195,6 +195,24 @@ async def dev_stats_nightly_job(context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Dev-Statistik an {dev_id} fehlgeschlagen: {e}")
 
+async def rollup_yesterday(context):
+    migrate_stats_rollup()
+    tz = ZoneInfo("Europe/Berlin")
+    today = datetime.now(tz).date()
+    target_day = today - timedelta(days=1)
+
+    try:
+        chat_ids = [cid for (cid, _) in get_registered_groups()]  # ← FIX
+    except Exception:
+        chat_ids = []
+
+    for cid in chat_ids:
+        try:
+            payload = compute_agg_group_day(cid, target_day)
+            upsert_agg_group_day(cid, target_day, payload)
+        except Exception as e:
+            print(f"[rollup] Fehler bei chat {cid}: {e}")
+            
 def register_jobs(app):
     jq = app.job_queue
     jq.run_daily(
@@ -217,4 +235,11 @@ def register_jobs(app):
         time(hour=4, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="dev_stats_nightly"
     )
+    
+    tz = ZoneInfo("Europe/Berlin")
+    first = dt.datetime.now(tz).replace(hour=2, minute=15, second=0, microsecond=0)
+    if first < dt.datetime.now(tz):
+        first += dt.timedelta(days=1)
+    app.job_queue.run_repeating(rollup_yesterday, interval=dt.timedelta(days=1), first=first, name="rollup_yesterday")
+    
     logger.info("Jobs registriert: daily_report, telethon_stats, purge_members, dev_stats_nightly")
