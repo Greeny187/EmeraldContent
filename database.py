@@ -223,10 +223,18 @@ def init_db(cur):
             end_minute INT DEFAULT 360,     -- 06:00 => 6*60
             delete_non_admin_msgs BOOLEAN DEFAULT TRUE,
             warn_once BOOLEAN DEFAULT TRUE,
-            timezone TEXT DEFAULT 'Europe/Berlin'
+            timezone TEXT DEFAULT 'Europe/Berlin',
+            -- Neu: Spalten, die sonst nur Migration ergänzt
+            hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
+            override_until TIMESTAMPTZ NULL
         );
         """
     )
+
+    # (Optional) sinnvolle Indizes für bessere Abfragen
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_chat_ts ON message_logs(chat_id, timestamp DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_chat_ts ON member_events(chat_id, ts DESC);")
+    
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS reply_times (
@@ -340,13 +348,17 @@ def migrate_stats_rollup(cur):
           PRIMARY KEY (chat_id, stat_date)
         );
     """)
+
+    # **Neu:** Legacy-Spalten sicher nachziehen, bevor Indizes erstellt werden
+    cur.execute("ALTER TABLE reply_times    ADD COLUMN IF NOT EXISTS ts TIMESTAMP DEFAULT NOW();")
+    cur.execute("ALTER TABLE auto_responses ADD COLUMN IF NOT EXISTS ts TIMESTAMP DEFAULT NOW();")
+
     # sinnvolle Indizes auf Rohdaten (idempotent)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_chat_ts ON reply_times(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_chat_ts    ON reply_times(chat_id, ts DESC);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_chat_ts ON auto_responses(chat_id, ts DESC);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_auto_responses_trigger ON auto_responses(chat_id, trigger);")
-    # optional, falls noch nicht vorhanden:
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_spam_events_chat_ts ON spam_events(chat_id, ts DESC);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_night_events_chat_ts ON night_events(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_spam_events_chat_ts    ON spam_events(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_night_events_chat_ts   ON night_events(chat_id, ts DESC);")
 
 # --- Group Management ---
 @_with_cursor
@@ -923,17 +935,18 @@ def toggle_topic_router_rule(cur, chat_id:int, rule_id:int, enabled:bool):
 
 @_with_cursor
 def get_matching_router_rule(cur, chat_id:int, text:str, domains_in_msg:list[str]):
-    # einfache Heuristik: erster Match gewinnt
     cur.execute("""
         SELECT rule_id, target_topic_id, delete_original, warn_user, keywords, domains
           FROM topic_router_rules
          WHERE chat_id=%s AND enabled=TRUE
          ORDER BY rule_id ASC;
     """, (chat_id,))
+    domains_norm = {d.lower() for d in (domains_in_msg or [])}
     for rule_id, target_topic_id, del_orig, warn_user, kws, doms in cur.fetchall():
-        kws = kws or []; doms = doms or []
-        kw_hit = any(kw.lower() in text.lower() for kw in kws) if kws else False
-        dom_hit = any(d.lower() in domains_in_msg for d in doms) if doms else False
+        kws  = kws or []
+        doms = doms or []
+        kw_hit  = any(kw.lower() in text.lower() for kw in kws) if kws else False
+        dom_hit = any((d or "").lower() in domains_norm for d in doms) if doms else False
         if (kws and kw_hit) or (doms and dom_hit):
             return {"rule_id": rule_id, "target_topic_id": target_topic_id,
                     "delete_original": del_orig, "warn_user": warn_user}
@@ -1189,11 +1202,20 @@ def get_posted_links(cur, chat_id: int) -> list:
     return [row[0] for row in cur.fetchall()]
 
 @_with_cursor
-def add_posted_link(cur, chat_id: int, link: str):
-    cur.execute(
-        "INSERT INTO last_posts (chat_id, link, posted_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;",
-        (chat_id, link)
-    )
+def add_posted_link(cur, chat_id: int, link: str, feed_url: Optional[str] = None):
+    """
+    Speichert den letzten geposteten Link. 
+    - Wenn feed_url gegeben: pro Feed deduplizieren.
+    - Ohne feed_url: Fallback in einen 'single-slot' (kompatibel zu Alt-Aufrufen).
+    """
+    if feed_url is None:
+        feed_url = "__single__"  # stabiler Fallback-Key pro Chat
+    cur.execute("""
+        INSERT INTO last_posts (chat_id, feed_url, link, posted_at)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (chat_id, feed_url)
+        DO UPDATE SET link = EXCLUDED.link, posted_at = EXCLUDED.posted_at;
+    """, (chat_id, feed_url, link))
 
 @_with_cursor
 def get_last_posted_link(cur, chat_id: int, feed_url: str) -> str:
@@ -1211,7 +1233,8 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
     """, (chat_id, feed_url, link))
 
 def prune_posted_links(chat_id, keep_last=100):
-    with _db_pool.getconn() as conn:
+    conn = _db_pool.getconn()
+    try:
         with conn.cursor() as cur:
             cur.execute("""
                 DELETE FROM last_posts
@@ -1223,6 +1246,9 @@ def prune_posted_links(chat_id, keep_last=100):
                         LIMIT %s
                    )
             """, (chat_id, chat_id, keep_last))
+        conn.commit()
+    finally:
+        _db_pool.putconn(conn)
 
 def get_all_group_ids():
     conn = _db_pool.getconn()
