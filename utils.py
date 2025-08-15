@@ -1,18 +1,11 @@
 import logging
 import asyncio
+import os
 from database import list_active_members, mark_member_deleted
 from telegram.error import BadRequest
 from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
-
-def tr(text: str, lang: str) -> str:
-    """Übersetze 'text' nach 'lang' mittels hybridem LibreTranslate."""
-    try:
-        return translate_hybrid(text, lang)
-    except Exception as e:
-        logger.error(f"Fehler in tr(): {e}")
-        return text
 
 def is_deleted_account(member) -> bool:
     """
@@ -30,6 +23,35 @@ def is_deleted_account(member) -> bool:
         return True
     return False
 
+async def ai_summarize(text: str, lang: str = "de") -> str | None:
+    """
+    Sehr knapper TL;DR (1–2 Sätze) in 'lang'.
+    - Opt-in per group_settings.ai_rss_summary
+    - Falls OPENAI_API_KEY fehlt oder lib nicht installiert => None
+    """
+    key = os.getenv("OPENAI_API_KEY")
+    if not key or not text:
+        return None
+    try:
+        # lazy import (damit wir ohne openai laufen können)
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        prompt = (
+            f"Fasse die folgende News extrem knapp auf {lang} zusammen "
+            f"(max. 2 Sätze, keine Floskeln):\n\n{text}"
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"system","content":"Du schreibst kurz, sachlich, deutsch."},
+                      {"role":"user","content":prompt}],
+            temperature=0.2,
+            max_tokens=120,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.info(f"OpenAI unavailable: {e}")
+        return None
+    
 async def clean_delete_accounts_for_chat(chat_id: int, bot) -> int:
     removed = []
     semaphore = asyncio.Semaphore(10)

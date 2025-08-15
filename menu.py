@@ -6,8 +6,8 @@ from database import (
     get_link_settings, set_link_settings, get_welcome, set_welcome, delete_welcome, set_spam_policy_topic, get_spam_policy_topic,
     get_rules, set_rules, delete_rules, get_captcha_settings, list_topic_router_rules, add_topic_router_rule, delete_topic_router_rule,
     set_captcha_settings, get_farewell, set_farewell, delete_farewell, toggle_topic_router_rule,
-    get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic,
+    get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
+    is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode
 )
 from zoneinfo import ZoneInfo
@@ -161,10 +161,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif func == 'rss' and sub is None:
         print(f"DEBUG: RSS submenu")
+        ai_faq, ai_rss = get_ai_settings(cid)
         kb = [
             [InlineKeyboardButton(tr('Auflisten', lang), callback_data=f"{cid}_rss_list"),
              InlineKeyboardButton(tr('Feed hinzufügen', lang), callback_data=f"{cid}_rss_setrss")],
             [InlineKeyboardButton(tr('Stoppen', lang), callback_data=f"{cid}_rss_stop")],
+            [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung", callback_data=f"{cid}_rss_ai_toggle")],
             [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
         ]
         text = tr('📰 RSS verwalten', lang)
@@ -188,6 +190,40 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return await query.edit_message_text(tr('🔐 Captcha-Einstellungen', lang), reply_markup=InlineKeyboardMarkup(kb))
 
+    elif func == 'faq' and sub is None:
+        faqs = list_faqs(cid) or []
+        lines = [f"• <code>{t}</code>" for t,_ in faqs[:20]]
+        ai_faq, _ = get_ai_settings(cid)
+        text = "❓ <b>Mini-FAQ</b>\n\n" + ("\n".join(lines) if lines else "Noch keine Einträge.") + \
+            f"\n\nKI-Fallback: {'✅ an' if ai_faq else '❌ aus'}"
+        kb = [
+            [InlineKeyboardButton("➕ Eintrag", callback_data=f"{cid}_faq_add"),
+            InlineKeyboardButton("🗑 Eintrag löschen", callback_data=f"{cid}_faq_del")],
+            [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} KI-Fallback", callback_data=f"{cid}_faq_ai_toggle")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    elif func == 'faq' and sub == 'ai_toggle':
+        ai_faq, _ = get_ai_settings(cid)
+        set_ai_settings(cid, faq=not ai_faq)
+        await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        return await menu_callback(update, context)
+
+    elif func == 'faq' and sub == 'add':
+        context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
+        return await query.message.reply_text(
+            "Format:\n<Trigger> ⟶ <Antwort>",
+            reply_markup=ForceReply(selective=True)
+        )
+
+    elif func == 'faq' and sub == 'del':
+        context.user_data.update(awaiting_faq_del=True, faq_group_id=cid)
+        return await query.message.reply_text(
+            "Bitte sende den <Trigger>, der gelöscht werden soll.",
+            reply_markup=ForceReply(selective=True)
+        )
+    
     # Language Submenü
     elif func == 'language' and sub is None:
         cur = get_lang(cid) or 'de'
@@ -499,6 +535,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 remove_rss_feed(cid)
                 await query.answer('✅ RSS gestoppt', show_alert=True)
                 return await show_group_menu(query=query, cid=cid, context=context)
+            elif sub == 'ai_toggle':
+                ai_faq, ai_rss = get_ai_settings(cid)
+                set_ai_settings(cid, rss=not ai_rss)
+                await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+                return await menu_callback(update, context)
 
         elif func == 'spam' and sub and sub.startswith('setlvl_'):
             topic_id = int(sub.split('_',1)[1])
@@ -733,6 +774,21 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         rid = int(m.group(1)); on = m.group(2).lower() == "on"
         toggle_topic_router_rule(cid, rid, on)
         return await msg.reply_text("🔁 Regel umgeschaltet.")
+    # 8) FAQ add
+    if context.user_data.pop('awaiting_faq_add', False):
+        cid = context.user_data.pop('faq_group_id')
+        if "⟶" not in text and "->" not in text:
+            return await msg.reply_text("Bitte im Format <Trigger> ⟶ <Antwort> senden.")
+        splitter = "⟶" if "⟶" in text else "->"
+        trig, ans = [p.strip() for p in text.split(splitter, 1)]
+        upsert_faq(cid, trig, ans)
+        return await msg.reply_text("✅ FAQ gespeichert.")
+
+    # 9) FAQ delete
+    if context.user_data.pop('awaiting_faq_del', False):
+        cid = context.user_data.pop('faq_group_id')
+        delete_faq(cid, text.strip())
+        return await msg.reply_text("🗑 FAQ gelöscht (falls vorhanden).")
     
 TOPICS_PAGE_SIZE = 10
 

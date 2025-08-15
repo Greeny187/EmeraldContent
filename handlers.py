@@ -13,11 +13,11 @@ from database import (register_group, get_registered_groups, get_rules, set_welc
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
 delete_spam_policy_topic, effective_spam_policy, add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
-toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic
+toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat
+from utils import clean_delete_accounts_for_chat, ai_summarize
 from user_manual import help_handler
 from menu import show_group_menu
 from statistic import log_spam_event
@@ -186,6 +186,52 @@ async def spam_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                    {"count_10s": n, "limit": flood_lim})
                 except Exception: pass
                 return
+
+async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not msg or not chat or chat.type not in ("group","supergroup") or not (msg.text or msg.caption):
+        return
+    text = msg.text or msg.caption
+
+    # nur kurze Fragen / Hinweise triggern (heuristisch)
+    if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
+        return
+
+    t0 = time.time()
+    hit = find_faq_answer(chat.id, text)
+    if hit:
+        trig, ans = hit
+        await msg.reply_text(ans, parse_mode="HTML")
+        dt = int((time.time()-t0)*1000)
+        log_auto_response(chat.id, trig, 1.0, ans[:200], dt, None)
+        return
+
+    # optionaler KI-Fallback
+    ai_faq, _ = get_ai_settings(chat.id)
+    if not ai_faq:
+        return
+
+    # sehr knapp, mit gruppenspezifischen Infos
+    lang = get_group_language(chat.id) or "de"
+    context_info = (
+        "Nützliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ • "
+        "Support: https://t.me/+DkUfIvjyej8zNGVi • "
+        "Spenden: PayPal greeny187@outlook.de"
+    )
+    prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
+
+    try:
+        # wir nutzen denselben Wrapper und 'missbrauchen' ai_summarize hier kurz
+        answer = await ai_summarize(prompt, lang=lang)
+    except Exception:
+        answer = None
+
+    if answer:
+        await msg.reply_text(answer, parse_mode="HTML")
+        dt = int((time.time()-t0)*1000)
+        log_auto_response(chat.id, "AI", 0.5, answer[:200], dt, None)
 
 async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flag = context.user_data.get('awaiting_nm_time')
@@ -585,6 +631,17 @@ async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     display = f"@{target.username}" if target.username else target.first_name
     await msg.reply_text(f"🚫 {display} wurde als Themenbesitzer entfernt.")
 
+async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    txt = " ".join(context.args or []).strip()
+    if not txt:
+        return await update.message.reply_text("Nutze: /faq <Stichwort oder Frage>")
+    hit = find_faq_answer(chat.id, txt)
+    if hit:
+        trig, ans = hit
+        await update.message.reply_text(ans, parse_mode="HTML")
+    else:
+        await update.message.reply_text("Keine passende FAQ gefunden.")
 
 async def show_rules_cmd(update, context):
     chat_id = update.effective_chat.id
@@ -869,6 +926,8 @@ def register_handlers(app):
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("spamlevel", spamlevel_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("router", router_command, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("faq", faq_command), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=1)
     app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)
     app.add_handler(MessageHandler(filters.ALL, forum_topic_registry_tracker), group=0)  # ← NEU: sehr früh
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
