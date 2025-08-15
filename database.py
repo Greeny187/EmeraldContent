@@ -258,7 +258,7 @@ def init_db(cur):
             chat_id BIGINT,
             topic_id INT,
             keywords TEXT[],
-            was_helpful BOOLEAN
+            was_helpful BOOLEAN,
             PRIMARY KEY (chat_id, topic_id)
         );
         """
@@ -270,6 +270,31 @@ def init_db(cur):
             trigger TEXT,
             answer TEXT,
             PRIMARY KEY (chat_id, trigger)
+        );
+        """
+    )
+    # ADD MISSING EVENT TABLES HERE
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS spam_events (
+            event_id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT,
+            user_id BIGINT,
+            ts TIMESTAMPTZ DEFAULT NOW(),
+            reason TEXT,
+            action TEXT,
+            message_id BIGINT
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS night_events (
+            event_id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT,
+            ts TIMESTAMPTZ DEFAULT NOW(),
+            kind TEXT, -- 'delete', 'warn'
+            count INT
         );
         """
     )
