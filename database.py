@@ -90,7 +90,9 @@ def init_db(cur):
             link_protection_enabled  BOOLEAN NOT NULL DEFAULT FALSE,
             link_warning_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
             link_warning_text        TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
-            link_exceptions_enabled  BOOLEAN NOT NULL DEFAULT TRUE
+            link_exceptions_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+            ai_faq_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+            ai_rss_summary   BOOLEAN NOT NULL DEFAULT FALSE
         );
         """
     )
@@ -256,6 +258,7 @@ def init_db(cur):
             chat_id BIGINT,
             topic_id INT,
             keywords TEXT[],
+            was_helpful BOOLEAN
             PRIMARY KEY (chat_id, topic_id)
         );
         """
@@ -1058,6 +1061,84 @@ def get_rss_feeds(cur) -> List[Tuple[int, str, int]]:
     return cur.fetchall()
 
 @_with_cursor
+def set_rss_feed_options(cur, chat_id:int, url:str, *, post_images:bool|None=None, enabled:bool|None=None):
+    parts, params = [], []
+    if post_images is not None:
+        parts.append("post_images=%s"); params.append(post_images)
+    if enabled is not None:
+        parts.append("enabled=%s"); params.append(enabled)
+    if not parts: return
+    sql = "UPDATE rss_feeds SET " + ", ".join(parts) + " WHERE chat_id=%s AND url=%s;"
+    cur.execute(sql, params + [chat_id, url])
+
+@_with_cursor
+def update_rss_http_cache(cur, chat_id:int, url:str, etag:str|None, last_modified:str|None):
+    cur.execute("""
+        UPDATE rss_feeds SET last_etag=%s, last_modified=%s
+        WHERE chat_id=%s AND url=%s;
+    """, (etag, last_modified, chat_id, url))
+
+@_with_cursor
+def get_rss_feeds_full(cur):
+    cur.execute("""
+        SELECT chat_id, url, topic_id, last_etag, last_modified, post_images, enabled
+        FROM rss_feeds
+        ORDER BY chat_id, url;
+    """)
+    return cur.fetchall()
+
+@_with_cursor
+def get_ai_settings(cur, chat_id:int) -> tuple[bool,bool]:
+    cur.execute("SELECT ai_faq_enabled, ai_rss_summary FROM group_settings WHERE chat_id=%s;", (chat_id,))
+    row = cur.fetchone()
+    return (row[0], row[1]) if row else (False, False)
+
+@_with_cursor
+def set_ai_settings(cur, chat_id:int, faq:bool|None=None, rss:bool|None=None):
+    parts, params = [], []
+    if faq is not None: parts.append("ai_faq_enabled=%s"); params.append(faq)
+    if rss is not None: parts.append("ai_rss_summary=%s"); params.append(rss)
+    if not parts: return
+    sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
+    cur.execute(sql, [chat_id] + params)
+
+@_with_cursor
+def upsert_faq(cur, chat_id:int, trigger:str, answer:str):
+    cur.execute("""
+        INSERT INTO faq_snippets (chat_id, trigger, answer)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (chat_id, trigger) DO UPDATE SET answer=EXCLUDED.answer;
+    """, (chat_id, trigger.strip(), answer.strip()))
+
+@_with_cursor
+def list_faqs(cur, chat_id:int):
+    cur.execute("SELECT trigger, answer FROM faq_snippets WHERE chat_id=%s ORDER BY trigger ASC;", (chat_id,))
+    return cur.fetchall()
+
+@_with_cursor
+def delete_faq(cur, chat_id:int, trigger:str):
+    cur.execute("DELETE FROM faq_snippets WHERE chat_id=%s AND trigger=%s;", (chat_id, trigger))
+
+@_with_cursor
+def find_faq_answer(cur, chat_id:int, text:str) -> tuple[str,str]|None:
+    # sehr einfache Heuristik: Trigger als Substring (case-insensitive)
+    cur.execute("""
+      SELECT trigger, answer
+        FROM faq_snippets
+       WHERE chat_id=%s AND LOWER(%s) LIKE CONCAT('%%', LOWER(trigger), '%%')
+       ORDER BY LENGTH(trigger) DESC
+       LIMIT 1;
+    """, (chat_id, text))
+    return cur.fetchone()
+
+@_with_cursor
+def log_auto_response(cur, chat_id:int, trigger:str, matched:float, snippet:str, latency_ms:int, was_helpful:bool|None=None):
+    cur.execute("""
+      INSERT INTO auto_responses (chat_id, trigger, matched_confidence, used_snippet, latency_ms, ts, was_helpful)
+      VALUES (%s,%s,%s,%s,%s,NOW(),%s);
+    """, (chat_id, trigger, matched, snippet, latency_ms, was_helpful))
+
+@_with_cursor
 def get_posted_links(cur, chat_id: int) -> list:
     cur.execute("SELECT link FROM last_posts WHERE chat_id = %s ORDER BY posted_at DESC;", (chat_id,))
     return [row[0] for row in cur.fetchall()]
@@ -1222,9 +1303,8 @@ def migrate_db():
         cur.execute(
             "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_type TEXT NOT NULL DEFAULT 'button';"
         )
-        cur.execute(
-            "ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_behavior TEXT NOT NULL DEFAULT 'kick';"
-        )
+        cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS captcha_behavior TEXT NOT NULL DEFAULT 'kick';")
+        
         cur.execute("""
         ALTER TABLE group_settings
         ADD COLUMN IF NOT EXISTS link_protection_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1233,11 +1313,16 @@ def migrate_db():
         ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS mood_topic_id BIGINT NOT NULL DEFAULT 0;
         """)
+        
         cur.execute("""
             ALTER TABLE night_mode
             ADD COLUMN IF NOT EXISTS hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS override_until TIMESTAMPTZ NULL;
         """)
+        
+        cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS ai_faq_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
+        cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS ai_rss_summary BOOLEAN NOT NULL DEFAULT FALSE;")
+        cur.execute("ALTER TABLE auto_responses ADD COLUMN IF NOT EXISTS was_helpful BOOLEAN;")
         
         conn.commit()
         logging.info("Migration erfolgreich abgeschlossen.")
