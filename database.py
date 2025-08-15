@@ -1250,8 +1250,14 @@ def migrate_db():
         conn.close()
 
 # --- Entry Point ---
-if __name__ == "__main__":
+def init_all_schemas():
+    """Initialize all database schemas and ensure migrations are applied"""
+    logger.info("Initializing all database schemas...")
     init_db()
     ensure_spam_topic_schema()
     ensure_forum_topics_schema()
-    logger.info("✅ Schema initialisiert und Pool bereit.")
+    migrate_stats_rollup()
+    logger.info("✅ All schemas initialized successfully")
+
+if __name__ == "__main__":
+    init_all_schemas()

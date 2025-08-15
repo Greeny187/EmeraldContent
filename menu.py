@@ -401,23 +401,42 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if sub == 'show' and func in get_map:
                 rec = get_map[func](cid)
-                # Annahme: rec = (id, text, media) oder (id, text) falls kein media
+                # Debug logging to see what we're getting from database
+                logger.debug(f"Retrieved {func} record: {rec}")
+                
                 if rec:
-                    text = rec[1]
+                    text = rec[1] if len(rec) > 1 else "No text content"
                     media = rec[2] if len(rec) > 2 else None
+                    
                     if media:
-                        # Prüfe, ob es eine Telegram File-ID ist (beginnt meist mit "AgAC" oder "CQAC")):
-                        if isinstance(media, str) and (media.startswith("AgAC") or media.startswith("CQAC")):
-                            await query.message.reply_photo(photo=media, caption=text, reply_markup=back)
-                        else:
-                            # Andernfalls als Datei öffnen (lokaler Pfad)
+                        logger.debug(f"Media found: {media} (type: {type(media)})")
+                        try:
+                            # Try to send as photo regardless of prefix - let Telegram API validate
+                            await query.message.reply_photo(
+                                photo=media,
+                                caption=text,
+                                reply_markup=back,
+                                parse_mode="HTML"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending photo: {e}")
+                            # Fallback - try as document if photo fails
                             try:
-                                with open(media, "rb") as f:
-                                    await query.message.reply_photo(photo=f, caption=text, reply_markup=back)
-                            except Exception as e:
-                                await query.edit_message_text(f"{text}\n\n⚠️ Bild konnte nicht geladen werden: {e}", reply_markup=back)
+                                await query.message.reply_document(
+                                    document=media,
+                                    caption=text,
+                                    reply_markup=back,
+                                    parse_mode="HTML"
+                                )
+                            except Exception as e2:
+                                logger.error(f"Error sending document: {e2}")
+                                await query.edit_message_text(
+                                    f"{text}\n\n⚠️ Bild konnte nicht geladen werden: {e}",
+                                    reply_markup=back,
+                                    parse_mode="HTML"
+                                )
                     else:
-                        await query.edit_message_text(text, reply_markup=back)
+                        await query.edit_message_text(text, reply_markup=back, parse_mode="HTML")
                 else:
                     await query.edit_message_text(f"Keine {func}-Nachricht gesetzt.", reply_markup=back)
                 return
