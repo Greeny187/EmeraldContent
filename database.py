@@ -738,7 +738,7 @@ def compute_agg_group_day(cur, chat_id:int, stat_date):
 
 @_with_cursor
 def get_agg_summary(cur, chat_id:int, d_start, d_end):
-    # Summierte Kacheln + frische Percentiles aus reply_times (Range)
+    _ensure_agg_group_day(cur)
     cur.execute("""
         SELECT
           COALESCE(SUM(messages_total),0),
