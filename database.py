@@ -301,6 +301,21 @@ def init_db(cur):
         );
         """
     )
+
+    # ---- Alt-Schema absichern (Legacy-DBs) ----
+    cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS chat_id  BIGINT;")
+    cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
+    cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS timestamp TIMESTAMPTZ DEFAULT NOW();")
+
+    cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS chat_id  BIGINT;")
+    cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
+    cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS ts      TIMESTAMPTZ DEFAULT NOW();")
+    cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS event_type TEXT;")
+
+    # ---- Indizes jetzt sicher anlegen ----
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_chat_ts ON message_logs(chat_id, timestamp DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_member_events_chat_ts ON member_events(chat_id, ts DESC);")
+
     # ADD MISSING EVENT TABLES HERE
     cur.execute(
         """
@@ -1417,9 +1432,9 @@ def init_all_schemas():
     """Initialize all database schemas and ensure migrations are applied"""
     logger.info("Initializing all database schemas...")
     init_db()
+    migrate_stats_rollup()
     ensure_spam_topic_schema()
     ensure_forum_topics_schema()
-    migrate_stats_rollup()
     logger.info("✅ All schemas initialized successfully")
 
 if __name__ == "__main__":
