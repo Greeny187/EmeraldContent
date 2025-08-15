@@ -7,6 +7,13 @@ from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
 
+def tr(text: str, lang: str) -> str:
+    try:
+        return translate_hybrid(text, lang)
+    except Exception as e:
+        logger.error(f"Fehler in tr(): {e}")
+        return text
+
 def is_deleted_account(member) -> bool:
     """
     Erkenne gelöschte Accounts nur über Namensprüfung:
