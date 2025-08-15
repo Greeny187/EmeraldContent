@@ -130,7 +130,7 @@ def init_db(cur):
             last_etag TEXT,
             last_modified TEXT,
             post_images BOOLEAN DEFAULT FALSE,
-            enabled BOOLEAN DEFAULT TRUE
+            enabled BOOLEAN DEFAULT TRUE,
             PRIMARY KEY (chat_id, url)
         );
         """
@@ -556,7 +556,7 @@ def get_farewell(cur, chat_id: int) -> Optional[Tuple[str, str]]:
 def delete_farewell(cur, chat_id: int):
     cur.execute("DELETE FROM farewell WHERE chat_id = %s;", (chat_id,))
 
-@ _with_cursor
+@_with_cursor
 def get_captcha_settings(cur, chat_id: int):
     cur.execute(
         "SELECT captcha_enabled, captcha_type, captcha_behavior FROM group_settings WHERE chat_id=%s",
@@ -564,7 +564,7 @@ def get_captcha_settings(cur, chat_id: int):
     )
     return cur.fetchone() or (False, 'button', 'kick')
 
-@ _with_cursor
+@_with_cursor
 def set_captcha_settings(cur, chat_id: int, enabled: bool, ctype: str, behavior: str):
     cur.execute(
         """
@@ -710,6 +710,39 @@ def set_group_language(cur, chat_id: int, lang: str):
         "ON CONFLICT (chat_id) DO UPDATE SET language_code = EXCLUDED.language_code;",
         (chat_id, lang)
     )
+
+# --- Night Mode Settings ---
+@_with_cursor
+def get_night_mode(cur, chat_id: int):
+    cur.execute("""
+        SELECT enabled, start_minute, end_minute, delete_non_admin_msgs, warn_once, timezone
+          FROM night_mode WHERE chat_id = %s;
+    """, (chat_id,))
+    row = cur.fetchone()
+    # Defaults wie im Schema
+    if not row:
+        return (False, 1320, 360, True, True, 'Europe/Berlin')
+    return row
+
+@_with_cursor
+def set_night_mode(cur, chat_id: int,
+                   enabled: bool | None = None,
+                   start_minute: int | None = None,
+                   end_minute: int | None = None,
+                   delete_non_admin_msgs: bool | None = None,
+                   warn_once: bool | None = None,
+                   timezone: str | None = None):
+    parts, params = [], []
+    if enabled is not None: parts.append("enabled=%s"); params.append(enabled)
+    if start_minute is not None: parts.append("start_minute=%s"); params.append(start_minute)
+    if end_minute is not None: parts.append("end_minute=%s"); params.append(end_minute)
+    if delete_non_admin_msgs is not None: parts.append("delete_non_admin_msgs=%s"); params.append(delete_non_admin_msgs)
+    if warn_once is not None: parts.append("warn_once=%s"); params.append(warn_once)
+    if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
+    if not parts:
+        return
+    sql = "INSERT INTO night_mode (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
+    cur.execute(sql, [chat_id] + params)
 
 # --- Legacy Migration Utility ---
 def migrate_db():
