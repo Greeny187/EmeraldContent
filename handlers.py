@@ -2,12 +2,12 @@ import os
 import datetime
 import re
 import logging
-import random, datetime
-from datetime import date, timedelta
+import random
+from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
-from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, get_group_language,
+from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language)  # <-- NEU
 from zoneinfo import ZoneInfo  # <-- NEU)
@@ -62,11 +62,11 @@ def _parse_hhmm(txt: str) -> int | None:
     return None
 
 async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = get_group_language(cid) or 'de'
     flag = context.user_data.get('awaiting_nm_time')
     if not flag:
         return
     kind, cid = flag
+    lang = get_group_language(cid) or 'de'
     txt = (update.effective_message.text or "").strip()
     val = _parse_hhmm(txt)
     if val is None:
@@ -268,9 +268,9 @@ async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text(tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp)))
 
 async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = get_group_language(chat.id) or 'de'
     msg = update.effective_message
     chat = update.effective_chat
+    lang = get_group_language(chat.id) or 'de'
     user = update.effective_user
     if not msg or not chat or chat.type not in ("group","supergroup") or not user:
         return
@@ -481,7 +481,7 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if enabled:
                     if ctype == 'button':
                         kb = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}|captcha|button|{user.id}")
+                            InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
                         ]])
                         await context.bot.send_message(
                             chat_id,
@@ -608,7 +608,7 @@ async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer("✅ Verifiziert! Willkommen.", show_alert=True)
     
     # Abschließende Willkommensnachricht (optional)
-    text, photo_id = get_welcome(chat_id)
+    photo_id, text = get_welcome(chat_id)
     if photo_id:
         await context.bot.send_photo(chat_id, photo_id, caption=f"🎉 {text}", parse_mode="HTML")
     else:
@@ -651,7 +651,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("settopic", set_topic))
     app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
-    app.add_handler(CommandHandler("cleandeleteaccounts", clean_delete_accounts_for_chat, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
     
     app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)

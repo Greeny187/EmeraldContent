@@ -20,7 +20,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("👎", callback_data="mood_dislike"),
         InlineKeyboardButton("🤔", callback_data="mood_think"),
     ]])
-    await context.bot.send_message(chat_id=chat.id, text=question, reply_markup=kb)
+    await context.bot.send_message(chat_id=chat.id, text=question, reply_markup=kb, message_thread_id=topic_id or None)
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verarbeitet Klicks auf die Stimmungs-Buttons und zeigt Live-Auswertung."""
