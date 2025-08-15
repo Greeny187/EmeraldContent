@@ -3,22 +3,55 @@ import datetime
 import re
 import logging
 import random
+import time
+from urllib.parse import urlparse
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
-get_night_mode, set_night_mode, get_group_language)
+get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
+delete_spam_policy_topic, effective_spam_policy, add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
+toggle_topic_router_rule, get_matching_router_rule
+)
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat
 from user_manual import help_handler
 from menu import show_group_menu
+from statistic import log_spam_event
 from access import get_visible_groups
 from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
+
+_EMOJI_RE = re.compile(r'([\U0001F300-\U0001FAFF\U00002600-\U000027BF])')
+_URL_RE = re.compile(r'(https?://\S+|www\.\S+)', re.IGNORECASE)
+
+def _extract_domains(text:str) -> list[str]:
+    doms = []
+    for m in _URL_RE.findall(text or ""):
+        u = m if m.startswith("http") else f"http://{m}"
+        try:
+            dom = urlparse(u).netloc.lower()
+            if dom.startswith("www."): dom = dom[4:]
+            if dom: doms.append(dom)
+        except Exception:
+            pass
+    return doms
+
+def _count_emojis(text:str) -> int:
+    return len(_EMOJI_RE.findall(text or ""))
+
+def _bump_rate(context, chat_id:int, user_id:int):
+    key = ("rl", chat_id, user_id)
+    now = time.time()
+    q = context.chat_data.get(key, [])
+    q = [t for t in q if now - t < 10.0]  # sliding window 10s
+    q.append(now)
+    context.chat_data[key] = q
+    return len(q)  # messages in last 10s
 
 def tr(text: str, lang: str) -> str:
     return translate_hybrid(text, target_lang=lang)
@@ -60,6 +93,99 @@ def _parse_hhmm(txt: str) -> int | None:
     if 0 <= hh < 24 and 0 <= mm < 60:
         return hh*60 + mm
     return None
+
+async def spam_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    if not msg or not (msg.text or msg.caption):
+        return
+    chat = update.effective_chat
+    user = update.effective_user
+    chat_id = chat.id
+    text = msg.text or msg.caption or ""
+    topic_id = getattr(msg, "message_thread_id", None)
+
+    # Globale Link-Settings einlesen (dein bestehender Mechanismus)
+    link_settings = get_link_settings(chat_id)  # (prot_on, warn_on, warn_text, except_on)
+    policy = effective_spam_policy(chat_id, topic_id, link_settings)
+
+    # Ausnahme: Admin / anonymer Admin / Topic-Owner
+    admins = await context.bot.get_chat_administrators(chat_id)
+    is_admin = any(a.user.id == user.id and a.status in ("administrator", "creator") for a in admins) if user else False
+    is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat_id)
+    is_topic_owner = link_settings[3] and has_topic(chat_id, user.id) if user else False  # exceptions_on
+    privileged = is_admin or is_anon_admin or is_topic_owner
+
+    # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
+    domains_in_msg = _extract_domains(text)
+    match = get_matching_router_rule(chat_id, text, domains_in_msg)
+    if match and topic_id != match["target_topic_id"]:
+        try:
+            # Kopieren in Ziel-Topic
+            await context.bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=chat_id,
+                message_id=msg.message_id,
+                message_thread_id=match["target_topic_id"]
+            )
+            if match["delete_original"] and not privileged:
+                await msg.delete()
+            if match["warn_user"] and not privileged:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=topic_id,
+                    text="↪️ Bitte ins passende Thema, habe deinen Beitrag verschoben."
+                )
+            # kein weiterer Spamcheck nötig – wir haben geroutet
+            return
+        except Exception as e:
+            logger.warning(f"Router copy failed: {e}")
+
+    # 2) Link-Blocking (Domain-Whitelist/Blacklist + globaler Linkschutz)
+    if domains_in_msg and not privileged:
+        wl = set(d.lower() for d in (policy.get("link_whitelist") or []))
+        bl = set(d.lower() for d in (policy.get("domain_blacklist") or []))
+        if any(d in bl for d in domains_in_msg):
+            # Blacklist schlägt immer zu
+            try:
+                await msg.delete()
+                log_spam_event(chat_id, user.id if user else None, "link_blacklist", "delete",
+                               {"domains": domains_in_msg})
+            except Exception: pass
+            return
+        prot_on = (link_settings[0] is True) or (policy.get("level") in ("light","medium","strict"))
+        if prot_on and not any((d in wl) for d in domains_in_msg):
+            try:
+                if link_settings[1]:  # warn_on
+                    await context.bot.send_message(chat_id, link_settings[2])  # warn_text
+                await msg.delete()
+                log_spam_event(chat_id, user.id if user else None, "link_protection", "delete",
+                               {"domains": domains_in_msg})
+            except Exception: pass
+            return
+
+    # 3) Emoji- und Flood-Limits (je nach Level/Override)
+    if not privileged:
+        em_lim = policy.get("emoji_max_per_msg") or 0
+        if em_lim > 0:
+            emc = _count_emojis(text)
+            if emc > em_lim:
+                try:
+                    await msg.delete()
+                    log_spam_event(chat_id, user.id if user else None, "emoji_per_msg", "delete",
+                                   {"count": emc, "limit": em_lim})
+                except Exception: pass
+                return
+
+        flood_lim = policy.get("max_msgs_per_10s") or 0
+        if flood_lim > 0:
+            n = _bump_rate(context, chat_id, user.id if user else 0)
+            if n > flood_lim:
+                try:
+                    await msg.delete()
+                    log_spam_event(chat_id, user.id if user else None, "flood_10s", "delete",
+                                   {"count_10s": n, "limit": flood_lim})
+                except Exception: pass
+                return
 
 async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flag = context.user_data.get('awaiting_nm_time')

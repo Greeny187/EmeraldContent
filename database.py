@@ -683,6 +683,165 @@ def get_top_responders(cur, chat_id: int, d_start, d_end, limit: int = 10):
     rows = cur.fetchall() or []
     return [(int(u), int(c), int(a)) for (u, c, a) in rows]
 
+@_with_cursor
+def ensure_spam_topic_schema(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS spam_policy_topic (
+          chat_id BIGINT,
+          topic_id BIGINT,
+          level TEXT,                     -- 'off'|'light'|'medium'|'strict'
+          link_whitelist TEXT[],          -- Domains, die immer erlaubt sind
+          domain_blacklist TEXT[],        -- Domains, die immer geblockt werden
+          emoji_max_per_msg INT,          -- 0 = kein Limit
+          emoji_max_per_min INT,          -- 0 = kein Limit
+          max_msgs_per_10s INT,           -- Flood-Guard pro User
+          action_primary TEXT,            -- 'delete'|'warn'|'mute'
+          action_secondary TEXT,          -- 'none'|'mute'|'ban'
+          escalation_threshold INT,       -- ab wievielen Treffern eskalieren
+          PRIMARY KEY(chat_id, topic_id)
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topic_router_rules (
+          rule_id BIGSERIAL PRIMARY KEY,
+          chat_id BIGINT NOT NULL,
+          target_topic_id BIGINT NOT NULL,
+          enabled BOOLEAN DEFAULT TRUE,
+          delete_original BOOLEAN DEFAULT TRUE,
+          warn_user BOOLEAN DEFAULT TRUE,
+          keywords TEXT[],                -- irgendeins matcht → Route
+          domains  TEXT[]                 -- Domain-Matches → Route
+        );
+    """)
+
+def _default_policy():
+    return {
+        "level": "off",
+        "link_whitelist": [],
+        "domain_blacklist": [],
+        "emoji_max_per_msg": 0,
+        "emoji_max_per_min": 0,
+        "max_msgs_per_10s": 0,
+        "action_primary": "delete",
+        "action_secondary": "none",
+        "escalation_threshold": 3
+    }
+
+_LEVEL_PRESETS = {
+    "off":    {},
+    "light":  {"emoji_max_per_msg": 20, "max_msgs_per_10s": 10},
+    "medium": {"emoji_max_per_msg": 10, "emoji_max_per_min": 60, "max_msgs_per_10s": 6},
+    "strict": {"emoji_max_per_msg": 6, "emoji_max_per_min": 30, "max_msgs_per_10s": 4}
+}
+
+@_with_cursor
+def set_spam_policy_topic(cur, chat_id:int, topic_id:int, **fields):
+    # Nur die Felder updaten, die mitgegeben werden
+    cols, vals = [], []
+    for k, v in fields.items():
+        if k in _default_policy():
+            cols.append(f"{k} = %s"); vals.append(v)
+    if not cols:
+        return
+    cur.execute("""
+        INSERT INTO spam_policy_topic (chat_id, topic_id, {cols})
+        VALUES (%s, %s, {vals})
+        ON CONFLICT (chat_id, topic_id) DO UPDATE SET {updates};
+    """.format(
+        cols=", ".join(cols),
+        vals=", ".join(["%s"]*len(cols)),
+        updates=", ".join([f"{c.split('=')[0]} = EXCLUDED.{c.split('=')[0]}" for c in cols])
+    ), (chat_id, topic_id, *vals))
+
+@_with_cursor
+def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:
+    cur.execute("""
+        SELECT level, link_whitelist, domain_blacklist, emoji_max_per_msg, emoji_max_per_min,
+               max_msgs_per_10s, action_primary, action_secondary, escalation_threshold
+          FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;
+    """, (chat_id, topic_id))
+    row = cur.fetchone()
+    if not row: return None
+    keys = list(_default_policy().keys())
+    return {k: row[i] for i, k in enumerate(keys)}
+
+@_with_cursor
+def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
+    cur.execute("DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
+
+def effective_spam_policy(chat_id:int, topic_id:int|None, link_settings:tuple) -> dict:
+    """
+    link_settings = (link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled)
+    Wir leiten daraus das Basis-Level ab und mergen Topic-Overrides.
+    """
+    prot_on, warn_on, warn_text, except_on = link_settings
+    base = _default_policy()
+    base["level"] = "strict" if prot_on else "off"
+    # Preset reinmischen:
+    base.update(_LEVEL_PRESETS.get(base["level"], {}))
+    # Topic-Override mergen
+    if topic_id:
+        ov = get_spam_policy_topic(chat_id, topic_id)
+        if ov:
+            for k, v in ov.items():
+                if v is not None:
+                    base[k] = v
+            # Level-Preset des Overrides auch anwenden:
+            base.update(_LEVEL_PRESETS.get(base["level"], {}))
+    return base
+
+# --- Topic Router ---
+@_with_cursor
+def add_topic_router_rule(cur, chat_id:int, target_topic_id:int,
+                          keywords:list[str]|None=None,
+                          domains:list[str]|None=None,
+                          delete_original:bool=True,
+                          warn_user:bool=True) -> int:
+    cur.execute("""
+        INSERT INTO topic_router_rules
+          (chat_id, target_topic_id, keywords, domains, delete_original, warn_user)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING rule_id;
+    """, (chat_id, target_topic_id, keywords or [], domains or [], delete_original, warn_user))
+    return cur.fetchone()[0]
+
+@_with_cursor
+def list_topic_router_rules(cur, chat_id:int):
+    cur.execute("""
+        SELECT rule_id, target_topic_id, enabled, delete_original, warn_user, keywords, domains
+          FROM topic_router_rules
+         WHERE chat_id=%s
+         ORDER BY rule_id ASC;
+    """, (chat_id,))
+    return cur.fetchall()
+
+@_with_cursor
+def delete_topic_router_rule(cur, chat_id:int, rule_id:int):
+    cur.execute("DELETE FROM topic_router_rules WHERE chat_id=%s AND rule_id=%s;", (chat_id, rule_id))
+
+@_with_cursor
+def toggle_topic_router_rule(cur, chat_id:int, rule_id:int, enabled:bool):
+    cur.execute("UPDATE topic_router_rules SET enabled=%s WHERE chat_id=%s AND rule_id=%s;",
+                (enabled, chat_id, rule_id))
+
+@_with_cursor
+def get_matching_router_rule(cur, chat_id:int, text:str, domains_in_msg:list[str]):
+    # einfache Heuristik: erster Match gewinnt
+    cur.execute("""
+        SELECT rule_id, target_topic_id, delete_original, warn_user, keywords, domains
+          FROM topic_router_rules
+         WHERE chat_id=%s AND enabled=TRUE
+         ORDER BY rule_id ASC;
+    """, (chat_id,))
+    for rule_id, target_topic_id, del_orig, warn_user, kws, doms in cur.fetchall():
+        kws = kws or []; doms = doms or []
+        kw_hit = any(kw.lower() in text.lower() for kw in kws) if kws else False
+        dom_hit = any(d.lower() in domains_in_msg for d in doms) if doms else False
+        if (kws and kw_hit) or (doms and dom_hit):
+            return {"rule_id": rule_id, "target_topic_id": target_topic_id,
+                    "delete_original": del_orig, "warn_user": warn_user}
+    return None
+
 # --- Mood Meter ---
 @_with_cursor
 def save_mood(cur, chat_id: int, message_id: int, user_id: int, mood: str):
@@ -718,12 +877,16 @@ def set_mood_question(cur, chat_id: int, question: str):
         (chat_id, question)
     )
 @_with_cursor
-def set_mood_topic(cur, chat_id: int, topic_id: int):
+def set_mood_topic(cur, chat_id: int, topic_id: int) -> None:
+    """Set the default topic ID for mood questions in a chat"""
     cur.execute(
-      "INSERT INTO group_settings (chat_id, daily_stats_enabled, rss_topic_id, mood_topic_id) "
-      "VALUES (%s, TRUE, COALESCE((SELECT rss_topic_id FROM group_settings WHERE chat_id=%s), 0), %s) "
-      "ON CONFLICT (chat_id) DO UPDATE SET mood_topic_id = EXCLUDED.mood_topic_id;",
-      (chat_id, chat_id, topic_id)
+        """
+        INSERT INTO group_settings (chat_id, mood_topic_id)
+        VALUES (%s, %s)
+        ON CONFLICT (chat_id) 
+        DO UPDATE SET mood_topic_id = EXCLUDED.mood_topic_id
+        """,
+        (chat_id, topic_id)
     )
 
 @_with_cursor
