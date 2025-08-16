@@ -954,7 +954,7 @@ def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(
         filters.REPLY
-        & (filters.TEXT | filters.PHOTO | filters.document)
+        & (filters.TEXT | filters.ATTACHMENT)  # erfasst alle Medienarten
         & filters.ChatType.GROUPS,
         menu_free_text_handler
     ), group=1)
