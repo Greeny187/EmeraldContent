@@ -1399,6 +1399,18 @@ def migrate_db():
         cur.execute("ALTER TABLE rss_feeds ALTER COLUMN enabled     SET DEFAULT TRUE;")
         cur.execute("UPDATE rss_feeds SET post_images=FALSE WHERE post_images IS NULL;")
         cur.execute("UPDATE rss_feeds SET enabled=TRUE  WHERE enabled     IS NULL;")
+        # --- reply_times auf neues Schema heben (idempotent) ---
+        cur.execute("CREATE TABLE IF NOT EXISTS reply_times (chat_id BIGINT, question_msg_id BIGINT, question_user BIGINT, answer_msg_id BIGINT, answer_user BIGINT, delta_ms BIGINT, ts TIMESTAMP DEFAULT NOW());")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS question_msg_id BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS question_user BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS answer_msg_id BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS answer_user BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS delta_ms BIGINT;")
+        cur.execute("ALTER TABLE reply_times ADD COLUMN IF NOT EXISTS ts TIMESTAMP DEFAULT NOW();")
+        # sinnvolle Indizes
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_chat_ts ON reply_times(chat_id, ts DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_ans_user ON reply_times(chat_id, answer_user, ts DESC);")
         
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"

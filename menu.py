@@ -718,11 +718,29 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
     text = (msg.text or "").strip()
-    # 1) Link-Warntext (bestehend)
+    photo_id = msg.photo[-1].file_id if msg.photo else None
+    doc_id   = msg.document.file_id if msg.document else None
+    media_id = photo_id or doc_id
+
+    # Welcome/Rules/Farewell speichern (Text + optional Media)
+    if context.user_data.pop('last_edit', None):
+        cid, what = context.user_data.pop('last_edit')
+        if what == 'welcome_edit':
+            set_welcome(cid, text, media_id)
+            return await msg.reply_text("✅ Begrüßung gespeichert.")
+        elif what == 'rules_edit':
+            set_rules(cid, text, media_id)
+            return await msg.reply_text("✅ Regeln gespeichert.")
+        elif what == 'farewell_edit':
+            set_farewell(cid, text, media_id)
+            return await msg.reply_text("✅ Abschied gespeichert.")
+
+    # Warntext Linksperre speichern (nur Text)
     if context.user_data.pop('awaiting_link_warn', False):
         cid = context.user_data.pop('link_warn_group')
         set_link_settings(cid, warning_text=text)
         return await msg.reply_text("✅ Warn-Text gespeichert.")
+
     # 2) Spam-Whitelist (jetzt auch Topic-spezifisch)
     if context.user_data.pop('awaiting_spam_whitelist', False):
         cid = context.user_data.pop('spam_group_id')
