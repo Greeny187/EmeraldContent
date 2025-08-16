@@ -42,6 +42,8 @@ def build_group_menu(cid):
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
         [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
          InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
+        [InlineKeyboardButton(tr('🗑️ Gelöschte Konten entfernen', lang), callback_data=f"{cid}_clean_delete"),
+         InlineKeyboardButton(tr('❓ FAQ', lang), callback_data=f"{cid}_faq")],       
         [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam"),
          InlineKeyboardButton(tr('🧭 Topic-Router', lang), callback_data=f"{cid}_router")],
         [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
@@ -50,8 +52,6 @@ def build_group_menu(cid):
          InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
         [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
-        [InlineKeyboardButton(tr('❓ FAQ', lang), callback_data=f"{cid}_faq"),
-         InlineKeyboardButton(tr('🤖 KI',  lang), callback_data=f"{cid}_ai")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
         [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
