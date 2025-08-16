@@ -870,23 +870,36 @@ _LEVEL_PRESETS = {
 }
 
 @_with_cursor
-def set_spam_policy_topic(cur, chat_id:int, topic_id:int, **fields):
-    # Nur die Felder updaten, die mitgegeben werden
-    cols, vals = [], []
-    for k, v in fields.items():
-        if k in _default_policy():
-            cols.append(f"{k} = %s"); vals.append(v)
-    if not cols:
+def set_spam_policy_topic(cur, chat_id: int, topic_id: int, **fields):
+    """
+    Upsert von Topic-Overrides. Erlaubte Keys sind die aus _default_policy():
+    level, link_whitelist, domain_blacklist, emoji_max_per_msg, emoji_max_per_min,
+    max_msgs_per_10s, action_primary, action_secondary, escalation_threshold
+    """
+    if not fields:
         return
-    cur.execute("""
+    allowed = set(_default_policy().keys())
+    col_names = []
+    values = []
+    updates = []
+
+    for k, v in fields.items():
+        if k in allowed:
+            col_names.append(k)
+            values.append(v)
+            updates.append(f"{k}=EXCLUDED.{k}")
+
+    if not col_names:
+        return
+
+    placeholders = ", ".join(["%s"] * len(col_names))
+    cols = ", ".join(col_names)
+    sql = f"""
         INSERT INTO spam_policy_topic (chat_id, topic_id, {cols})
-        VALUES (%s, %s, {vals})
-        ON CONFLICT (chat_id, topic_id) DO UPDATE SET {updates};
-    """.format(
-        cols=", ".join(cols),
-        vals=", ".join(["%s"]*len(cols)),
-        updates=", ".join([f"{c.split('=')[0]} = EXCLUDED.{c.split('=')[0]}" for c in cols])
-    ), (chat_id, topic_id, *vals))
+        VALUES (%s, %s, {placeholders})
+        ON CONFLICT (chat_id, topic_id) DO UPDATE SET {", ".join(updates)};
+    """
+    cur.execute(sql, (chat_id, topic_id, *values))
 
 @_with_cursor
 def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:

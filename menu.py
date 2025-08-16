@@ -769,29 +769,32 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     doc_id   = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
 
-    # KORREKTUR: 'last_edit' zuerst prüfen, dann entfernen.
+    # KORREKTUR: 'last_edit' korrekt auslesen und verarbeiten
     if 'last_edit' in context.user_data:
-        cid, what = context.user_data.pop('last_edit') # Jetzt sicher entfernen
+        # last_edit ist ein Tupel (cid, what)
+        cid, what = context.user_data.pop('last_edit') 
+        
         if what == 'welcome':
-            set_welcome(cid, media_id, text)
+            set_welcome(cid, text, media_id) # Reihenfolge: text, dann media_id
             return await msg.reply_text("✅ Begrüßung gespeichert.")
         elif what == 'rules':
-            set_rules(cid, media_id, text)
+            set_rules(cid, text, media_id)
             return await msg.reply_text("✅ Regeln gespeichert.")
         elif what == 'farewell':
-            set_farewell(cid, media_id, text)
+            set_farewell(cid, text, media_id)
             return await msg.reply_text("✅ Abschied gespeichert.")
 
-    # KORREKTUR: 'awaiting_nm_time' zuerst prüfen, dann entfernen.
+    # KORREKTUR: 'awaiting_nm_time' korrekt auslesen und verarbeiten
     if 'awaiting_nm_time' in context.user_data:
+        # awaiting_nm_time ist ein Tupel (sub, cid)
         sub, cid = context.user_data.pop('awaiting_nm_time')
         try:
             hh, mm = map(int, text.split(":", 1))
-            if sub == 'set_start':
-                set_night_mode(cid, start=hh * 60 + mm)
+            if sub == 'start': # 'set_start' wurde zu 'start' geändert
+                set_night_mode(cid, start_minute=hh * 60 + mm)
                 await msg.reply_text("✅ Startzeit gespeichert.")
-            else:
-                set_night_mode(cid, end=hh * 60 + mm)
+            else: # 'end'
+                set_night_mode(cid, end_minute=hh * 60 + mm)
                 await msg.reply_text("✅ Endzeit gespeichert.")
         except (ValueError, IndexError):
             await msg.reply_text("⚠️ Ungültiges Format. Bitte nutze HH:MM.")
