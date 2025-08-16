@@ -842,8 +842,9 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 def register_menu(app):
 
     app.add_handler(CallbackQueryHandler(menu_callback))
-    # KORREKTUR: filters.document statt filters.Document (lowercase!)
     app.add_handler(MessageHandler(
-        filters.REPLY & (filters.TEXT | filters.PHOTO | filters.document) & filters.ChatType.GROUPS,
+        filters.REPLY
+        & (filters.TEXT | filters.PHOTO | filters.document)
+        & filters.ChatType.GROUPS,
         menu_free_text_handler
     ), group=1)
