@@ -1314,11 +1314,16 @@ def _default_policy():
         "emoji_max_per_msg": 0,
         "emoji_max_per_min": 0,
         "max_msgs_per_10s": 0,
-        "per_user_daily_limit": 0,     # ← NEU
+        "per_user_daily_limit": 0,   # ← NEU
+        "quota_notify": "smart",     # ← NEU: 'off'|'smart'|'always'
         "action_primary": "delete",
         "action_secondary": "none",
         "escalation_threshold": 3
     }
+
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 @_with_cursor
 def count_topic_user_messages_between(cur, chat_id:int, topic_id:int, user_id:int, start_dt, end_dt) -> int:
@@ -1334,7 +1339,6 @@ def count_topic_user_messages_today(chat_id:int, topic_id:int, user_id:int, tz:s
     tzinfo = ZoneInfo(tz)
     start_local = datetime.now(tzinfo).replace(hour=0, minute=0, second=0, microsecond=0)
     end_local   = start_local + timedelta(days=1)
-    # DB-Zeit ist UTC → Grenzen in UTC schicken
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     end_utc   = end_local.astimezone(ZoneInfo("UTC"))
     return count_topic_user_messages_between(chat_id, topic_id, user_id, start_utc, end_utc)
@@ -1469,7 +1473,14 @@ def migrate_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
         # neue Spalte in spam_policy_topic
         cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS per_user_daily_limit INT DEFAULT 0;")
-        
+        # message_logs: Topic-Spalte & Index (falls nicht vorhanden)
+        cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
+
+        # Spam-Topic-Policy: Tageslimit + Notify-Modus
+        cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS per_user_daily_limit INT DEFAULT 0;")
+        cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS quota_notify TEXT DEFAULT 'smart';")
+
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
         )
