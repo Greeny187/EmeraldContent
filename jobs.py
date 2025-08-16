@@ -252,19 +252,20 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
                 end_dt += timedelta(days=1)
 
         # Prüfen, ob der Status sich gerade geändert hat
-        # Wir speichern den letzten Zustand in context.chat_data
-        last_status = context.chat_data.get(f"nm_status_{chat_id}", not is_active)
+        # KORREKTUR: In Jobs muss context.application.chat_data verwendet werden.
+        chat_data = context.application.chat_data.get(chat_id, {})
+        last_status = chat_data.get("nm_status", not is_active)
 
         if is_active and not last_status:
             # Nachtmodus wurde gerade AKTIVIERT
             lang = get_group_language(chat_id) or 'de'
             await bot.send_message(chat_id, tr("🌙 Der Nachtmodus ist jetzt aktiv. Nur Admins können schreiben.", lang))
-            context.chat_data[f"nm_status_{chat_id}"] = True
+            context.application.chat_data.setdefault(chat_id, {})["nm_status"] = True
         elif not is_active and last_status:
             # Nachtmodus wurde gerade DEAKTIVIERT
             lang = get_group_language(chat_id) or 'de'
             await bot.send_message(chat_id, tr("☀️ Der Nachtmodus ist beendet. Alle können wieder schreiben.", lang))
-            context.chat_data[f"nm_status_{chat_id}"] = False
+            context.application.chat_data.setdefault(chat_id, {})["nm_status"] = False
 
         # Nachrichten im Nachtmodus löschen, wenn aktiviert
         if is_active and del_non:

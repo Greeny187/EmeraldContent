@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional, Any
 from psycopg2 import pool
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -1304,6 +1306,39 @@ def get_all_group_ids():
     finally:
         _db_pool.putconn(conn)
 
+def _default_policy():
+    return {
+        "level": "off",
+        "link_whitelist": [],
+        "domain_blacklist": [],
+        "emoji_max_per_msg": 0,
+        "emoji_max_per_min": 0,
+        "max_msgs_per_10s": 0,
+        "per_user_daily_limit": 0,     # ← NEU
+        "action_primary": "delete",
+        "action_secondary": "none",
+        "escalation_threshold": 3
+    }
+
+@_with_cursor
+def count_topic_user_messages_between(cur, chat_id:int, topic_id:int, user_id:int, start_dt, end_dt) -> int:
+    cur.execute("""
+        SELECT COUNT(*) FROM message_logs
+         WHERE chat_id=%s AND topic_id=%s AND user_id=%s
+           AND timestamp >= %s AND timestamp < %s
+    """, (chat_id, topic_id, user_id, start_dt, end_dt))
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
+
+def count_topic_user_messages_today(chat_id:int, topic_id:int, user_id:int, tz:str="Europe/Berlin") -> int:
+    tzinfo = ZoneInfo(tz)
+    start_local = datetime.now(tzinfo).replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local   = start_local + timedelta(days=1)
+    # DB-Zeit ist UTC → Grenzen in UTC schicken
+    start_utc = start_local.astimezone(ZoneInfo("UTC"))
+    end_utc   = end_local.astimezone(ZoneInfo("UTC"))
+    return count_topic_user_messages_between(chat_id, topic_id, user_id, start_utc, end_utc)
+
 # Mulitlanguage
 
 @_with_cursor
@@ -1405,7 +1440,6 @@ def migrate_db():
         cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS chat_id  BIGINT;")
         cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
         cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS timestamp TIMESTAMPTZ DEFAULT NOW();")
-
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS chat_id  BIGINT;")
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS ts      TIMESTAMPTZ DEFAULT NOW();")
@@ -1430,6 +1464,11 @@ def migrate_db():
         # sinnvolle Indizes
         cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_chat_ts ON reply_times(chat_id, ts DESC);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_reply_times_ans_user ON reply_times(chat_id, answer_user, ts DESC);")
+        # message_logs: Topic-Spalte + sinnvoller Index
+        cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
+        # neue Spalte in spam_policy_topic
+        cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS per_user_daily_limit INT DEFAULT 0;")
         
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
