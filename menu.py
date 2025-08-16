@@ -78,14 +78,50 @@ async def show_group_menu(query=None, cid=None, context=None):
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    data  = query.data or ""
     await query.answer()
-    data = query.data
+
+    # 0) Sonder-Fälle ohne Chat-ID
+    if data in ("help", "patchnotes"):
+        lang = get_group_language(context.user_data.get('selected_chat_id')) or 'de'
+        notes = PATCH_NOTES
+        if lang != 'de':
+            notes = translate_hybrid(PATCH_NOTES, target_lang=lang)
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
+        await query.message.reply_text(text, parse_mode="HTML")
+        cid = context.user_data.get('selected_chat_id')
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    if data == "group_select":
+        print(f"DEBUG: Group select clicked")
+        groups = get_visible_groups(update.effective_user.id)
+        if not groups:
+            return await query.edit_message_text("⚠️ Keine Gruppen verfügbar.")
+        kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
+        return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
+
+    if data.startswith("group_"):
+        # Gruppe auswählen
+        _, id_str = data.split("_", 1)
+        if id_str.lstrip("-").isdigit():
+            cid = int(id_str)
+            context.user_data["selected_chat_id"] = cid
+            return await show_group_menu(query=query, cid=cid, context=context)
+        else:
+            return await query.answer("Ungültige Gruppen-ID.", show_alert=True)
+
+    # 1) Jetzt safe parsen: parts[0] muss eine Zahl sein
     parts = data.split("_", 2)
-    cid = int(parts[0])
+    if not parts[0].lstrip("-").isdigit():
+        # kein bekannter Sonder-Callback und keine Zahl → einfach zurück ins Hauptmenü
+        cid = context.user_data.get("selected_chat_id")
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    cid  = int(parts[0])
     func = parts[1] if len(parts) > 1 else None
     sub  = parts[2] if len(parts) > 2 else None
-    lang = get_group_language(cid) or 'de'
-    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück',lang), callback_data=f"group_{cid}")]])
+    lang = get_group_language(cid) or "de"
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr("↩️ Zurück", lang), callback_data=f"group_{cid}")]])
 
     # DEBUG: Zeige was geklickt wurde
     print(f"DEBUG: Callback data = {data}")
