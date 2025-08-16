@@ -842,8 +842,8 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 def register_menu(app):
 
     app.add_handler(CallbackQueryHandler(menu_callback))
-    # KORREKTUR 4: Handler muss auch auf Bilder/Dokumente mit Caption reagieren
+    # KORREKTUR: filters.Document statt filters.DOCUMENT
     app.add_handler(MessageHandler(
-        filters.REPLY & (filters.TEXT | filters.PHOTO | filters.DOCUMENT) & filters.ChatType.GROUPS,
+        filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document) & filters.ChatType.GROUPS,
         menu_free_text_handler
     ), group=1)
