@@ -65,6 +65,55 @@ def init_db(cur):
         );
         """
     )
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS adv_settings (
+          chat_id           BIGINT PRIMARY KEY,
+          adv_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+          adv_topic_id      BIGINT NULL,             -- wenn NULL => Default-Topic
+          min_gap_min       INT     NOT NULL DEFAULT 240,  -- Mindestabstand in Minuten
+          daily_cap         INT     NOT NULL DEFAULT 2,    -- max Ads/Tag
+          every_n_messages  INT     NOT NULL DEFAULT 0,    -- optional: nach N Nachrichten
+          label             TEXT    NOT NULL DEFAULT 'Anzeige',
+          quiet_start_min   SMALLINT NOT NULL DEFAULT 1320, -- 22*60
+          quiet_end_min     SMALLINT NOT NULL DEFAULT 360,  -- 06*60
+          last_adv_ts       TIMESTAMPTZ NULL
+        );
+    """)
+
+    # Kampagnen – global (Targeting optional später)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS adv_campaigns (
+          campaign_id   BIGSERIAL PRIMARY KEY,
+          title         TEXT,
+          body_text     TEXT,
+          media_url     TEXT,     -- optional Bild
+          link_url      TEXT,     -- URL für CTA
+          cta_label     TEXT DEFAULT 'Mehr erfahren',
+          enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+          weight        INT NOT NULL DEFAULT 1,
+          start_ts      TIMESTAMPTZ NULL,
+          end_ts        TIMESTAMPTZ NULL,
+          created_by    BIGINT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+
+    # Impressionen/Versände
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS adv_impressions (
+          chat_id     BIGINT,
+          campaign_id BIGINT,
+          message_id  BIGINT,
+          ts          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_adv_impr_chat_ts ON adv_impressions(chat_id, ts DESC);")
+
+    # Hilfsindex für Message-basierte Trigger
+    cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
+    
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS translations_cache (
@@ -1242,6 +1291,87 @@ def log_auto_response(cur, chat_id:int, trigger:str, matched:float, snippet:str,
       INSERT INTO auto_responses (chat_id, trigger, matched_confidence, used_snippet, latency_ms, ts, was_helpful)
       VALUES (%s,%s,%s,%s,%s,NOW(),%s);
     """, (chat_id, trigger, matched, snippet, latency_ms, was_helpful))
+
+@_with_cursor
+def set_adv_topic(cur, chat_id:int, topic_id:int|None):
+    cur.execute("""
+      INSERT INTO adv_settings (chat_id, adv_topic_id)
+      VALUES (%s, %s)
+      ON CONFLICT (chat_id) DO UPDATE SET adv_topic_id=EXCLUDED.adv_topic_id;
+    """, (chat_id, topic_id))
+
+@_with_cursor
+def get_adv_settings(cur, chat_id:int) -> dict:
+    cur.execute("""
+      SELECT adv_enabled, adv_topic_id, min_gap_min, daily_cap, every_n_messages,
+             label, quiet_start_min, quiet_end_min, last_adv_ts
+        FROM adv_settings WHERE chat_id=%s;
+    """, (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        # Defaults, falls noch nie gesetzt
+        return {
+          "adv_enabled": True, "adv_topic_id": None, "min_gap_min": 240,
+          "daily_cap": 2, "every_n_messages": 0, "label": "Anzeige",
+          "quiet_start_min": 1320, "quiet_end_min": 360, "last_adv_ts": None
+        }
+    (en, tid, gap, cap, nmsg, label, qs, qe, last_ts) = r
+    return {"adv_enabled":en, "adv_topic_id":tid, "min_gap_min":gap, "daily_cap":cap,
+            "every_n_messages":nmsg, "label":label, "quiet_start_min":qs,
+            "quiet_end_min":qe, "last_adv_ts":last_ts}
+
+@_with_cursor
+def set_adv_settings(cur, chat_id:int, **fields):
+    allowed = {"adv_enabled","min_gap_min","daily_cap","every_n_messages","label","quiet_start_min","quiet_end_min"}
+    cols, vals = [], []
+    for k,v in fields.items():
+        if k in allowed:
+            cols.append(f"{k}=%s"); vals.append(v)
+    if not cols: return
+    cur.execute(f"""
+      INSERT INTO adv_settings (chat_id) VALUES (%s)
+      ON CONFLICT (chat_id) DO UPDATE SET {", ".join(cols)};
+    """, (chat_id, *vals))
+
+@_with_cursor
+def add_campaign(cur, title:str, body_text:str, link_url:str,
+                 media_url:str|None=None, cta_label:str='Mehr erfahren',
+                 weight:int=1, start_ts=None, end_ts=None, created_by:int|None=None) -> int:
+    cur.execute("""
+      INSERT INTO adv_campaigns (title, body_text, media_url, link_url, cta_label, weight, start_ts, end_ts, created_by)
+      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+      RETURNING campaign_id;
+    """, (title, body_text, media_url, link_url, cta_label, weight, start_ts, end_ts, created_by))
+    return cur.fetchone()[0]
+
+@_with_cursor
+def list_active_campaigns(cur):
+    cur.execute("""
+      SELECT campaign_id, title, body_text, media_url, link_url, cta_label, weight
+        FROM adv_campaigns
+       WHERE enabled = TRUE
+         AND (start_ts IS NULL OR NOW() >= start_ts)
+         AND (end_ts   IS NULL OR NOW() <= end_ts)
+    """)
+    return cur.fetchall()
+
+@_with_cursor
+def record_impression(cur, chat_id:int, campaign_id:int, message_id:int):
+    cur.execute("INSERT INTO adv_impressions (chat_id, campaign_id, message_id) VALUES (%s,%s,%s);", (chat_id, campaign_id, message_id))
+
+@_with_cursor
+def update_last_adv_ts(cur, chat_id:int):
+    cur.execute("UPDATE adv_settings SET last_adv_ts=NOW() WHERE chat_id=%s;", (chat_id,))
+
+@_with_cursor
+def count_ads_today(cur, chat_id:int) -> int:
+    cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE chat_id=%s AND ts::date = NOW()::date;", (chat_id,))
+    return int(cur.fetchone()[0])
+
+@_with_cursor
+def messages_since(cur, chat_id:int, since_ts) -> int:
+    cur.execute("SELECT COUNT(*) FROM message_logs WHERE chat_id=%s AND timestamp > %s;", (chat_id, since_ts))
+    return int(cur.fetchone()[0])
 
 @_with_cursor
 def get_posted_links(cur, chat_id: int) -> list:

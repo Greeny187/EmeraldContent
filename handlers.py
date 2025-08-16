@@ -754,7 +754,6 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     # 0) Service-Messages behandeln: new_chat_members / left_chat_member
     msg = update.message
     chat_id = update.effective_chat.id
@@ -784,24 +783,31 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         kb = InlineKeyboardMarkup([[
                             InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
                         ]])
-                        await context.bot.send_message(
+                        sent = await context.bot.send_message(
                             chat_id,
                             text=f"🔐 Bitte bestätige, dass du kein Bot bist, {user.first_name}.",
                             reply_markup=kb
                         )
-                    elif ctype == 'math':
-                        a, b = random.randint(1,9), random.randint(1,9)
-                        # speichere Antwort und Verhalten kurzzeitig in context.user_data
-                        context.user_data[f"captcha_{chat_id}_{user.id}"] = {
-                            "answer": a + b,
+                        # Captcha-Message speichern (nur löschen bei Erfolg)
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
+                            "msg_id": sent.message_id,
                             "behavior": behavior,
                             "issued_at": datetime.datetime.utcnow()
                         }
-                        await context.bot.send_message(
+                    elif ctype == 'math':
+                        a, b = random.randint(1,9), random.randint(1,9)
+                        sent = await context.bot.send_message(
                             chat_id,
                             text=f"🔐 Bitte rechne: {a} + {b} = ?",
                             reply_markup=ForceReply(selective=True)
                         )
+                        # In bot_data statt user_data speichern
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
+                            "answer": a + b,
+                            "behavior": behavior,
+                            "issued_at": datetime.datetime.utcnow(),
+                            "msg_id": sent.message_id
+                        }
             return
         # b) Verlassene Mitglieder
         if msg.left_chat_member:
@@ -972,42 +978,95 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id_str, _, _, user_id_str = query.data.split("_")
-    chat_id, user_id = int(chat_id_str), int(user_id_str)
+    chat_id, target_uid = int(chat_id_str), int(user_id_str)
+    clicker = update.effective_user.id if update.effective_user else None
 
-    await query.answer("✅ Verifiziert! Willkommen.", show_alert=True)
-    
-    # Abschließende Willkommensnachricht (optional)
-    photo_id, text = get_welcome(chat_id)
-    if photo_id:
-        await context.bot.send_photo(chat_id, photo_id, caption=f"🎉 {text}", parse_mode="HTML")
-    else:
-        await context.bot.send_message(chat_id, text=f"🎉 {text}", parse_mode="HTML")
+    # Nur der adressierte User darf bestätigen
+    if clicker != target_uid:
+        await query.answer("❌ Dieses Captcha ist nicht für dich.", show_alert=True)
+        return
+
+    key = f"captcha:{chat_id}:{target_uid}"
+    data = context.bot_data.pop(key, None)
+    # Captcha-Nachricht löschen (falls vorhanden)
+    if data and data.get("msg_id"):
+        try:
+            await context.bot.delete_message(chat_id, data["msg_id"])
+        except Exception as e:
+            logger.debug(f"Captcha-Message delete failed ({chat_id}/{data['msg_id']}): {e}")
+
+    # Optional: hier Entmute/Restrict aufheben, falls ihr beim Join eingeschränkt habt
+    # await context.bot.restrict_chat_member(chat_id, target_uid, permissions=ChatPermissions(can_send_messages=True))
+
+    # Nur kurz bestätigen, keine extra Chat-Nachricht
+    await query.answer("✅ Verifiziert!", show_alert=False)
 
 # Message-Handler für Mathe-Antworten
 async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat_id = update.effective_chat.id
     user_id = msg.from_user.id
-    key = f"captcha_{chat_id}_{user_id}"
-    if key not in context.user_data:
+    key = f"captcha:{chat_id}:{user_id}"
+    data = context.bot_data.get(key)
+    if not data:
         return
-    data = context.user_data[key]
-    # Zeitlimit prüfen (z.B. 60 Sekunden)
+
+    # Timeout prüfen (60s)
     if (datetime.datetime.utcnow() - data['issued_at']).seconds > 60:
-        # Timeout: Verhalten ausführen (kick/mute)
-        # ...
-        del context.user_data[key]
+        # Fehlverhalten wie gehabt (kick oder stumm), nur Beispiel:
+        try:
+            beh = (data.get("behavior") or "").lower()
+            if beh == "kick":
+                await context.bot.ban_chat_member(chat_id, user_id)
+                await context.bot.unban_chat_member(chat_id, user_id)
+            elif beh in ("mute", "stumm"):
+                await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False))
+        except Exception:
+            pass
+        # Captcha-Message wegräumen
+        mid = data.get("msg_id")
+        if mid:
+            try:
+                await context.bot.delete_message(chat_id, mid)
+            except Exception:
+                pass
+        context.bot_data.pop(key, None)
         return
+
     # Antwort prüfen
     try:
-        if int(msg.text.strip()) == data['answer']:
-            await context.bot.send_message(chat_id, f"✅ Richtig, willkommen! {msg.from_user.first_name}")
+        if int((msg.text or "").strip()) == int(data.get("answer", -1)):
+            # Erfolg: Captcha-Nachricht löschen, keinen weiteren Text senden
+            mid = data.get("msg_id")
+            if mid:
+                try:
+                    await context.bot.delete_message(chat_id, mid)
+                except Exception as e:
+                    logger.debug(f"Captcha-Message delete failed ({chat_id}/{mid}): {e}")
+            context.bot_data.pop(key, None)
+            # Optional: Entmute aufheben, falls ihr beim Join einschränkt
+            # await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True))
         else:
-            # Falsche Antwort: Verhalten ausführen
-            # ...
-            del context.user_data[key]
+            # Falsch: wie gehabt (kick/stumm) umsetzen
+            try:
+                beh = (data.get("behavior") or "").lower()
+                if beh == "kick":
+                    await context.bot.ban_chat_member(chat_id, user_id)
+                    await context.bot.unban_chat_member(chat_id, user_id)
+                elif beh in ("mute", "stumm"):
+                    await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False))
+            except Exception:
+                pass
+            # Captcha-Message wegräumen
+            mid = data.get("msg_id")
+            if mid:
+                try:
+                    await context.bot.delete_message(chat_id, mid)
+                except Exception:
+                    pass
+            context.bot_data.pop(key, None)
     except ValueError:
-        # Ungültige Eingabe
+        # Ungültige Eingabe ignorieren
         pass
 
 
