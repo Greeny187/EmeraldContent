@@ -80,7 +80,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    
+    parts = data.split("_", 2)
+    cid = int(parts[0])
+    func = parts[1] if len(parts) > 1 else None
+    sub  = parts[2] if len(parts) > 2 else None
+    lang = get_group_language(cid) or 'de'
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück',lang), callback_data=f"group_{cid}")]])
+
     # DEBUG: Zeige was geklickt wurde
     print(f"DEBUG: Callback data = {data}")
 
@@ -483,8 +489,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(tr(f"✅ {func.capitalize()} gelöscht.", lang), show_alert=True)
                 return await query.edit_message_text(tr(f"{func.capitalize()} entfernt.", lang), reply_markup=back)
             elif sub == 'edit' and func in set_map:
-                context.user_data['last_edit'] = (cid, f"{func}_edit")
-                return await query.edit_message_text(f"✏️ Sende nun das neue {func}:", reply_markup=back)
+                context.user_data['last_edit'] = (cid, func)
+                # statt ins Inline-Keyboard editieren: senden wir jetzt einen ForceReply
+                label = {'welcome':'Begrüßung','rules':'Regeln','farewell':'Abschied'}[func]
+                return await query.message.reply_text(
+                    f"✏️ Sende nun die neue {label}:",
+                    reply_markup=ForceReply(selective=True)
+                )
 
         # Captcha Aktionen
         elif func == 'captcha':
