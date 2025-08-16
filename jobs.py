@@ -6,14 +6,16 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from database import _db_pool, get_registered_groups, is_daily_stats_enabled, purge_deleted_members, get_group_stats
+from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+                    purge_deleted_members, get_group_stats, get_night_mode) # <-- HIER HINZUGEFÜGT
 from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
-    compute_response_times, fetch_media_and_poll_stats, get_member_stats,
-    get_message_insights, get_engagement_metrics, get_trend_analysis,
-    update_group_activity_score, migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day
+    compute_response_times, fetch_media_and_poll_stats, get_member_stats, 
+    get_message_insights, get_engagement_metrics, get_trend_analysis, update_group_activity_score, 
+    migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day, get_group_language
 )
 from telegram.constants import ParseMode
+from translator import translate_hybrid as tr
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
@@ -213,6 +215,70 @@ async def rollup_yesterday(context):
         except Exception as e:
             print(f"[rollup] Fehler bei chat {cid}: {e}")
             
+async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
+    bot = context.bot
+    now_utc = datetime.now(dt.timezone.utc)
+
+    for chat_id, _ in get_registered_groups():
+        enabled, start_minute, end_minute, del_non, _, tz_str, hard, override = get_night_mode(chat_id)
+        if not enabled:
+            continue
+
+        group_tz = ZoneInfo(tz_str or TIMEZONE)
+        now_local = now_utc.astimezone(group_tz)
+        
+        start_time = dt.time(hour=start_minute // 60, minute=start_minute % 60)
+        end_time = dt.time(hour=end_minute // 60, minute=end_minute % 60)
+        now_time = now_local.time()
+
+        is_active = False
+        if start_time < end_time:
+            is_active = start_time <= now_time < end_time
+        else:
+            is_active = now_time >= start_time or now_time < end_time
+
+        # KORREKTUR: start_dt und end_dt definieren
+        current_date = now_local.date()
+        start_dt = datetime.combine(current_date, start_time, tzinfo=group_tz)
+        end_dt = datetime.combine(current_date, end_time, tzinfo=group_tz)
+
+        # Korrektur für Zeiträume über Mitternacht
+        if start_time > end_time:
+            if now_local.time() < end_time:
+                # Wir sind nach Mitternacht, Start war am Vortag
+                start_dt -= timedelta(days=1)
+            else:
+                # Wir sind vor Mitternacht, Ende ist am nächsten Tag
+                end_dt += timedelta(days=1)
+
+        # Prüfen, ob der Status sich gerade geändert hat
+        # Wir speichern den letzten Zustand in context.chat_data
+        last_status = context.chat_data.get(f"nm_status_{chat_id}", not is_active)
+
+        if is_active and not last_status:
+            # Nachtmodus wurde gerade AKTIVIERT
+            lang = get_group_language(chat_id) or 'de'
+            await bot.send_message(chat_id, tr("🌙 Der Nachtmodus ist jetzt aktiv. Nur Admins können schreiben.", lang))
+            context.chat_data[f"nm_status_{chat_id}"] = True
+        elif not is_active and last_status:
+            # Nachtmodus wurde gerade DEAKTIVIERT
+            lang = get_group_language(chat_id) or 'de'
+            await bot.send_message(chat_id, tr("☀️ Der Nachtmodus ist beendet. Alle können wieder schreiben.", lang))
+            context.chat_data[f"nm_status_{chat_id}"] = False
+
+        # Nachrichten im Nachtmodus löschen, wenn aktiviert
+        if is_active and del_non:
+            # Diese Schleife ist konzeptionell fehlerhaft in einem Job,
+            # da sie keine neuen Nachrichten abfängt.
+            # Sie wird hier auskommentiert, um Fehler zu vermeiden.
+            # try:
+            #     # Annahme: Sie wollen Nachrichten von Nicht-Admins löschen.
+            #     # Dies erfordert einen MessageHandler, keinen Job.
+            #     pass
+            # except Exception as e:
+            #     logger.error(f"Fehler beim Löschen von Nachrichten in {chat_id}: {e}")
+            pass # Platzhalter, um den Block syntaktisch korrekt zu halten
+
 def register_jobs(app):
     jq = app.job_queue
     jq.run_daily(
@@ -242,4 +308,7 @@ def register_jobs(app):
         first += dt.timedelta(days=1)
     app.job_queue.run_repeating(rollup_yesterday, interval=dt.timedelta(days=1), first=first, name="rollup_yesterday")
     
-    logger.info("Jobs registriert: daily_report, telethon_stats, purge_members, dev_stats_nightly")
+    # NEU: night_mode_job registrieren, damit er jede Minute läuft
+    jq.run_repeating(night_mode_job, interval=60, first=10, name="night_mode_job")
+    
+    logger.info("Jobs registriert: daily_report, telethon_stats, purge_members, dev_stats_nightly, rollup_yesterday, night_mode_job")

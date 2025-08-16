@@ -1046,12 +1046,18 @@ def get_mood_topic(cur, chat_id: int) -> int:
 
 # --- Welcome / Rules / Farewell ---
 @_with_cursor
-def set_welcome(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
-    cur.execute(
-        "INSERT INTO welcome (chat_id, photo_id, text) VALUES (%s, %s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)
-    )
+def set_welcome(cur, chat_id: int, text: Optional[str], photo_id: Optional[str]):
+    try:
+        logger.info(f"DB: Speichere Welcome für Chat {chat_id}. Photo: {bool(photo_id)}, Textlänge: {len(text or '')}")
+        cur.execute(
+            "INSERT INTO welcome (chat_id, photo_id, text) VALUES (%s, %s, %s) "
+            "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
+            (chat_id, photo_id, text)
+        )
+        logger.info(f"DB: Welcome für Chat {chat_id} erfolgreich gespeichert/aktualisiert.")
+    except Exception as e:
+        logger.error(f"DB-Fehler in set_welcome für Chat {chat_id}: {e}", exc_info=True)
+        raise # Fehler weitergeben, damit er sichtbar wird
 
 @_with_cursor
 def get_welcome(cur, chat_id: int) -> Optional[Tuple[str, str]]:
