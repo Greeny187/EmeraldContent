@@ -790,25 +790,38 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
+    # Debug-Ausgabe
+    print(f"Handler aufgerufen! user_data={context.user_data}")
+    
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id   = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
+    
+    print(f"Media erkannt: photo={bool(photo_id)}, doc={bool(doc_id)}")
 
-    # KORREKTUR: 'last_edit' korrekt auslesen und verarbeiten
+    # 'last_edit' korrekt auslesen und verarbeiten
     if 'last_edit' in context.user_data:
-        # last_edit ist ein Tupel (cid, what)
-        cid, what = context.user_data.pop('last_edit') 
+        last_edit = context.user_data.pop('last_edit')
+        print(f"last_edit gefunden: {last_edit}")
         
-        if what == 'welcome':
-            set_welcome(cid, text, media_id) # Reihenfolge: text, dann media_id
-            return await msg.reply_text("✅ Begrüßung gespeichert.")
-        elif what == 'rules':
-            set_rules(cid, text, media_id)
-            return await msg.reply_text("✅ Regeln gespeichert.")
-        elif what == 'farewell':
-            set_farewell(cid, text, media_id)
-            return await msg.reply_text("✅ Abschied gespeichert.")
+        # Sicheres Entpacken
+        if isinstance(last_edit, tuple) and len(last_edit) == 2:
+            cid, what = last_edit
+            print(f"Verarbeite {what} für {cid} mit Medien={bool(media_id)}")
+            
+            if what == 'welcome':
+                # WICHTIG: Richtige Parameter-Reihenfolge beachten
+                set_welcome(cid, media_id, text)
+                return await msg.reply_text("✅ Begrüßung gespeichert.")
+            elif what == 'rules':
+                set_rules(cid, media_id, text)
+                return await msg.reply_text("✅ Regeln gespeichert.")
+            elif what == 'farewell':
+                set_farewell(cid, media_id, text)
+                return await msg.reply_text("✅ Abschied gespeichert.")
+        else:
+            print(f"Fehlerhaftes Format für last_edit: {last_edit}")
 
     # KORREKTUR: 'awaiting_nm_time' korrekt auslesen und verarbeiten
     if 'awaiting_nm_time' in context.user_data:
@@ -938,11 +951,10 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 # /menu 
 
 def register_menu(app):
-
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(
         filters.REPLY
-        & (filters.TEXT | filters.PHOTO)
+        & (filters.TEXT | filters.PHOTO | filters.Document)
         & filters.ChatType.GROUPS,
         menu_free_text_handler
     ), group=1)
