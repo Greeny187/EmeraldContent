@@ -439,10 +439,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wl = ", ".join(pol.get('link_whitelist') or []) or "–"
         bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
 
-        text = (f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
-                f"Level: <b>{level}</b>\n"
-                f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
-                f"Whitelist: {wl}\nBlacklist: {bl}")
+        limit = pol.get('per_user_daily_limit', 0) or 0
+        qmode = (pol.get('quota_notify') or 'smart')
+        text = (
+            f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
+            f"Level: <b>{level}</b>\n"
+            f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
+            f"Limit/Tag/User: <b>{limit}</b>\n"
+            f"Rest-Info: <b>{qmode}</b>\n"
+            f"Whitelist: {wl}\nBlacklist: {bl}"
+        )
+
         kb = [
             [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
             [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_-_{topic_id}"),
@@ -451,6 +458,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
             [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
             InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
+            [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
+            [InlineKeyboardButton("Benachrichtigung ⏭", callback_data=f"{cid}_spam_qmode_{topic_id}")],
             [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_spam_tsel")]
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -623,6 +632,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     context.user_data.update(awaiting_spam_blacklist=True, spam_group_id=cid, spam_topic_id=topic_id)
                     return await query.message.reply_text("Sende Blacklist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
+
+        elif func == 'spam' and sub and sub.startswith('limt_edit_'):
+            topic_id = int(sub.split('_')[-1])
+            context.user_data.update(awaiting_topic_limit=True, spam_group_id=cid, spam_topic_id=topic_id)
+            return await query.message.reply_text("Bitte Limit/Tag/User als Zahl senden (0 = aus):", reply_markup=ForceReply(selective=True))
+
+        elif func == 'spam' and sub and sub.startswith('qmode_'):
+            topic_id = int(sub.split('_')[-1])
+            pol = get_spam_policy_topic(cid, topic_id) or {'quota_notify':'smart'}
+            order = ['off','smart','always']
+            cur = (pol.get('quota_notify') or 'smart').lower()
+            nxt = order[(order.index(cur)+1) % len(order)]
+            set_spam_policy_topic(cid, topic_id, quota_notify=nxt)
+            await query.answer(f"Rest-Info: {nxt}", show_alert=True)
+            # Re-render
+            update.callback_query.data = f"{cid}_spam_t_{topic_id}"
+            return await menu_callback(update, context)
 
         elif func == 'router' and sub in ('tsel_kw','tsel_dom'):
             purpose = 'router_kw' if sub.endswith('kw') else 'router_dom'
@@ -873,6 +899,16 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         delete_faq(cid, text.strip())
         return await msg.reply_text("🗑 FAQ gelöscht (falls vorhanden).")
     
+    if context.user_data.pop('awaiting_topic_limit', False):
+        cid = context.user_data.pop('spam_group_id')
+        tid = context.user_data.pop('spam_topic_id')
+        try:
+            limit = int((update.effective_message.text or "").strip())
+        except:
+            return await update.effective_message.reply_text("Bitte eine Zahl senden.")
+        set_spam_policy_topic(cid, tid, per_user_daily_limit=max(0, limit))
+        return await update.effective_message.reply_text(f"✅ Limit gesetzt: {limit}/Tag/User (Topic {tid}).")
+
 TOPICS_PAGE_SIZE = 10
 
 def _topics_keyboard(cid:int, page:int, purpose:str):

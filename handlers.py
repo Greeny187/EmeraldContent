@@ -13,7 +13,8 @@ from database import (register_group, get_registered_groups, get_rules, set_welc
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
 delete_spam_policy_topic, effective_spam_policy, add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
-toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings
+toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
+effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
@@ -115,6 +116,59 @@ async def spam_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_topic_owner = link_settings[3] and has_topic(chat_id, user.id) if user else False  # exceptions_on
     privileged = is_admin or is_anon_admin or is_topic_owner
 
+    # (A) Tageslimit pro Topic & User
+    daily_lim = int(policy.get("per_user_daily_limit") or 0)
+    if topic_id and daily_lim > 0 and not privileged and user:
+        used = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
+        daily_lim = int(policy.get("per_user_daily_limit") or 0)
+        notify_mode = (policy.get("quota_notify") or "smart").lower()
+
+        if topic_id and daily_lim > 0 and user and not privileged:
+            # Zählung umfasst bereits DIESE Nachricht, weil message_logger vorher läuft:
+            used = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
+            remaining = daily_lim - used
+
+            if remaining < 0:
+                # Über Limit -> löschen + Hinweis
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        message_thread_id=topic_id,
+                        text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.",
+                    )
+                except Exception:
+                    pass
+                try:
+                    from statistic import log_spam_event
+                    log_spam_event(chat_id, user.id, "limit_day", "delete",
+                                {"limit": daily_lim, "used": used, "topic_id": topic_id})
+                except Exception:
+                    pass
+                return
+            else:
+                # Restkontingent melden (je nach Modus)
+                try:
+                    if notify_mode == "always":
+                        await context.bot.send_message(
+                            chat_id=chat_id, message_thread_id=topic_id,
+                            reply_to_message_id=msg.message_id,
+                            text=f"ℹ️ Rest heute: {remaining}/{daily_lim}"
+                        )
+                    elif notify_mode == "smart":
+                        if remaining in (1, 0):
+                            txt = "Achtung: letztes Posting heute (0 übrig)" if remaining == 0 else "Noch 1 Nachricht heute übrig"
+                            await context.bot.send_message(
+                                chat_id=chat_id, message_thread_id=topic_id,
+                                reply_to_message_id=msg.message_id, text=f"ℹ️ {txt}"
+                            )
+                except Exception:
+                    pass
+
+    
     # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
     domains_in_msg = _extract_domains(text)
     match = get_matching_router_rule(chat_id, text, domains_in_msg)
@@ -449,6 +503,50 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("⬅ Zurück", callback_data=f"{chat_id}_{action.split('_')[0]}")
     ]])
     await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
+
+async def topiclimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg  = update.effective_message
+    args = context.args or []
+
+    # auch ohne topic_id nutzbar, wenn im Thread ausgeführt
+    tid = getattr(msg, "message_thread_id", None)
+    if len(args) >= 2 and args[0].isdigit():
+        tid = int(args[0])
+        try:
+            limit = int(args[1])
+        except:
+            return await msg.reply_text("Bitte eine Zahl für das Limit angeben.")
+    elif tid is not None and len(args) >= 1:
+        try:
+            limit = int(args[0])
+        except:
+            return await msg.reply_text("Bitte eine Zahl für das Limit angeben.")
+    else:
+        return await msg.reply_text("Nutzung: /topiclimit <topic_id> <anzahl>\nOder im Ziel-Topic: /topiclimit <anzahl>")
+
+    set_spam_policy_topic(chat.id, tid, per_user_daily_limit=max(0, limit))
+    return await msg.reply_text(f"✅ Limit für Topic {tid} gesetzt: {limit}/Tag/User (0 = aus).")
+
+async def myquota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    msg = update.effective_message
+    user = update.effective_user
+    tid = getattr(msg, "message_thread_id", None)
+    if tid is None:
+        return await msg.reply_text("Bitte im gewünschten Topic ausführen (Thread öffnen) oder: /myquota <topic_id>")
+
+    # Policy ermitteln (inkl. Topic-Override)
+    link_settings = get_link_settings(chat.id)
+    policy = effective_spam_policy(chat.id, tid, link_settings)
+    daily_lim = int(policy.get("per_user_daily_limit") or 0)
+    if daily_lim <= 0:
+        return await msg.reply_text("Für dieses Topic ist kein Tageslimit gesetzt.")
+
+    used = count_topic_user_messages_today(chat.id, tid, user.id, tz="Europe/Berlin")
+    remaining = max(daily_lim - used, 0)
+    await msg.reply_text(f"Dein Restkontingent heute in diesem Topic: {remaining}/{daily_lim}")
+
 
 async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
@@ -927,6 +1025,8 @@ def register_handlers(app):
     app.add_handler(CommandHandler("spamlevel", spamlevel_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("router", router_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("faq", faq_command), group=0)
+    app.add_handler(CommandHandler("topiclimit", topiclimit_command, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("myquota", myquota_command, filters=filters.ChatType.GROUPS))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=1)
     app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)
     app.add_handler(MessageHandler(filters.ALL, forum_topic_registry_tracker), group=0)  # ← NEU: sehr früh

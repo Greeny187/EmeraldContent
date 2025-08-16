@@ -332,6 +332,39 @@ def log_message(cur, chat_id: int, msg):
     )
 
 @_with_cursor
+def log_message(cur, chat_id: int, msg):
+    text = msg.text or msg.caption or None
+    topic_id = getattr(msg, "message_thread_id", None)  # ← neu
+
+    cur.execute(
+        """
+        INSERT INTO message_logs
+          (chat_id, group_id, topic_id, message_id, user_id, content,
+           is_photo, is_video, is_sticker, is_voice,
+           is_location, is_reply, timestamp, last_message_time)
+        VALUES
+          (%s, %s, %s, %s, %s, %s,
+           %s, %s, %s, %s,
+           %s, %s, NOW(), NOW())
+        ON CONFLICT DO NOTHING;
+        """,
+        (
+            msg.chat.id,                 # chat_id
+            msg.chat.id,                 # group_id (Legacy-Feld)
+            topic_id,                    # ← neu
+            msg.message_id,
+            (msg.from_user.id if msg.from_user else None),
+            text,
+            bool(msg.photo),
+            bool(msg.video),
+            bool(msg.sticker),
+            bool(msg.voice),
+            bool(getattr(msg, "location", None)),
+            bool(msg.reply_to_message),
+        )
+    )
+
+@_with_cursor
 def log_member_event(cur, group_id: int, user_id: int, event: str):
     cur.execute(
         """
