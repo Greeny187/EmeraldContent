@@ -952,7 +952,28 @@ async def stats_command(update, context):
         top_lines.append(f"• {name}: <b>{answers}</b> Antworten, Ø {s_str}")
     text += ("\n<b>Top-Responder</b>\n" + ("\n".join(top_lines) if top_lines else "–"))
 
-    await update.message.reply_text(text, reply_markup=_stats_keyboard(chat.id, sel, lang), parse_mode="HTML")
+    try:
+        if update.message:
+            await update.message.reply_text(
+                text,
+                reply_markup=_stats_keyboard(chat.id, sel, lang),
+                parse_mode="HTML",
+            )
+        else:
+            # aus dem Menü (Callback)
+            await update.callback_query.edit_message_text(
+                text,
+                reply_markup=_stats_keyboard(chat.id, sel, lang),
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        # Fallback (z. B. "message is not modified" / "message can't be edited")
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=text,
+            reply_markup=_stats_keyboard(chat.id, sel, lang),
+            parse_mode="HTML",
+        )
 
 async def stats_callback(update, context):
     query = update.callback_query

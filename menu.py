@@ -717,22 +717,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
-    text = (msg.text or "").strip()
+    # KORREKTUR 1: Text aus Caption und Text-Nachricht holen
+    text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id   = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
 
-    # Welcome/Rules/Farewell speichern (Text + optional Media)
-    if context.user_data.pop('last_edit', None):
-        cid, what = context.user_data.pop('last_edit')
+    # KORREKTUR 2: 'last_edit' nur einmal aus context.user_data entfernen
+    last_edit_data = context.user_data.pop('last_edit', None)
+    if last_edit_data:
+        cid, what = last_edit_data
         if what == 'welcome_edit':
-            set_welcome(cid, text, media_id)
+            # KORREKTUR 3: Argument-Reihenfolge (chat_id, media_id, text)
+            set_welcome(cid, media_id, text)
             return await msg.reply_text("✅ Begrüßung gespeichert.")
         elif what == 'rules_edit':
-            set_rules(cid, text, media_id)
+            set_rules(cid, media_id, text)
             return await msg.reply_text("✅ Regeln gespeichert.")
         elif what == 'farewell_edit':
-            set_farewell(cid, text, media_id)
+            set_farewell(cid, media_id, text)
             return await msg.reply_text("✅ Abschied gespeichert.")
 
     # Warntext Linksperre speichern (nur Text)
@@ -839,4 +842,8 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 def register_menu(app):
 
     app.add_handler(CallbackQueryHandler(menu_callback))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, menu_free_text_handler), group=1)
+    # KORREKTUR 4: Handler muss auch auf Bilder/Dokumente mit Caption reagieren
+    app.add_handler(MessageHandler(
+        filters.REPLY & (filters.TEXT | filters.PHOTO | filters.DOCUMENT) & filters.ChatType.GROUPS,
+        menu_free_text_handler
+    ), group=1)
