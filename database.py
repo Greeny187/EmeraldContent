@@ -776,18 +776,17 @@ def get_agg_summary(cur, chat_id:int, d_start, d_end):
 
 @_with_cursor
 def get_heatmap(cur, chat_id:int, ts_start, ts_end):
-    # 0=Sonntag in PostgreSQL => wir mappen auf 1=Mo ... 7=So
+    # 0=Sonntag → 1..7 (Mo..So)
     cur.execute("""
-        SELECT ((EXTRACT(DOW FROM timestamp)::INT + 6) % 7) + 1 AS dow,  -- 1..7 (Mo..So)
-               EXTRACT(HOUR FROM timestamp)::INT AS hour,
+        SELECT (MOD(EXTRACT(DOW FROM "timestamp")::INT + 6, 7) + 1) AS dow,
+               EXTRACT(HOUR FROM "timestamp")::INT AS hour,
                COUNT(*) AS cnt
         FROM message_logs
-        WHERE chat_id=%s AND timestamp >= %s AND timestamp < %s
+        WHERE chat_id=%s AND "timestamp" >= %s AND "timestamp" < %s
         GROUP BY 1,2
     """, (chat_id, ts_start, ts_end))
     rows = cur.fetchall() or []
-    # in Python zu einem 7x24-Grid formen
-    grid = [[0]*24 for _ in range(7)]  # [1..7]=Mo..So -> index 0..6
+    grid = [[0]*24 for _ in range(7)]
     for dow, hour, cnt in rows:
         grid[dow-1][hour] = int(cnt)
     return grid
@@ -1392,6 +1391,14 @@ def migrate_db():
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS ts      TIMESTAMPTZ DEFAULT NOW();")
         cur.execute("ALTER TABLE member_events ADD COLUMN IF NOT EXISTS event_type TEXT;")
+        cur.execute("ALTER TABLE rss_feeds ADD COLUMN IF NOT EXISTS last_etag     TEXT;")
+        cur.execute("ALTER TABLE rss_feeds ADD COLUMN IF NOT EXISTS last_modified TEXT;")
+        cur.execute("ALTER TABLE rss_feeds ADD COLUMN IF NOT EXISTS post_images   BOOLEAN;")
+        cur.execute("ALTER TABLE rss_feeds ADD COLUMN IF NOT EXISTS enabled       BOOLEAN;")
+        cur.execute("ALTER TABLE rss_feeds ALTER COLUMN post_images SET DEFAULT FALSE;")
+        cur.execute("ALTER TABLE rss_feeds ALTER COLUMN enabled     SET DEFAULT TRUE;")
+        cur.execute("UPDATE rss_feeds SET post_images=FALSE WHERE post_images IS NULL;")
+        cur.execute("UPDATE rss_feeds SET enabled=TRUE  WHERE enabled     IS NULL;")
         
         cur.execute(
             "ALTER TABLE groups ADD COLUMN IF NOT EXISTS welcome_topic_id BIGINT DEFAULT 0;"
