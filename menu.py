@@ -764,26 +764,38 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
-    # KORREKTUR 1: Text aus Caption und Text-Nachricht holen
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id   = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
 
-    # KORREKTUR 2: 'last_edit' nur einmal aus context.user_data entfernen
-    last_edit_data = context.user_data.pop('last_edit', None)
-    if last_edit_data:
-        cid, what = last_edit_data
-        if what == 'welcome_edit':
-            # KORREKTUR 3: Argument-Reihenfolge (chat_id, media_id, text)
+    # KORREKTUR: 'last_edit' zuerst prüfen, dann entfernen.
+    if 'last_edit' in context.user_data:
+        cid, what = context.user_data.pop('last_edit') # Jetzt sicher entfernen
+        if what == 'welcome':
             set_welcome(cid, media_id, text)
             return await msg.reply_text("✅ Begrüßung gespeichert.")
-        elif what == 'rules_edit':
+        elif what == 'rules':
             set_rules(cid, media_id, text)
             return await msg.reply_text("✅ Regeln gespeichert.")
-        elif what == 'farewell_edit':
+        elif what == 'farewell':
             set_farewell(cid, media_id, text)
             return await msg.reply_text("✅ Abschied gespeichert.")
+
+    # KORREKTUR: 'awaiting_nm_time' zuerst prüfen, dann entfernen.
+    if 'awaiting_nm_time' in context.user_data:
+        sub, cid = context.user_data.pop('awaiting_nm_time')
+        try:
+            hh, mm = map(int, text.split(":", 1))
+            if sub == 'set_start':
+                set_night_mode(cid, start=hh * 60 + mm)
+                await msg.reply_text("✅ Startzeit gespeichert.")
+            else:
+                set_night_mode(cid, end=hh * 60 + mm)
+                await msg.reply_text("✅ Endzeit gespeichert.")
+        except (ValueError, IndexError):
+            await msg.reply_text("⚠️ Ungültiges Format. Bitte nutze HH:MM.")
+        return # Wichtig: Verarbeitung hier beenden
 
     # Warntext Linksperre speichern (nur Text)
     if context.user_data.pop('awaiting_link_warn', False):
