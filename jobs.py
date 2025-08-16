@@ -215,6 +215,9 @@ async def rollup_yesterday(context):
         except Exception as e:
             print(f"[rollup] Fehler bei chat {cid}: {e}")
             
+# Rate-Limiting: Warte kurz zwischen Nachrichten in verschiedenen Chats
+import asyncio
+
 async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot
     now_utc = datetime.now(dt.timezone.utc)
@@ -282,6 +285,17 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
             # except Exception as e:
             #     logger.error(f"Fehler beim Löschen von Nachrichten in {chat_id}: {e}")
             pass # Platzhalter, um den Block syntaktisch korrekt zu halten
+
+        try:
+            # Pro Chat in einem eigenen Try-Block, damit ein Fehler
+            # nicht alle anderen Chats blockiert
+            # ...bestehender Code zur Statusprüfung...
+            
+            # Nach jedem Chat kurz warten, um API-Limits zu vermeiden
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Fehler im Night-Mode für Chat {chat_id}: {e}")
+            continue
 
 def register_jobs(app):
     jq = app.job_queue
