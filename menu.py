@@ -78,8 +78,43 @@ async def show_group_menu(query=None, cid=None, context=None):
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data  = query.data or ""
     await query.answer()
+    data = query.data
+
+    # Erwartetes Muster: "{cid}_{func}" oder "{cid}_{func}_{sub}"
+    parts = data.split("_", 2)
+    if len(parts) < 2:
+        return
+    cid = int(parts[0])
+    func = parts[1]
+    sub  = parts[2] if len(parts) == 3 else None
+
+    lang = get_group_language(cid) or "de"
+
+    # --- Bearbeiten-Flow aktivieren ---
+    if func == "welcome" and sub == "edit":
+        context.user_data["last_edit"] = (cid, "welcome_edit")
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text=tr("Bitte sende jetzt den neuen Begrüßungstext (optional mit Foto als Bild + Caption).", lang)
+        )
+        return
+
+    if func == "rules" and sub == "edit":
+        context.user_data["last_edit"] = (cid, "rules_edit")
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text=tr("Bitte sende jetzt die neuen Regeln (optional mit Foto als Bild + Caption).", lang)
+        )
+        return
+
+    if func == "farewell" and sub == "edit":
+        context.user_data["last_edit"] = (cid, "farewell_edit")
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
+            text=tr("Bitte sende jetzt die neue Abschiedsnachricht (optional mit Foto als Bild + Caption).", lang)
+        )
+        return
 
     # 0) Sonder-Fälle ohne Chat-ID
     if data in ("help", "patchnotes"):
