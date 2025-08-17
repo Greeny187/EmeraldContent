@@ -52,13 +52,13 @@ def build_group_menu(cid):
          InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
         [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
-         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")],
         [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
     return InlineKeyboardMarkup(buttons)
 
-async def show_group_menu(query=None, cid=None, context=None):
+async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
     title = tr("📋 Gruppenmenü", get_group_language(cid) or 'de')
     markup = build_group_menu(cid)
 
@@ -74,22 +74,62 @@ async def show_group_menu(query=None, cid=None, context=None):
             else:
                 raise
     else:
-        await context.bot.send_message(chat_id=cid, text=title, reply_markup=markup)
+        target = dest_chat_id if dest_chat_id is not None else cid
+        await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data = query.data or ""
 
-    # Erwartetes Muster: "{cid}_{func}" oder "{cid}_{func}_{sub}"
-    parts = data.split("_", 2)
-    if len(parts) < 2:
-        return
-    cid = int(parts[0])
-    func = parts[1]
-    sub  = parts[2] if len(parts) == 3 else None
+    # 0) Globale Sonderfälle VOR irgendeinem frühen Return behandeln
+    if data == "group_select":
+        from database import get_registered_groups
+        all_groups = get_registered_groups()
+        groups = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+        if not groups:
+            return await query.edit_message_text("⚠️ Keine Gruppen verfügbar.")
+        kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
+        return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
+    if data.startswith("group_"):
+        _, id_str = data.split("_", 1)
+        if id_str.lstrip("-").isdigit():
+            cid = int(id_str)
+            context.user_data["selected_chat_id"] = cid
+            return await show_group_menu(query=query, cid=cid, context=context)
+        else:
+            return await query.answer("Ungültige Gruppen-ID.", show_alert=True)
+
+    # 1) Einheitliches Pattern: {cid}_{func}[_sub]
+    m = re.match(r'^(-?\d+)_([a-zA-Z0-9]+)(?:_(.+))?$', data)
+    if not m:
+        # Fallback: zurück ins aktuelle Gruppenmenü
+        cid = context.user_data.get("selected_chat_id")
+        if not cid:
+            return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    cid  = int(m.group(1))
+    func = m.group(2)
+    sub  = m.group(3) if m.group(3) is not None else None
     lang = get_group_language(cid) or "de"
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(tr("↩️ Zurück", lang), callback_data=f"group_{cid}")]])
+
+    # 2) help / patchnotes jetzt ganz normal als func behandeln
+    if func == "help":
+        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
+        path = f'user_manual_{lang}.md'
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(translated)
+        await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    if func == "patchnotes":
+        notes = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
+        await query.message.reply_text(text, parse_mode="HTML")
+        return await show_group_menu(query=query, cid=cid, context=context)
 
     # --- Bearbeiten-Flow aktivieren ---
     if func == "welcome" and sub == "edit":
@@ -503,17 +543,34 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif func == 'linkprot' and sub is None:
         prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
         kb = [
-            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}",
-                                  callback_data=f"{cid}_linkprot_toggle")],
-            [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warn-Text senden', lang)}",
-                                  callback_data=f"{cid}_linkprot_warn_toggle")],
-            [InlineKeyboardButton(tr('Warn-Text bearbeiten', lang), callback_data=f"{cid}_linkprot_edit")],
-            [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Settopic)', lang)}",
-                                  callback_data=f"{cid}_linkprot_exc_toggle")],
-            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")],
+            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}", callback_data=f"{cid}_linkprot_toggle")],
+            [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warnhinweis senden', lang)}", callback_data=f"{cid}_linkprot_warn_toggle")],
+            [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Topic-Owner)', lang)}", callback_data=f"{cid}_linkprot_exc_toggle")],
+            [InlineKeyboardButton(tr('Warntext ändern', lang), callback_data=f"{cid}_linkprot_edit")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
-        return await query.edit_message_text(tr('🔧 Linksperre-Einstellungen:', lang), reply_markup=InlineKeyboardMarkup(kb))
+        text = tr('🔗 Linkschutz – Einstellungen', lang)
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
+    elif func == 'linkprot':
+        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
+        if sub == "toggle":
+            set_link_settings(cid, protection=not prot_on)
+            await query.answer(tr(f"Linkschutz {'aktiviert' if not prot_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "warn_toggle":
+            set_link_settings(cid, warning_on=not warn_on)
+            await query.answer(tr(f"Warn-Text {'aktiviert' if not warn_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "exc_toggle":
+            set_link_settings(cid, exceptions_on=not except_on)
+            await query.answer(tr(f"Ausnahmen {'aktiviert' if not except_on else 'deaktiviert'}", lang), show_alert=True)
+        elif sub == "edit":
+            context.user_data['awaiting_link_warn'] = True
+            context.user_data['link_warn_group'] = cid
+            return await query.message.reply_text(tr("Sende jetzt deinen neuen Warn-Text:", lang), reply_markup=ForceReply(selective=True))
+        # Nach Änderung Submenü neu rendern
+        update.callback_query.data = f"{cid}_linkprot"
+        return await menu_callback(update, context)
+        
     # 5) DANACH erst die Sub-Aktionen...
     if func and sub:
         
@@ -989,7 +1046,5 @@ def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(
         filters.REPLY
-        & (filters.TEXT | filters.PHOTO | filters.Document.ALL)  # <- Dokumente korrekt
-        & filters.ChatType.GROUPS,
-        menu_free_text_handler
+        & (filters.TEXT | filters.PHOTO | filters.Document.ALL), menu_free_text_handler
     ), group=1)
