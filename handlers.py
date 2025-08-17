@@ -1071,7 +1071,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def register_handlers(app):
-
+    # Commands (Gruppe 0)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
@@ -1086,18 +1086,29 @@ def register_handlers(app):
     app.add_handler(CommandHandler("faq", faq_command), group=0)
     app.add_handler(CommandHandler("topiclimit", topiclimit_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("myquota", myquota_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=1)
+    
+    # Sehr frühe Handler (Gruppe -1)
     app.add_handler(MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, nightmode_enforcer), group=-1)
-    app.add_handler(MessageHandler(filters.ALL, forum_topic_registry_tracker), group=0)  # ← NEU: sehr früh
+    app.add_handler(MessageHandler(filters.ALL, forum_topic_registry_tracker), group=-1)
+    
+    # Basis Message Handler (Gruppe 0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_logger), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=0)
+    
+    # Spam-Filter (Gruppe 1 - nach Message Logger)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, spam_enforcer), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, mood_question_handler, block=False), group=1)
+    
+    # Text-Handler (Gruppe 2 - ganz zum Schluss)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, edit_content))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, nightmode_time_input), group=1) 
-    app.add_handler(help_handler)
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=1)
+    
+    # Status Updates und Chat Member Handler
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=0)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
+    
+    # Captcha Handler
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))
+    
+    # Help Handler
+    app.add_handler(help_handler)

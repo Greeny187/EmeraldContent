@@ -923,7 +923,10 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 
 # /menu 
 def register_menu(app):
-    app.add_handler(CallbackQueryHandler(menu_callback))
+    # Callback Handler (Gruppe 0 - Commands haben Vorrang)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=0)
+    
+    # Reply Handler (Gruppe 1 - nach Commands aber vor Text-Handler)
     app.add_handler(MessageHandler(
         filters.REPLY 
         & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
