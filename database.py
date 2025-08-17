@@ -1103,7 +1103,7 @@ def set_welcome(cur, chat_id: int, text: Optional[str], photo_id: Optional[str])
         cur.execute(
             "INSERT INTO welcome (chat_id, photo_id, text) VALUES (%s, %s, %s) "
             "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-            (chat_id, photo_id, text)
+            (chat_id, text, photo_id)
         )
         logger.info(f"DB: Welcome für Chat {chat_id} erfolgreich gespeichert/aktualisiert.")
     except Exception as e:
@@ -1124,7 +1124,7 @@ def set_rules(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     cur.execute(
         "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)
+        (chat_id, text, photo_id)
     )
 
 @_with_cursor
@@ -1141,7 +1141,7 @@ def set_farewell(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]
     cur.execute(
         "INSERT INTO farewell (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)
+        (chat_id, text, photo_id)
     )
 
 @_with_cursor
