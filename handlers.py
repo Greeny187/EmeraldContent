@@ -1071,10 +1071,10 @@ async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # DEBUG-INFO ausgeben
     print(f"DEBUG: /devmenu aufgerufen von User ID {user_id}")
-    print(f"DEBUG: DEVELOPER_CHAT_IDS = {os.getenv('DEVELOPER_CHAT_IDS', 'nicht gesetzt')}")
+    print(f"DEBUG: DEVELOPER_CHAT_ID = {os.getenv('DEVELOPER_CHAT_ID', 'nicht gesetzt')}")
     
     # Flexiblere Dev-ID-Erkennung
-    dev_ids_raw = os.getenv("DEVELOPER_CHAT_IDS", "")
+    dev_ids_raw = os.getenv("DEVELOPER_CHAT_ID", "")
     dev_ids = set()
     
     # Mehrere Trennzeichen unterstützen (Komma, Semikolon, Leerzeichen)
