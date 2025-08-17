@@ -1103,10 +1103,13 @@ async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📝 Logs anzeigen", callback_data="dev_show_logs")]
     ]
     
+    # --- GEÄNDERT: datetime.now() -> datetime.datetime.now(), robustes Startzeit-Fallback ---
+    start_time = context.bot_data.get('start_time', datetime.datetime.now())
+    uptime = datetime.datetime.now() - start_time
     text = (
         "⚙️ **Entwickler-Menü**\n\n"
         f"🤖 Bot-Version: {__version__}\n"
-        f"⏰ Uptime: {datetime.now() - context.bot_data.get('start_time', datetime.now())}\n"
+        f"⏰ Uptime: {uptime}\n"
         f"👥 Registrierte Gruppen: {len(get_registered_groups())}"
     )
     
