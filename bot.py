@@ -85,11 +85,12 @@ def main():
 
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-1)
-    register_handlers(app)
-    statistic.register_statistics_handlers(app)
-    register_rss(app)
-    register_mood(app)
-    register_menu(app)
+    
+    # Handler-Reihenfolge ist wichtig!
+    register_handlers(app)  # group=0 (Grundhandler)
+    register_menu(app)      # group=1 (Menu-Replies)
+    register_mood(app)      # group=2 (Mood-spezifisch)
+    register_rss(app)       # group=3 (RSS-spezifisch, nur Replies)
     register_jobs(app)
 
     # Startzeit und Telethon-Client speichern

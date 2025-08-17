@@ -212,18 +212,22 @@ async def rss_url_reply(update, context):
     Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
     Nur gültig, wenn es eine Antwort (Reply) auf unsere Aufforderung ist.
     """
-    logger.info(f"➜ rss_url_reply: awaiting_rss_url={context.user_data.get('awaiting_rss_url')}")
+    # STRIKTERE Prüfung: Nur wenn RSS-Flag gesetzt UND es eine Reply ist
     if not context.user_data.get("awaiting_rss_url", False):
-        return
+        return  # Nicht für uns
 
     msg = update.message
-    if not msg:
-        return
+    if not msg or not msg.reply_to_message:
+        return  # Keine Reply-Nachricht
 
-    # Nur Antworten auf die Bot-Nachricht akzeptieren
-    r = msg.reply_to_message
-    if not r or not r.from_user or r.from_user.id != context.bot.id:
-        return
+    # Nur Antworten auf Bot-Nachrichten akzeptieren
+    replied_to = msg.reply_to_message
+    if not replied_to.from_user or replied_to.from_user.id != context.bot.id:
+        return  # Nicht auf Bot-Nachricht geantwortet
+
+    # Zusätzlich: Prüfen ob die Reply-Nachricht ForceReply hatte
+    if not getattr(replied_to.reply_markup, 'force_reply', False):
+        return  # Nicht auf ForceReply geantwortet
 
     url = (msg.text or "").strip()
     chat_id = context.user_data.get("rss_group_id")
@@ -240,8 +244,9 @@ async def rss_url_reply(update, context):
             "❗ Kein RSS-Topic gesetzt. Bitte zuerst /settopicrss im gewünschten Thread ausführen."
         )
 
-    # Kollision mit Mood-Flow vermeiden
+    # Kollision mit anderen Flows vermeiden
     context.user_data.pop("awaiting_mood_question", None)
+    context.user_data.pop("last_edit", None)
 
     add_rss_feed(chat_id, url, topic_id)
     context.user_data.pop("awaiting_rss_url", None)
@@ -249,13 +254,17 @@ async def rss_url_reply(update, context):
     await msg.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
 
 def register_rss(app):
-
     # RSS-Befehle
     app.add_handler(CommandHandler("setrss",   set_rss_feed))
     app.add_handler(CommandHandler("listrss",  list_rss_feeds))
     app.add_handler(CommandHandler("stoprss",  stop_rss_feed))
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)
+    
+    # SPEZIFISCHERER Handler: Nur Replies und nur wenn RSS-Flag gesetzt
+    app.add_handler(MessageHandler(
+        filters.REPLY & filters.TEXT & ~filters.COMMAND, 
+        rss_url_reply
+    ), group=3)
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)
