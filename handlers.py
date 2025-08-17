@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 from database import (_db_pool, register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
-delete_spam_policy_topic, is_daily_stats_enabled, effective_spam_policy, add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
+add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
 toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
 effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
 )
@@ -1066,80 +1066,6 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Ungültige Eingabe ignorieren
         pass
 
-async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    # DEBUG-INFO ausgeben
-    print(f"DEBUG: /devmenu aufgerufen von User ID {user_id}")
-    print(f"DEBUG: DEVELOPER_CHAT_ID = {os.getenv('DEVELOPER_CHAT_ID', 'nicht gesetzt')}")
-    
-    # Flexiblere Dev-ID-Erkennung
-    dev_ids_raw = os.getenv("DEVELOPER_CHAT_ID", "")
-    dev_ids = set()
-    
-    # Mehrere Trennzeichen unterstützen (Komma, Semikolon, Leerzeichen)
-    for part in re.split(r'[,;\s]+', dev_ids_raw):
-        if part.strip() and part.strip().lstrip('-').isdigit():
-            dev_ids.add(int(part.strip()))
-    
-    # Fallback für lokale Entwicklung
-    if not dev_ids and os.getenv("ENVIRONMENT", "").lower() == "development":
-        dev_ids.add(user_id)  # Im Entwicklungsmodus den aktuellen User hinzufügen
-    
-    print(f"DEBUG: Erkannte Dev-IDs: {dev_ids}")
-    
-    if user_id not in dev_ids:
-        return await update.message.reply_text(
-            f"❌ Nur für Entwickler verfügbar.\n"
-            f"Deine User-ID: {user_id}"
-        )
-    
-    kb = [
-        [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
-        [InlineKeyboardButton("💰 Pro-Verwaltung", callback_data="dev_pro_management")],
-        [InlineKeyboardButton("📢 Werbung-Dashboard", callback_data="dev_ads_dashboard")],
-        [InlineKeyboardButton("🗄 DB-Management", callback_data="dev_db_management")],
-        [InlineKeyboardButton("🔄 Bot neustarten", callback_data="dev_restart_bot")],
-        [InlineKeyboardButton("📝 Logs anzeigen", callback_data="dev_show_logs")]
-    ]
-    
-    # --- GEÄNDERT: datetime.now() -> datetime.datetime.now(), robustes Startzeit-Fallback ---
-    start_time = context.bot_data.get('start_time', datetime.datetime.now())
-    uptime = datetime.datetime.now() - start_time
-    text = (
-        "⚙️ **Entwickler-Menü**\n\n"
-        f"🤖 Bot-Version: {__version__}\n"
-        f"⏰ Uptime: {uptime}\n"
-        f"👥 Registrierte Gruppen: {len(get_registered_groups())}"
-    )
-    
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-# Dev-Callback-Handler
-async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    user_id = update.effective_user.id
-    dev_ids = {int(x) for x in os.getenv("DEVELOPER_CHAT_IDS", "").split(",") if x.isdigit()}
-    
-    if user_id not in dev_ids:
-        return await query.answer("❌ Nur für Entwickler.", show_alert=True)
-    
-    if data == "dev_system_stats":
-        groups = get_registered_groups()
-        active_groups = len([g for g in groups if is_daily_stats_enabled(g[0])])
-        
-        text = (
-            "📊 **System-Statistiken**\n\n"
-            f"👥 Gruppen gesamt: {len(groups)}\n"
-            f"✅ Aktive Gruppen: {active_groups}\n"
-            f"💾 DB-Pool: {_db_pool.closed}/{_db_pool.maxconn}\n"
-            f"⚡ Handler: {len(context.application.handlers)}"
-        )
-        await query.edit_message_text(text, parse_mode="Markdown")
-
 def register_handlers(app):
     # Commands (Gruppe 0)
     app.add_handler(CommandHandler("start", start))
@@ -1207,7 +1133,3 @@ def register_handlers(app):
     
     # Help Handler
     app.add_handler(help_handler)
-
-    # Dev-Menü hinzufügen
-    app.add_handler(CommandHandler("devmenu", dev_menu_command))
-    app.add_handler(CallbackQueryHandler(dev_callback_handler, pattern="^dev_"))

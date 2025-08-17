@@ -476,7 +476,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif func == 'spam' and sub and sub.startswith('t_'):
         topic_id = int(sub.split('_',1)[1])
-        pol = get_spam_policy_topic(cid, topic_id) or {}
+        # vorher: pol = get_spam_policy_topic(cid, topic_id) or {}
+        # Sicherstellen, dass topic_id kein None ist (DB-Funktionen erwarten 0 für "kein Topic")
+        if topic_id is None:
+            topic_id = 0
+        try:
+            pol = get_spam_policy_topic(cid, topic_id) or {}
+        except IndexError:
+            # Defensive Fallback: wenn die DB unerwartete Spalten/Zeilen zurückgibt,
+            # abbrechen und mit leerer Policy weiterarbeiten statt das Menü abstürzen zu lassen.
+            pol = {}
         level = pol.get('level','off'); emsg = pol.get('emoji_max_per_msg',0) or 0; rate = pol.get('max_msgs_per_10s',0) or 0
         wl = ", ".join(pol.get('link_whitelist') or []) or "–"
         bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
