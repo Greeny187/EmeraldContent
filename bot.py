@@ -14,6 +14,7 @@ from logger import setup_logging
 from mood import register_mood
 from jobs import register_jobs
 from request_config import create_request_with_increased_pool
+from ads import init_ads_schema, register_ads, register_ads_jobs
 
 # Env-Variablen prüfen
 API_ID    = os.getenv("TG_API_ID")
@@ -70,6 +71,7 @@ async def shutdown(signal, loop, client: TelegramClient, app: Application):
 def main():
     setup_logging()
     init_all_schemas()
+    init_ads_schema()  # <- Hinzufügen
     statistic.init_stats_db()
 
     # Telethon (User-Session) verbinden
@@ -99,9 +101,11 @@ def main():
     # Gruppe 2: Spezifische Handler
     register_mood(app)      # group=2 (Mood-spezifisch)
     register_rss(app)       # group=3 (RSS-spezifisch, nur Replies)
+    register_ads(app)       # <- Hinzufügen
     
     # Jobs registrieren
     register_jobs(app)
+    register_ads_jobs(app)  # <- Hinzufügen
 
     # Startzeit und Telethon-Client speichern
     app.bot_data['start_time'] = datetime.datetime.now()

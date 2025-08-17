@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import random
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional, List
@@ -45,6 +46,16 @@ def _is_quiet_now(settings: dict, now_local: datetime) -> bool:
 
 @_with_cursor
 def ensure_adv_schema(cur):
+    # === Pro-Abo / Subscriptions je Chat ===
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_subscriptions (
+          chat_id     BIGINT PRIMARY KEY,
+          tier        TEXT NOT NULL DEFAULT 'free',     -- 'free' | 'pro' | 'pro_plus'
+          valid_until TIMESTAMPTZ,                      -- NULL oder in der Vergangenheit: nicht aktiv
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_groupsub_valid ON group_subscriptions(valid_until DESC);")
     # Chat-Einstellungen für Werbung
     cur.execute("""
         CREATE TABLE IF NOT EXISTS adv_settings (
@@ -169,12 +180,54 @@ def record_impression(cur, chat_id: int, campaign_id: int, message_id: int):
 
 @_with_cursor
 def update_last_adv_ts(cur, chat_id: int):
-    cur.execute("UPDATE adv_settings SET last_adv_ts=NOW() WHERE chat_id=%s;", (chat_id,))
+    cur.execute("UPDATE adv_settings SET last_adv_ts=NOW() AT TIME ZONE 'UTC' WHERE chat_id=%s;", (chat_id,))
 
 @_with_cursor
 def count_ads_today(cur, chat_id: int) -> int:
-    cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE chat_id=%s AND ts::date = NOW()::date;", (chat_id,))
+    # Heute in der lokalen Zeitzone des Chats
+    cur.execute("""
+        SELECT COUNT(*) FROM adv_impressions 
+        WHERE chat_id=%s AND ts AT TIME ZONE 'Europe/Berlin' >= CURRENT_DATE AT TIME ZONE 'Europe/Berlin';
+    """, (chat_id,))
     return int(cur.fetchone()[0])
+
+@_with_cursor
+def is_pro_chat(cur, chat_id: int) -> bool:
+    cur.execute("SELECT tier, valid_until FROM group_subscriptions WHERE chat_id=%s;", (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        return False
+    tier, until = r
+    if tier not in ("pro", "pro_plus"):
+        return False
+    if until is None:
+        return True
+    return until > datetime.now(ZoneInfo("UTC"))  # UTC verwenden
+
+@_with_cursor
+def set_pro_until(cur, chat_id: int, until: datetime | None, tier: str = "pro"):
+    if until is not None and until <= datetime.now(ZoneInfo("UTC")):  # UTC verwenden
+        cur.execute("""
+            INSERT INTO group_subscriptions (chat_id, tier, valid_until, updated_at)
+            VALUES (%s, 'free', NULL, NOW())
+            ON CONFLICT (chat_id) DO UPDATE SET tier='free', valid_until=NULL, updated_at=NOW();
+        """, (chat_id,))
+        return
+    cur.execute("""
+        INSERT INTO group_subscriptions (chat_id, tier, valid_until, updated_at)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (chat_id) DO UPDATE SET tier=EXCLUDED.tier, valid_until=EXCLUDED.valid_until, updated_at=NOW();
+    """, (chat_id, tier, until))
+
+@_with_cursor
+def get_subscription_info(cur, chat_id: int) -> dict:
+    cur.execute("SELECT tier, valid_until FROM group_subscriptions WHERE chat_id=%s;", (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        return {"tier": "free", "valid_until": None, "active": False}
+    tier, until = r
+    active = tier in ("pro","pro_plus") and (until is None or until > datetime.utcnow())
+    return {"tier": tier, "valid_until": until, "active": active}
 
 @_with_cursor
 def messages_since(cur, chat_id: int, since_ts: datetime) -> int:
@@ -276,6 +329,62 @@ async def ad_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_adv_settings(chat.id, **fields)
     await update.effective_message.reply_text("✅ Einstellungen gespeichert.")
 
+async def pro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_developer(update.effective_user.id):
+        return await update.effective_message.reply_text("Nur Entwickler: Zugriff verweigert.")
+    chat = update.effective_chat
+    args = context.args or []
+
+    if not args:
+        info = get_subscription_info(chat.id)
+        until_str = info["valid_until"].strftime("%Y-%m-%d %H:%M:%S") if info["valid_until"] else "unbegrenzt/aus"
+        return await update.effective_message.reply_text(
+            f"Abo-Status:\n"
+            f"- tier: {info['tier']}\n- aktiv: {info['active']}\n- gültig bis: {until_str}"
+        )
+
+    # Formate:
+    # /pro on [tier=pro|pro_plus] [days=30]
+    # /pro off
+    # /pro until=2025-12-31 23:59
+    sub = args[0].lower()
+    if sub == "off":
+        set_pro_until(chat.id, None, tier="free")
+        return await update.effective_message.reply_text("✅ Pro-Abo deaktiviert (free).")
+
+    if sub == "on":
+        tier = "pro"
+        days = 30
+        for a in args[1:]:
+            if a.startswith("tier="):
+                tier = a.split("=",1)[1].strip()
+            if a.startswith("days="):
+                try:
+                    days = int(a.split("=",1)[1])
+                except:
+                    pass
+        until = datetime.utcnow() + timedelta(days=days)
+        set_pro_until(chat.id, until, tier=tier)
+        return await update.effective_message.reply_text(f"✅ Pro-Abo aktiv: {tier} bis {until:%Y-%m-%d %H:%M} UTC")
+
+    m = None
+    for a in args:
+        if a.startswith("until="):
+            m = a.split("=",1)[1].strip()
+            break
+    if m:
+        # erlaubte Formate: YYYY-MM-DD oder YYYY-MM-DD HH:MM
+        try:
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", m):
+                dt = datetime.strptime(m, "%Y-%m-%d")
+            else:
+                dt = datetime.strptime(m, "%Y-%m-%d %H:%M")
+            set_pro_until(chat.id, dt, tier="pro")
+            return await update.effective_message.reply_text(f"✅ Pro-Abo bis {dt:%Y-%m-%d %H:%M} UTC")
+        except Exception:
+            return await update.effective_message.reply_text("Ungültiges Datum. Erlaubt: YYYY-MM-DD oder YYYY-MM-DD HH:MM")
+    return await update.effective_message.reply_text("Nutzung: /pro on [tier=pro|pro_plus] [days=30] | /pro off | /pro until=YYYY-MM-DD[ HH:MM]")
+
 # -----------------
 # Scheduler / Logic
 # -----------------
@@ -285,8 +394,6 @@ async def ad_scheduler(context: ContextTypes.DEFAULT_TYPE):
     Läuft periodisch (z. B. alle 15 Min). Postet maximal 1 Anzeige je Chat,
     wenn alle Regeln erfüllt sind.
     """
-    tz = ZoneInfo("Europe/Berlin")
-
     try:
         chats = [cid for (cid, _) in get_registered_groups()]
     except Exception:
@@ -297,18 +404,27 @@ async def ad_scheduler(context: ContextTypes.DEFAULT_TYPE):
     if not campaigns:
         return
 
-    # gewichteten Pool vorbereiten
+    # Gewichteten Pool vorbereiten
     weighted_pool = []
     for (cid, title, body, media, link, cta, w) in campaigns:
         weighted_pool += [(cid, title, body, media, link, cta)] * max(1, int(w))
 
+    if not weighted_pool:
+        return
+
+    now_local = _tz_now()
+
     for chat_id in chats:
         try:
+            # Pro-Abo schaltet Werbung aus
+            if is_pro_chat(chat_id):
+                continue
+                
             s = get_adv_settings(chat_id)
             if not s["adv_enabled"]:
                 continue
 
-            now_local = _tz_now()
+            # Quiet Hours Check
             if _is_quiet_now(s, now_local):
                 continue
 
@@ -323,7 +439,7 @@ async def ad_scheduler(context: ContextTypes.DEFAULT_TYPE):
 
             # Nachrichten-Gap
             nmsgs = s["every_n_messages"]
-            if nmsgs and last:
+            if nmsgs > 0 and last:
                 if messages_since(chat_id, last) < nmsgs:
                     continue
 
@@ -332,7 +448,6 @@ async def ad_scheduler(context: ContextTypes.DEFAULT_TYPE):
 
             # Caption
             label = s["label"] or "Anzeige"
-            lang = get_group_language(chat_id) or "de"
             caption = f"📣 <b>{label}</b> — <b>{title}</b>\n{body}\n\n#ad"
 
             # Button
@@ -359,7 +474,9 @@ async def ad_scheduler(context: ContextTypes.DEFAULT_TYPE):
             update_last_adv_ts(chat_id)
 
         except Exception as e:
-            print(f"[ads] chat {chat_id}: {e}")
+            print(f"[ads] Fehler in Chat {chat_id}: {e}")
+            import traceback
+            traceback.print_exc()
 
 # -----------------------
 # Öffentliche API/Setup
@@ -375,6 +492,7 @@ def register_ads(app: Application):
     app.add_handler(CommandHandler("ad_add",        ad_add_command))
     app.add_handler(CommandHandler("ad_list",       ad_list_command))
     app.add_handler(CommandHandler("ad_set",        ad_set_command))
+    app.add_handler(CommandHandler("pro",           pro_command))  # <- Fehlte!
 
 def register_ads_jobs(app: Application, interval_minutes: int = 15, first_seconds: int = 30):
     """Scheduler registrieren (periodischer Werbe-Check)."""
