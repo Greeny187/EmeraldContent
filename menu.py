@@ -53,8 +53,8 @@ def build_group_menu(cid):
          InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
         [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
-         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")],
         [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
     return InlineKeyboardMarkup(buttons)

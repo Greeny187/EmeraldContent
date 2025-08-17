@@ -1454,9 +1454,6 @@ def _default_policy():
     }
 
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
 @_with_cursor
 def count_topic_user_messages_between(cur, chat_id:int, topic_id:int, user_id:int, start_dt, end_dt) -> int:
     cur.execute("""
