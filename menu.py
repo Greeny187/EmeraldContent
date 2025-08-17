@@ -53,8 +53,8 @@ def build_group_menu(cid):
          InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
         [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
          InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
-         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")],
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")],
         [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -100,7 +100,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "group_select":
         from database import get_registered_groups
         all_groups = get_registered_groups()
-        groups = await get_visible_groups(update.effective_user.id, context.bot, all_groups)
+        groups = await get_visible_groups(update.effective_user.id)
         if not groups:
             return await query.edit_message_text("⚠️ Keine Gruppen verfügbar.")
         kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
@@ -925,8 +925,8 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(MessageHandler(
-        filters.REPLY
+        filters.REPLY 
         & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
-        & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),  # Beide Chattypen
+        & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
     ), group=1)
