@@ -210,23 +210,43 @@ async def fetch_rss_feed(context: CallbackContext):
 async def rss_url_reply(update, context):
     """
     Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
+    Nur gültig, wenn es eine Antwort (Reply) auf unsere Aufforderung ist.
     """
     logger.info(f"➜ rss_url_reply: awaiting_rss_url={context.user_data.get('awaiting_rss_url')}")
-    if not context.user_data.pop("awaiting_rss_url", False):
+    if not context.user_data.get("awaiting_rss_url", False):
         return
-    url = update.message.text.strip()
-    chat_id = context.user_data.pop("rss_group_id")
 
-    # Safety-Check: Topic darf nicht verschwunden sein
+    msg = update.message
+    if not msg:
+        return
+
+    # Nur Antworten auf die Bot-Nachricht akzeptieren
+    r = msg.reply_to_message
+    if not r or not r.from_user or r.from_user.id != context.bot.id:
+        return
+
+    url = (msg.text or "").strip()
+    chat_id = context.user_data.get("rss_group_id")
+
+    # Safety-Checks
+    if not chat_id:
+        return
     topic_id = get_rss_topic(chat_id)
     if not topic_id:
-        return await update.message.reply_text(
-            "❗ Dein RSS-Topic wurde zwischenzeitlich entfernt. Bitte zuerst /settopicrss ausführen."
+        # Flags räumen, falls Topic verschwunden
+        context.user_data.pop("awaiting_rss_url", None)
+        context.user_data.pop("rss_group_id", None)
+        return await msg.reply_text(
+            "❗ Kein RSS-Topic gesetzt. Bitte zuerst /settopicrss im gewünschten Thread ausführen."
         )
+
+    # Kollision mit Mood-Flow vermeiden
+    context.user_data.pop("awaiting_mood_question", None)
+
     add_rss_feed(chat_id, url, topic_id)
-    await update.message.reply_text(
-        f"✅ RSS-Feed erfolgreich hinzugefügt für Topic {topic_id}:\n{url}"
-    )
+    context.user_data.pop("awaiting_rss_url", None)
+    context.user_data.pop("rss_group_id", None)
+    await msg.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
 
 def register_rss(app):
 
