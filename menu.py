@@ -80,15 +80,18 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
 
 async def _call_db_safe(fn, *args, **kwargs):
     """Sichere Ausführung von sync/async DB-Funktionen mit Logging"""
+    logger.info(f"DEBUG: _call_db_safe aufgerufen: {fn.__name__} mit args: {args}")
     try:
         if inspect.iscoroutinefunction(fn):
+            logger.info(f"DEBUG: {fn.__name__} ist async")
             result = await fn(*args, **kwargs)
         else:
+            logger.info(f"DEBUG: {fn.__name__} ist sync, wrappe in to_thread")
             result = await asyncio.to_thread(fn, *args, **kwargs)
-        logger.debug(f"DB-Aufruf erfolgreich: {fn.__name__}")
+        logger.info(f"DEBUG: DB-Aufruf erfolgreich: {fn.__name__}")
         return result
     except Exception as e:
-        logger.error(f"DB-Aufruf fehlgeschlagen {fn.__name__}: {e}")
+        logger.error(f"DEBUG: DB-Aufruf fehlgeschlagen {fn.__name__}: {e}", exc_info=True)
         raise
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -754,38 +757,48 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    logger.debug(f"Handler aufgerufen! user_data={context.user_data}")
-    
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
     
-    logger.debug(f"Media erkannt: photo={bool(photo_id)}, doc={bool(doc_id)}")
-
-    # 'last_edit' korrekt auslesen und verarbeiten
+    # DEBUG: Log alles
+    logger.info(f"DEBUG: Handler aufgerufen mit Text: '{text}'")
+    logger.info(f"DEBUG: user_data: {context.user_data}")
+    logger.info(f"DEBUG: Media: photo={bool(photo_id)}, doc={bool(doc_id)}")
+    
+    # 'last_edit' Handler
     if 'last_edit' in context.user_data:
         last_edit = context.user_data.pop('last_edit')
-        logger.debug(f"last_edit gefunden: {last_edit}")
+        logger.info(f"DEBUG: last_edit gefunden: {last_edit}")
+        
         if isinstance(last_edit, tuple) and len(last_edit) == 2:
             cid, what = last_edit
-            logger.debug(f"Verarbeite {what} für {cid} mit Medien={bool(media_id)}")
+            logger.info(f"DEBUG: Verarbeite {what} für Chat {cid}")
+            logger.info(f"DEBUG: Speichere - media_id: {media_id}, text: '{text}'")
+            
             try:
                 if what == 'welcome':
-                    await _call_db_safe(set_welcome, cid, media_id, text)  # Korrekte Parameter-Reihenfolge
+                    logger.info(f"DEBUG: Rufe set_welcome auf: {cid}, {media_id}, '{text}'")
+                    await _call_db_safe(set_welcome, cid, media_id, text)
+                    logger.info("DEBUG: set_welcome erfolgreich")
                     return await msg.reply_text("✅ Begrüßung gespeichert.")
                 elif what == 'rules':
+                    logger.info(f"DEBUG: Rufe set_rules auf: {cid}, {media_id}, '{text}'")
                     await _call_db_safe(set_rules, cid, media_id, text)
                     return await msg.reply_text("✅ Regeln gespeichert.")
                 elif what == 'farewell':
+                    logger.info(f"DEBUG: Rufe set_farewell auf: {cid}, {media_id}, '{text}'")
                     await _call_db_safe(set_farewell, cid, media_id, text)
                     return await msg.reply_text("✅ Abschied gespeichert.")
             except Exception as e:
-                logger.error(f"Fehler beim Speichern von {what}: {e}")
+                logger.error(f"DEBUG: Fehler beim Speichern von {what}: {e}", exc_info=True)
                 return await msg.reply_text(f"⚠️ Fehler beim Speichern: {e}")
         else:
-            logger.warning(f"Fehlerhaftes Format für last_edit: {last_edit}")
-
+            logger.warning(f"DEBUG: Fehlerhaftes Format für last_edit: {last_edit}")
+    else:
+        logger.info("DEBUG: Kein 'last_edit' in user_data gefunden")
+    
     # Nachtmodus-Zeit setzen (AWAIT hinzufügen)
     if 'awaiting_nm_time' in context.user_data:
         sub, cid = context.user_data.pop('awaiting_nm_time')
