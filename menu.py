@@ -5,7 +5,7 @@ import re
 from database import (
     get_link_settings, set_link_settings, get_welcome, set_welcome, delete_welcome, set_spam_policy_topic, get_spam_policy_topic,
     get_rules, set_rules, delete_rules, get_captcha_settings, list_topic_router_rules, add_topic_router_rule, delete_topic_router_rule,
-    set_captcha_settings, get_farewell, set_farewell, delete_farewell, toggle_topic_router_rule,
+    set_captcha_settings, get_farewell, set_farewell, delete_farewell, toggle_topic_router_rule, set_mood_question,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode
@@ -924,9 +924,9 @@ def _topics_keyboard(cid:int, page:int, purpose:str):
 # /menu 
 def register_menu(app):
     app.add_handler(CallbackQueryHandler(menu_callback))
-    # Keine ChatType-Beschränkung: ForceReply-Antworten in PM und Gruppen werden verarbeitet
     app.add_handler(MessageHandler(
         filters.REPLY
-        & (filters.TEXT | filters.PHOTO | filters.Document.ALL), 
+        & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
+        & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),  # Beide Chattypen
         menu_free_text_handler
     ), group=1)

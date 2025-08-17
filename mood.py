@@ -61,28 +61,36 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg = update.effective_message
     user = update.effective_user
 
+    logger.info(f"setmoodtopic aufgerufen von User {user.id} in Chat {chat.id}")
+
     if chat.type not in ("group", "supergroup"):
         return await msg.reply_text("❌ Dieser Befehl ist nur in Gruppen nutzbar.")
 
     # Admin-Check
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
-        if user.id not in {a.user.id for a in admins}:
+        admin_ids = {a.user.id for a in admins}
+        logger.info(f"Admin-IDs: {admin_ids}, User-ID: {user.id}")
+        if user.id not in admin_ids:
             return await msg.reply_text("❌ Nur Administratoren können das Mood-Topic festlegen.")
     except Exception as e:
         logger.error("Admin-Check fehlgeschlagen: %s", e)
         return await msg.reply_text("⚠️ Fehler bei der Überprüfung der Administratorrechte.")
 
+    # Topic-ID ermitteln
+    topic_id = msg.message_thread_id
+    if topic_id is None and msg.reply_to_message:
+        topic_id = msg.reply_to_message.message_thread_id
+        
+    logger.info(f"Ermittelte Topic-ID: {topic_id}")
+
     # Foren-Check
     try:
         chat_info = await context.bot.get_chat(chat.id)
         is_forum = bool(getattr(chat_info, "is_forum", False))
+        logger.info(f"Chat ist Forum: {is_forum}")
     except Exception:
         is_forum = False
-
-    topic_id = msg.message_thread_id
-    if topic_id is None and msg.reply_to_message:
-        topic_id = msg.reply_to_message.message_thread_id
 
     if is_forum and topic_id is None:
         return await msg.reply_text(
@@ -91,12 +99,15 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
     try:
+        logger.info(f"Speichere Mood-Topic: Chat {chat.id}, Topic {topic_id}")
         await _call_db(set_mood_topic, chat.id, int(topic_id) if topic_id is not None else None)
         await msg.reply_text(
             f"✅ Mood-Topic gesetzt auf ID {topic_id}." if topic_id is not None
             else "✅ Mood-Topic zurückgesetzt (kein Thread erforderlich)."
         )
-    except Exception:
+        logger.info(f"Mood-Topic erfolgreich gespeichert für Chat {chat.id}")
+    except Exception as e:
+        logger.error(f"Fehler beim Speichern des Mood-Topics: {e}")
         return await msg.reply_text("⚠️ Fehler beim Speichern des Mood-Topics in der Datenbank.")
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,17 +116,29 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user = update.effective_user
     chat = update.effective_chat
+    message_id = query.message.message_id  # <- Korrekte message_id verwenden
+    
     data = query.data  # z.B. mood_like
     mood = data.split("_", 1)[1] if "_" in data else "like"
+    
     try:
-        await _call_db(save_mood, chat.id, user.id, mood)
-        counts = await _call_db(get_mood_counts, chat.id)
-        txt = f"👍 {counts.get('like',0)} | 👎 {counts.get('dislike',0)} | 🤔 {counts.get('think',0)}"
-        await query.message.edit_reply_markup(reply_markup=query.message.reply_markup)  # nur „ping“, falls benötigt
-        await query.message.reply_text(txt)
-    except Exception:
+        # Korrekte Parameter-Reihenfolge: chat_id, message_id, user_id, mood
+        await _call_db(save_mood, chat.id, message_id, user.id, mood)
+        counts = await _call_db(get_mood_counts, chat.id, message_id)
+        
+        # Text mit aktuellen Zählungen aktualisieren
+        original_text = query.message.text
+        txt = f"{original_text}\n\n👍 {counts.get('like',0)} | 👎 {counts.get('dislike',0)} | 🤔 {counts.get('think',0)}"
+        
+        # Message mit neuen Zählungen editieren
+        await query.edit_message_text(
+            text=txt,
+            reply_markup=query.message.reply_markup
+        )
+        
+    except Exception as e:
         logger.exception("Fehler beim Speichern der Mood-Stimme")
-        await query.message.reply_text("⚠️ Konnte Stimme nicht speichern.")
+        await query.answer("⚠️ Konnte Stimme nicht speichern.", show_alert=True)
 
 def register_mood(app):
     app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS))
