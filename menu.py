@@ -479,8 +479,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rec = get_map[func](cid)
                 logger.debug(f"Retrieved {func} record: {rec}")
                 if rec:
-                    text = rec[1] if len(rec) > 1 else "No text content"
-                    media = rec[2] if len(rec) > 2 else None
+                    text = rec[1] if len(rec) > 1 else ''
+                    media = rec[0] if len(rec) > 0 else None
                     if media:
                         logger.debug(f"Media found: {media} (type: {type(media)})")
                         try:
@@ -756,13 +756,13 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             cid, what = last_edit
             print(f"Verarbeite {what} für {cid} mit Medien={bool(media_id)}")
             if what == 'welcome':
-                set_welcome(cid, media_id, text)
+                set_welcome(cid, text, media_id)
                 return await msg.reply_text("✅ Begrüßung gespeichert.")
             elif what == 'rules':
-                set_rules(cid, media_id, text)
+                set_rules(cid, text, media_id)
                 return await msg.reply_text("✅ Regeln gespeichert.")
             elif what == 'farewell':
-                set_farewell(cid, media_id, text)
+                set_farewell(cid, text, media_id)
                 return await msg.reply_text("✅ Abschied gespeichert.")
         else:
             print(f"Fehlerhaftes Format für last_edit: {last_edit}")
