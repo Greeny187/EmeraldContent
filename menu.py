@@ -1,5 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
-from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
+from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes, CommandHandler
 from telegram.error import BadRequest
 import re
 from database import (
@@ -993,3 +993,4 @@ def register_menu(app):
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
     ), group=1)
+

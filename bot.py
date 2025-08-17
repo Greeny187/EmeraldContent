@@ -88,19 +88,11 @@ def main():
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-2)
     
-    # KORRIGIERTE Handler-Reihenfolge:
-    # Gruppe -1: Sehr frühe Handler (Nightmode, Tracking)
-    register_handlers(app)  # Enthält nightmode_enforcer in group=-1
-    
-    # Gruppe 0: Basis-Handler (Commands, FAQ, etc.)
-    # Bereits in register_handlers enthalten
-    
-    # Gruppe 1: Menu-Handler (Reply-basiert)
-    register_menu(app)      # group=1 für Reply-Handler
-    
-    # Gruppe 2: Spezifische Handler
-    register_mood(app)      # group=2 (Mood-spezifisch)
-    register_rss(app)       # group=3 (RSS-spezifisch, nur Replies)
+    # Handler-Reihenfolge korrigieren:
+    register_handlers(app)  # group=0 (Commands)
+    register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
+    register_menu(app)      # group=1 (Menu-Replies, keine Commands)
+    register_rss(app)       # group=3 (RSS-spezifisch)
     register_ads(app)       # <- Hinzufügen
     
     # Jobs registrieren

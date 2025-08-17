@@ -145,6 +145,7 @@ async def debug_setmoodtopic(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"DEBUG: setmoodtopic wurde aufgerufen in Chat {update.effective_chat.id}")
     
 def register_mood(app):
-    app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("setmoodtopic", debug_setmoodtopic, filters=filters.ChatType.GROUPS))  # <- Debug-Version
-    app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"))
+    # Commands in Gruppe 0 (höhere Priorität)
+    app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=0)
+    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=0)  # Echte Funktion verwenden
+    app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"), group=0)
