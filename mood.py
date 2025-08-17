@@ -11,16 +11,39 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type not in ("group", "supergroup"):
         return await context.bot.send_message(chat_id=chat.id, text="❌ Dieser Befehl ist nur in Gruppen nutzbar.")
 
-    # Frage aus Datenbank laden
-    question = get_mood_question(chat.id)
-    topic_id = get_mood_topic(chat.id)  # 0 => kein gesetztes Topic
+    # Frage und Topic laden
+    question = get_mood_question(chat.id) or "Wie ist deine Stimmung?"
+    try:
+        chat_info = await context.bot.get_chat(chat.id)
+        is_forum = bool(getattr(chat_info, "is_forum", False))
+    except Exception:
+        is_forum = False
+
+    topic_id = get_mood_topic(chat.id)  # 0 oder None => kein gesetztes Topic
+
+    # In Foren zwingend Topic erforderlich
+    if is_forum and not topic_id:
+        return await context.bot.send_message(
+            chat_id=chat.id,
+            text="⚠️ Dieses Chat ist ein Forum. Bitte setze zuerst ein Mood-Topic via /setmoodtopic in dem gewünschten Thema."
+        )
 
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("👍", callback_data="mood_like"),
         InlineKeyboardButton("👎", callback_data="mood_dislike"),
         InlineKeyboardButton("🤔", callback_data="mood_think"),
     ]])
-    await context.bot.send_message(chat_id=chat.id, text=question, reply_markup=kb, message_thread_id=topic_id or None)
+
+    try:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=question,
+            reply_markup=kb,
+            message_thread_id=topic_id or None  # in Nicht-Foren None erlaubt
+        )
+    except Exception:
+        logger.exception("Fehler beim Senden der Mood-Nachricht")
+        await context.bot.send_message(chat_id=chat.id, text="⚠️ Mood konnte nicht gesendet werden. Prüfe das gesetzte Topic.")
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verarbeitet Klicks auf die Stimmungs-Buttons und zeigt Live-Auswertung."""
@@ -77,7 +100,7 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if chat.type not in ("group", "supergroup"):
         return await msg.reply_text("❌ Dieser Befehl ist nur in Gruppen nutzbar.")
 
-    # Check if user is admin
+    # Admin-Check
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
         if user.id not in {admin.user.id for admin in admins}:
@@ -86,22 +109,33 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error(f"Error checking admin status: {e}")
         return await msg.reply_text("⚠️ Fehler bei der Überprüfung der Administratorrechte.")
 
-    # 1) Topic aus current thread
-    topic_id = msg.message_thread_id or None
-    # 2) Fallback auf Reply
-    if not topic_id and msg.reply_to_message:
+    # Foren-Check
+    try:
+        chat_info = await context.bot.get_chat(chat.id)
+        is_forum = bool(getattr(chat_info, "is_forum", False))
+    except Exception:
+        is_forum = False
+
+    # 1) Topic aus aktuellem Thread (wenn der Befehl im Thema ausgeführt wurde)
+    topic_id = msg.message_thread_id
+    # 2) Fallback: auf eine Nachricht aus dem Thema antworten
+    if topic_id is None and msg.reply_to_message:
         topic_id = msg.reply_to_message.message_thread_id
 
-    if not topic_id:
+    # In Foren ist ein Topic verpflichtend
+    if is_forum and topic_id is None:
         return await msg.reply_text(
-            "⚠️ Bitte führe /setmoodtopic in dem gewünschten Forum-Thema aus "
-            "oder antworte auf eine Nachricht darin.",
-            parse_mode=None  # Explicit no parse mode to avoid formatting issues
+            "⚠️ Bitte führe /setmoodtopic direkt in dem gewünschten Forum-Thema aus "
+            "oder antworte auf eine Nachricht darin."
         )
 
     try:
-        set_mood_topic(chat.id, topic_id)
-        await msg.reply_text(f"✅ Mood-Frage-Topic gesetzt auf ID {topic_id}.")
+        # Speichern (None erlaubt für Nicht-Foren; in Foren ist topic_id garantiert gesetzt)
+        set_mood_topic(chat.id, int(topic_id) if topic_id is not None else None)
+        await msg.reply_text(
+            f"✅ Mood-Topic gesetzt auf ID {topic_id}." if topic_id is not None
+            else "✅ Mood-Topic zurückgesetzt (kein Thread erforderlich)."
+        )
     except Exception as e:
         logger.error(f"Error setting mood topic: {e}")
         await msg.reply_text("⚠️ Fehler beim Speichern des Mood-Topics in der Datenbank.")
