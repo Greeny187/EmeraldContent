@@ -1112,9 +1112,15 @@ def set_mood_topic(cur, chat_id: int, topic_id: Optional[int]):
 
 @_with_cursor
 def get_mood_topic(cur, chat_id: int) -> int:
+    # 1) neue Quelle
+    cur.execute("SELECT topic_id FROM mood_topics WHERE chat_id = %s;", (chat_id,))
+    row = cur.fetchone()
+    if row and row[0]:
+        return int(row[0])
+    # 2) Fallback (Legacy)
     cur.execute("SELECT mood_topic_id FROM group_settings WHERE chat_id = %s;", (chat_id,))
     row = cur.fetchone()
-    return row[0] if row else 0
+    return int(row[0]) if row and row[0] else 0
 
 # --- Welcome / Rules / Farewell ---
 @_with_cursor

@@ -62,16 +62,14 @@ def build_group_menu(cid):
 async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
     title = tr("📋 Gruppenmenü", get_group_language(cid) or 'de')
     markup = build_group_menu(cid)
-
     if query:
         try:
-            if (query.message.text != title) or (query.message.reply_markup != markup):
-                await query.edit_message_text(title, reply_markup=markup)
-            else:
-                await query.edit_message_text(title + "\u200b", reply_markup=markup)
+            await query.edit_message_text(title, reply_markup=markup)
         except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
+            msg = str(e)
+            if "no text in the message to edit" in msg.lower() or "message is not modified" in msg.lower():
+                # Fallback: neue Nachricht senden
+                await query.message.reply_text(title, reply_markup=markup)
             else:
                 raise
     else:
@@ -149,13 +147,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_group_menu(query=query, cid=cid, context=context)
 
     # --- Bearbeiten-Flow aktivieren (last_edit korrigiert) ---
-    if func == "welcome" and sub == "edit":
-        context.user_data["last_edit"] = (cid, "welcome")
-        await context.bot.send_message(
-            chat_id=query.message.chat.id,
-            text=tr("Bitte sende jetzt den neuen Begrüßungstext (optional mit Foto als Bild + Caption).", lang)
+    elif func == "welcome" and sub == "edit":
+        # Einheitliche Eingabe über ForceReply
+        context.user_data['last_edit'] = (cid, 'welcome')
+        return await query.message.reply_text(
+            tr("✏️ Sende jetzt die neue Begrüßung (Text oder Medien mit Caption).", lang),
+            reply_markup=ForceReply(selective=True)
         )
-        return
 
     if func == "rules" and sub == "edit":
         context.user_data["last_edit"] = (cid, "rules")
@@ -757,21 +755,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Neue Nachricht statt Edit
         await query.message.reply_text(
             tr('Bitte sende deine neue Mood-Frage:', lang),
-            reply_markup=ForceReply(selective=True)
-        )
-        await query.answer()
-        return
-
-    # Welcome/Rules/Farewell Edit korrigieren:
-    if sub == "edit":
-        context.user_data["last_edit"] = (cid, func)
-        context.user_data.pop('awaiting_rss_url', None)
-        context.user_data.pop('awaiting_mood_question', None)
-        
-        label = {"welcome": "Begrüßung", "rules": "Regeln", "farewell": "Abschied"}[func]
-        # Neue Nachricht statt Edit
-        await query.message.reply_text(
-            f"✏️ Sende nun die neue {label} (optional mit Bild + Caption):",
             reply_markup=ForceReply(selective=True)
         )
         await query.answer()
