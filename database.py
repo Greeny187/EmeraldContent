@@ -908,6 +908,8 @@ def _default_policy():
         "emoji_max_per_msg": 0,
         "emoji_max_per_min": 0,
         "max_msgs_per_10s": 0,
+        "per_user_daily_limit": 0,   # ← NEU
+        "quota_notify": "smart",     # ← NEU: 'off'|'smart'|'always'
         "action_primary": "delete",
         "action_secondary": "none",
         "escalation_threshold": 3
@@ -1097,18 +1099,18 @@ def get_mood_topic(cur, chat_id: int) -> int:
 
 # --- Welcome / Rules / Farewell ---
 @_with_cursor
-def set_welcome(cur, chat_id: int, text: Optional[str], photo_id: Optional[str]):
+def set_welcome(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     try:
         logger.info(f"DB: Speichere Welcome für Chat {chat_id}. Photo: {bool(photo_id)}, Textlänge: {len(text or '')}")
         cur.execute(
             "INSERT INTO welcome (chat_id, photo_id, text) VALUES (%s, %s, %s) "
             "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-            (chat_id, text, photo_id)
+            (chat_id, photo_id, text)  # Korrekte Reihenfolge: photo_id, dann text
         )
         logger.info(f"DB: Welcome für Chat {chat_id} erfolgreich gespeichert/aktualisiert.")
     except Exception as e:
         logger.error(f"DB-Fehler in set_welcome für Chat {chat_id}: {e}", exc_info=True)
-        raise # Fehler weitergeben, damit er sichtbar wird
+        raise
 
 @_with_cursor
 def get_welcome(cur, chat_id: int) -> Optional[Tuple[str, str]]:
@@ -1124,7 +1126,7 @@ def set_rules(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     cur.execute(
         "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, text, photo_id)
+        (chat_id, photo_id, text)  # Korrekte Reihenfolge
     )
 
 @_with_cursor
@@ -1141,7 +1143,7 @@ def set_farewell(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]
     cur.execute(
         "INSERT INTO farewell (chat_id, photo_id, text) VALUES (%s, %s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, text, photo_id)
+        (chat_id, photo_id, text)  # Korrekte Reihenfolge
     )
 
 @_with_cursor

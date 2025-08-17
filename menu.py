@@ -19,6 +19,8 @@ from patchnotes import PATCH_NOTES, __version__
 from user_manual import HELP_TEXT
 import logging
 import datetime
+import asyncio
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,19 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
     else:
         target = dest_chat_id if dest_chat_id is not None else cid
         await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
+
+async def _call_db_safe(fn, *args, **kwargs):
+    """Sichere Ausführung von sync/async DB-Funktionen mit Logging"""
+    try:
+        if inspect.iscoroutinefunction(fn):
+            result = await fn(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(fn, *args, **kwargs)
+        logger.debug(f"DB-Aufruf erfolgreich: {fn.__name__}")
+        return result
+    except Exception as e:
+        logger.error(f"DB-Aufruf fehlgeschlagen {fn.__name__}: {e}")
+        raise
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -738,70 +753,85 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_group_menu(query=query, cid=cid, context=context)
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg  = update.effective_message
-    print(f"Handler aufgerufen! user_data={context.user_data}")
+    msg = update.effective_message
+    logger.debug(f"Handler aufgerufen! user_data={context.user_data}")
     
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
-    doc_id   = msg.document.file_id if msg.document else None
+    doc_id = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
     
-    print(f"Media erkannt: photo={bool(photo_id)}, doc={bool(doc_id)}")
+    logger.debug(f"Media erkannt: photo={bool(photo_id)}, doc={bool(doc_id)}")
 
     # 'last_edit' korrekt auslesen und verarbeiten
     if 'last_edit' in context.user_data:
         last_edit = context.user_data.pop('last_edit')
-        print(f"last_edit gefunden: {last_edit}")
+        logger.debug(f"last_edit gefunden: {last_edit}")
         if isinstance(last_edit, tuple) and len(last_edit) == 2:
             cid, what = last_edit
-            print(f"Verarbeite {what} für {cid} mit Medien={bool(media_id)}")
-            if what == 'welcome':
-                set_welcome(cid, text, media_id)
-                return await msg.reply_text("✅ Begrüßung gespeichert.")
-            elif what == 'rules':
-                set_rules(cid, text, media_id)
-                return await msg.reply_text("✅ Regeln gespeichert.")
-            elif what == 'farewell':
-                set_farewell(cid, text, media_id)
-                return await msg.reply_text("✅ Abschied gespeichert.")
+            logger.debug(f"Verarbeite {what} für {cid} mit Medien={bool(media_id)}")
+            try:
+                if what == 'welcome':
+                    await _call_db_safe(set_welcome, cid, media_id, text)  # Korrekte Parameter-Reihenfolge
+                    return await msg.reply_text("✅ Begrüßung gespeichert.")
+                elif what == 'rules':
+                    await _call_db_safe(set_rules, cid, media_id, text)
+                    return await msg.reply_text("✅ Regeln gespeichert.")
+                elif what == 'farewell':
+                    await _call_db_safe(set_farewell, cid, media_id, text)
+                    return await msg.reply_text("✅ Abschied gespeichert.")
+            except Exception as e:
+                logger.error(f"Fehler beim Speichern von {what}: {e}")
+                return await msg.reply_text(f"⚠️ Fehler beim Speichern: {e}")
         else:
-            print(f"Fehlerhaftes Format für last_edit: {last_edit}")
+            logger.warning(f"Fehlerhaftes Format für last_edit: {last_edit}")
 
-    # KORREKTUR: 'awaiting_nm_time' korrekt auslesen und verarbeiten
+    # Nachtmodus-Zeit setzen (AWAIT hinzufügen)
     if 'awaiting_nm_time' in context.user_data:
         sub, cid = context.user_data.pop('awaiting_nm_time')
         try:
             hh, mm = map(int, text.split(":", 1))
             if sub == 'start':
-                set_night_mode(cid, start_minute=hh * 60 + mm)
+                await _call_db_safe(set_night_mode, cid, start_minute=hh * 60 + mm)
                 await msg.reply_text("✅ Startzeit gespeichert.")
             else:
-                set_night_mode(cid, end_minute=hh * 60 + mm)
+                await _call_db_safe(set_night_mode, cid, end_minute=hh * 60 + mm)
                 await msg.reply_text("✅ Endzeit gespeichert.")
         except (ValueError, IndexError):
             await msg.reply_text("⚠️ Ungültiges Format. Bitte nutze HH:MM.")
         return
 
-    # Warntext Linksperre speichern (nur Text)
+    # Linksperre-Warntext (AWAIT hinzufügen)
     if context.user_data.pop('awaiting_link_warn', False):
         cid = context.user_data.pop('link_warn_group')
-        set_link_settings(cid, warning_text=text)
+        await _call_db_safe(set_link_settings, cid, warning_text=text)
         return await msg.reply_text("✅ Warn-Text gespeichert.")
 
-    # 2) Spam-Whitelist (jetzt auch Topic-spezifisch)
+    # Mood-Frage speichern (AWAIT hinzufügen)
+    if context.user_data.pop('awaiting_mood_question', False):
+        cid = context.user_data.pop('mood_group_id', None)
+        if not cid:
+            return await msg.reply_text("⚠️ Keine Gruppe ausgewählt.")
+        try:
+            await _call_db_safe(set_mood_question, cid, text)
+            return await msg.reply_text("✅ Mood-Frage gespeichert.")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der Mood-Frage: {e}")
+            return await msg.reply_text(f"⚠️ Fehler beim Speichern der Mood-Frage: {e}")
+
+    # Weitere Handler mit AWAIT...
     if context.user_data.pop('awaiting_spam_whitelist', False):
         cid = context.user_data.pop('spam_group_id')
         tid = context.user_data.pop('spam_topic_id', 0)
         wl = [d.strip().lower() for d in text.split(",") if d.strip()]
-        set_spam_policy_topic(cid, tid, link_whitelist=wl)
+        await _call_db_safe(set_spam_policy_topic, cid, tid, link_whitelist=wl)
         return await msg.reply_text(f"✅ Whitelist gespeichert (Topic {tid}).")
 
-    # 3) Spam-Blacklist (Topic-spezifisch)
     if context.user_data.pop('awaiting_spam_blacklist', False):
         cid = context.user_data.pop('spam_group_id')
         tid = context.user_data.pop('spam_topic_id', 0)
         bl = [d.strip().lower() for d in text.split(",") if d.strip()]
-        set_spam_policy_topic(cid, tid, domain_blacklist=bl)
+        await _call_db_safe(set_spam_policy_topic, cid, tid, domain_blacklist=bl)
         return await msg.reply_text(f"✅ Blacklist gespeichert (Topic {tid}).")
 
     # 4) Router: add keywords (mit Ziel-Topic)
