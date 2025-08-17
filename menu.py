@@ -985,10 +985,11 @@ def register_menu(app):
     # Callback Handler (Gruppe 0 - Commands haben Vorrang)
     app.add_handler(CallbackQueryHandler(menu_callback), group=0)
     
-    # Reply Handler (Gruppe 1 - nach Commands aber vor Text-Handler)
+    # Reply Handler (Gruppe 1) - COMMANDS AUSSCHLIESSEN
     app.add_handler(MessageHandler(
         filters.REPLY 
         & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
+        & ~filters.COMMAND  # <- WICHTIG: Commands ausschließen
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
     ), group=1)
