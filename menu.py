@@ -332,16 +332,39 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == 'toggle':
             await _call_db_safe(set_night_mode, cid, enabled=not en)
             await query.answer(tr('Nachtmodus umgeschaltet.', lang), show_alert=True)
-            # Direkt zurück zum Nachtmodus-Menü (NICHT rekursiv)
-            data_new = f"{cid}_night"
-            context.user_data['temp_callback'] = data_new
-            return await menu_callback(update.replace(callback_query=query.replace(data=data_new)), context)
+            # FIXED: Don't use update.replace() - just call the night menu directly
+            query.data = f"{cid}_night"
+            return await query.edit_message_text(
+                f"🌙 <b>{tr('Nachtmodus', lang)}</b>\n\n"
+                f"{tr('Status', lang)}: {'✅ ' + tr('Aktiv', lang) if not en else '❌ ' + tr('Inaktiv', lang)}\n"
+                f"{tr('Start', lang)}: {s//60:02d}:{s%60:02d}  •  {tr('Ende', lang)}: {e//60:02d}:{e%60:02d}  •  TZ: {tz}\n"
+                f"{tr('Harter Modus', lang)}: {'✅' if hard_mode else '❌'}\n"
+                f"{tr('Nicht-Admin-Nachrichten löschen', lang)}: {'✅' if del_non_admin else '❌'}\n"
+                f"{tr('Nur einmal pro Nacht warnen', lang)}: {'✅' if warn_once else '❌'}\n"
+                f"{tr('Sofortige Ruhephase (Override) bis', lang)}: {override_until.strftime('%d.%m. %H:%M') if override_until else '–'}"
+            , reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"{'✅' if not en else '☐'} {tr('Aktivieren/Deaktivieren', lang)}",
+                                    callback_data=f"{cid}_night_toggle")],
+                [InlineKeyboardButton(tr('Startzeit ändern', lang), callback_data=f"{cid}_night_set_start"),
+                InlineKeyboardButton(tr('Endzeit ändern', lang), callback_data=f"{cid}_night_set_end")],
+                [InlineKeyboardButton(f"{'✅' if hard_mode else '☐'} {tr('Harter Modus', lang)}",
+                                    callback_data=f"{cid}_night_hard_toggle")],
+                [InlineKeyboardButton(f"{'✅' if del_non_admin else '☐'} {tr('Nicht-Admin löschen', lang)}",
+                                    callback_data=f"{cid}_night_del_toggle")],
+                [InlineKeyboardButton(f"{'✅' if warn_once else '☐'} {tr('Einmal warnen', lang)}",
+                                    callback_data=f"{cid}_night_warnonce_toggle")],
+                [InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 15m", callback_data=f"{cid}_night_quiet_15m"),
+                InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 1h",  callback_data=f"{cid}_night_quiet_1h"),
+                InlineKeyboardButton(f"⚡ {tr('Sofort', lang)} 8h",  callback_data=f"{cid}_night_quiet_8h")],
+                [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+            ]), parse_mode="HTML")
         
         elif sub == 'hard_toggle':
             await _call_db_safe(set_night_mode, cid, hard_mode=not hard_mode)
             await query.answer(tr('Harter Modus umgeschaltet.', lang), show_alert=True)
-            data_new = f"{cid}_night" 
-            return await menu_callback(update.replace(callback_query=query.replace(data=data_new)), context)
+            # FIXED: Use the same approach as above
+            query.data = f"{cid}_night"
+            return await menu_callback(update, context)
         
         elif sub == 'del_toggle':
             await _call_db_safe(set_night_mode, cid, delete_non_admin_msgs=not del_non_admin)
