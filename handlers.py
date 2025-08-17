@@ -1068,10 +1068,31 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    dev_ids = {int(x) for x in os.getenv("DEVELOPER_CHAT_IDS", "").split(",") if x.isdigit()}
+    
+    # DEBUG-INFO ausgeben
+    print(f"DEBUG: /devmenu aufgerufen von User ID {user_id}")
+    print(f"DEBUG: DEVELOPER_CHAT_IDS = {os.getenv('DEVELOPER_CHAT_IDS', 'nicht gesetzt')}")
+    
+    # Flexiblere Dev-ID-Erkennung
+    dev_ids_raw = os.getenv("DEVELOPER_CHAT_IDS", "")
+    dev_ids = set()
+    
+    # Mehrere Trennzeichen unterstützen (Komma, Semikolon, Leerzeichen)
+    for part in re.split(r'[,;\s]+', dev_ids_raw):
+        if part.strip() and part.strip().lstrip('-').isdigit():
+            dev_ids.add(int(part.strip()))
+    
+    # Fallback für lokale Entwicklung
+    if not dev_ids and os.getenv("ENVIRONMENT", "").lower() == "development":
+        dev_ids.add(user_id)  # Im Entwicklungsmodus den aktuellen User hinzufügen
+    
+    print(f"DEBUG: Erkannte Dev-IDs: {dev_ids}")
     
     if user_id not in dev_ids:
-        return await update.message.reply_text("❌ Nur für Entwickler verfügbar.")
+        return await update.message.reply_text(
+            f"❌ Nur für Entwickler verfügbar.\n"
+            f"Deine User-ID: {user_id}"
+        )
     
     kb = [
         [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
