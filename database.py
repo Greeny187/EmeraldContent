@@ -1078,18 +1078,17 @@ def set_mood_question(cur, chat_id: int, question: str):
         "ON CONFLICT (chat_id) DO UPDATE SET mood_question = EXCLUDED.mood_question;",
         (chat_id, question)
     )
+    
 @_with_cursor
-def set_mood_topic(cur, chat_id: int, topic_id: int) -> None:
-    """Set the default topic ID for mood questions in a chat"""
+def set_mood_topic(cur, chat_id: int, topic_id: Optional[int]):
+    """Setzt das Topic für Mood-Umfragen"""
+    logger.info(f"DB: Speichere Mood-Topic für Chat {chat_id}: {topic_id}")  # <- Debug-Log
     cur.execute(
-        """
-        INSERT INTO group_settings (chat_id, mood_topic_id)
-        VALUES (%s, %s)
-        ON CONFLICT (chat_id) 
-        DO UPDATE SET mood_topic_id = EXCLUDED.mood_topic_id
-        """,
+        "INSERT INTO mood_topics (chat_id, topic_id) VALUES (%s, %s) "
+        "ON CONFLICT (chat_id) DO UPDATE SET topic_id = EXCLUDED.topic_id;",
         (chat_id, topic_id)
     )
+    logger.info(f"DB: Mood-Topic für Chat {chat_id} erfolgreich gespeichert.")  # <- Debug-Log
 
 @_with_cursor
 def get_mood_topic(cur, chat_id: int) -> int:

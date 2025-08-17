@@ -140,7 +140,11 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Fehler beim Speichern der Mood-Stimme")
         await query.answer("⚠️ Konnte Stimme nicht speichern.", show_alert=True)
 
+# In mood.py temporär hinzufügen:
+async def debug_setmoodtopic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"DEBUG: setmoodtopic wurde aufgerufen in Chat {update.effective_chat.id}")
+    
 def register_mood(app):
     app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("setmoodtopic", debug_setmoodtopic, filters=filters.ChatType.GROUPS))  # <- Debug-Version
     app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"))
