@@ -385,6 +385,26 @@ def init_db(cur):
         """
     )
     
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS group_subscriptions (
+          chat_id     BIGINT PRIMARY KEY,
+          tier        TEXT NOT NULL DEFAULT 'free',
+          valid_until TIMESTAMPTZ,
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mood_topics (
+            chat_id BIGINT PRIMARY KEY,
+            topic_id BIGINT
+        );
+        """
+    )
+    
 @_with_cursor
 def migrate_stats_rollup(cur):
     # Tages-Rollup pro Gruppe & Datum
@@ -1294,6 +1314,49 @@ def log_auto_response(cur, chat_id:int, trigger:str, matched:float, snippet:str,
     """, (chat_id, trigger, matched, snippet, latency_ms, was_helpful))
 
 @_with_cursor
+def set_pro_until(cur, chat_id: int, until: datetime | None, tier: str = "pro"):
+    if until is not None and until <= datetime.now(ZoneInfo("UTC")):
+        cur.execute("""
+            INSERT INTO group_subscriptions (chat_id, tier, valid_until, updated_at)
+            VALUES (%s, 'free', NULL, NOW())
+            ON CONFLICT (chat_id) DO UPDATE SET tier='free', valid_until=NULL, updated_at=NOW();
+        """, (chat_id,))
+        return
+    cur.execute("""
+        INSERT INTO group_subscriptions (chat_id, tier, valid_until, updated_at)
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (chat_id) DO UPDATE SET tier=EXCLUDED.tier, valid_until=EXCLUDED.valid_until, updated_at=NOW();
+    """, (chat_id, tier, until))
+
+@_with_cursor
+def is_pro_chat(cur, chat_id: int) -> bool:
+    cur.execute("SELECT tier, valid_until FROM group_subscriptions WHERE chat_id=%s;", (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        return False
+    tier, until = r
+    if tier not in ("pro", "pro_plus"):
+        return False
+    if until is None:
+        return True
+    return until > datetime.now(ZoneInfo("UTC"))
+
+@_with_cursor
+def get_subscription_info(cur, chat_id: int) -> dict:
+    cur.execute("SELECT tier, valid_until FROM group_subscriptions WHERE chat_id=%s;", (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        return {"tier": "free", "valid_until": None, "active": False}
+    tier, until = r
+    active = tier in ("pro","pro_plus") and (until is None or until > datetime.utcnow())
+    return {"tier": tier, "valid_until": until, "active": active}
+
+@_with_cursor
+def list_candidate_chats_for_ads(cur) -> List[int]:
+    cur.execute("SELECT DISTINCT chat_id FROM message_logs WHERE timestamp > NOW() - INTERVAL '30 days';")
+    return [r[0] for r in (cur.fetchall() or [])]
+
+@_with_cursor
 def set_adv_topic(cur, chat_id:int, topic_id:int|None):
     cur.execute("""
       INSERT INTO adv_settings (chat_id, adv_topic_id)
@@ -1553,7 +1616,28 @@ def set_night_mode(cur, chat_id: int,
         return
     sql = "INSERT INTO night_mode (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
     cur.execute(sql, [chat_id] + params)
+
+@_with_cursor
+def init_ads_schema(cur):
+    # Pro-Abo Tabelle hinzufügen
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_subscriptions (
+          chat_id     BIGINT PRIMARY KEY,
+          tier        TEXT NOT NULL DEFAULT 'free',
+          valid_until TIMESTAMPTZ,
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_groupsub_valid ON group_subscriptions(valid_until DESC);")
     
+    # Mood Topics Tabelle hinzufügen
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mood_topics (
+            chat_id BIGINT PRIMARY KEY,
+            topic_id BIGINT
+        );
+    """)
+ 
 # --- Legacy Migration Utility ---
 def migrate_db():
     import psycopg2
@@ -1669,10 +1753,15 @@ def migrate_db():
         conn.close()
 
 # --- Entry Point ---
+def init_ads_schema():
+    """Initialize advertising system schema"""
+    init_db()  # Ensure base schema exists first
+
 def init_all_schemas():
-    """Initialize all database schemas and ensure migrations are applied"""
+    """Initialize all database schemas including ads"""
     logger.info("Initializing all database schemas...")
     init_db()
+    init_ads_schema()  # Hinzufügen
     migrate_db()
     migrate_stats_rollup()
     ensure_spam_topic_schema()
