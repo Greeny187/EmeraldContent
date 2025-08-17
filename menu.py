@@ -563,8 +563,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not get_rss_topic(cid):
                     await query.answer('❗ Kein RSS-Topic gesetzt.', show_alert=True)
                     return await show_group_menu(query=query, cid=cid, context=context)
+                
+                # Kollision mit anderen Flows vermeiden
+                context.user_data.pop('awaiting_mood_question', None)
+                context.user_data.pop('last_edit', None)
                 context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
-                return await query.edit_message_text('➡ Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
+                
+                # Mit Inline-Keyboard statt ForceReply
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Abbrechen", callback_data=f"{cid}_rss")]
+                ])
+                return await query.edit_message_text(
+                    '➡ Bitte sende die RSS-URL als Antwort auf diese Nachricht:', 
+                    reply_markup=kb
+                )
             elif sub == 'list':
                 feeds = db_list_rss_feeds(cid)
                 if not feeds:
@@ -737,18 +749,52 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Mood-Frage ändern (korrigierter Handler)
     elif func == 'edit' and sub == 'mood_q':
-        print("DEBUG: Mood-Frage ändern erkannt!")
         context.user_data['awaiting_mood_question'] = True
         context.user_data['mood_group_id'] = cid
-        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
-                                          reply_markup=ForceReply(selective=True))
-                                          
-    # Original-Handler beibehalten für Abwärtskompatibilität
-    elif func == "edit_mood_q":
-        context.user_data['awaiting_mood_question'] = True
-        context.user_data['mood_group_id'] = cid
-        return await query.message.reply_text(tr('Bitte sende deine neue Mood-Frage:', lang),
-                                          reply_markup=ForceReply(selective=True))
+        context.user_data.pop('awaiting_rss_url', None)
+        context.user_data.pop('last_edit', None)
+        
+        # Neue Nachricht statt Edit
+        await query.message.reply_text(
+            tr('Bitte sende deine neue Mood-Frage:', lang),
+            reply_markup=ForceReply(selective=True)
+        )
+        await query.answer()
+        return
+
+    # Welcome/Rules/Farewell Edit korrigieren:
+    if sub == "edit":
+        context.user_data["last_edit"] = (cid, func)
+        context.user_data.pop('awaiting_rss_url', None)
+        context.user_data.pop('awaiting_mood_question', None)
+        
+        label = {"welcome": "Begrüßung", "rules": "Regeln", "farewell": "Abschied"}[func]
+        # Neue Nachricht statt Edit
+        await query.message.reply_text(
+            f"✏️ Sende nun die neue {label} (optional mit Bild + Caption):",
+            reply_markup=ForceReply(selective=True)
+        )
+        await query.answer()
+        return
+
+    # Nachtmodus-Zeit-Eingaben korrigieren:
+    elif sub == "set_start":
+        context.user_data['awaiting_nm_time'] = ('start', cid)
+        await query.message.reply_text(
+            tr('Bitte Startzeit im Format HH:MM senden (z. B. 22:00).', lang),
+            reply_markup=ForceReply(selective=True)
+        )
+        await query.answer()
+        return
+
+    elif sub == "set_end":
+        context.user_data['awaiting_nm_time'] = ('end', cid)
+        await query.message.reply_text(
+            tr('Bitte Endzeit im Format HH:MM senden (z. B. 06:00).', lang),
+            reply_markup=ForceReply(selective=True)
+        )
+        await query.answer()
+        return
 
     # Fallback: Hauptmenü
     cid = context.user_data.get('selected_chat_id')
