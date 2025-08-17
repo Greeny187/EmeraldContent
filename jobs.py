@@ -24,39 +24,41 @@ TIMEZONE = os.getenv("TZ", "Europe/Berlin")
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     today = date.today()
     bot = context.bot
+    
     for chat_id, _ in get_registered_groups():
         if not is_daily_stats_enabled(chat_id):
             continue
+            
         try:
-            top3 = get_group_stats(chat_id, today)
-            if not top3:
-                continue
+            lang = get_group_language(chat_id) or 'de'
+            top3 = get_group_stats(chat_id, today) or []
             
-            # Create lines with proper HTML formatting
-            lines = []
-            for i, (uid, cnt) in enumerate(top3):
-                try:
-                    # Try to get user info
-                    user = await bot.get_chat_member(chat_id, uid)
-                    name = user.user.first_name
-                    mention = f"<a href='tg://user?id={uid}'>{name}</a>"
-                except Exception:
-                    # Fallback if user info can't be retrieved
-                    mention = f"User {uid}"
+            if top3:
+                lines = []
+                for i, (uid, cnt) in enumerate(top3):
+                    try:
+                        user = await bot.get_chat_member(chat_id, uid)
+                        name = user.user.first_name
+                        mention = f"<a href='tg://user?id={uid}'>{name}</a>"
+                    except:
+                        mention = f"User {uid}"
+                    lines.append(f"{i+1}. {mention}: {cnt} Nachrichten")
                 
-                lines.append(f"{i+1}. {mention}: {cnt} Nachrichten")
+                text = (
+                    f"📊 <b>Tagesstatistik {today.isoformat()}</b>\n\n"
+                    f"📝 Top {len(lines)} aktive Mitglieder:\n" + "\n".join(lines)
+                )
+            else:
+                # Auch bei 0 Aktivität senden
+                text = (
+                    f"📊 <b>Tagesstatistik {today.isoformat()}</b>\n\n"
+                    f"💤 Keine Aktivität in der Gruppe."
+                )
             
-            # Format message with proper HTML
-            text = (
-                f"📊 <b>Tagesstatistik {today.isoformat()}</b>\n"
-                f"📝 Top {len(lines)} aktive Mitglieder:\n" + "\n".join(lines)
-            )
+            await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
             
-            # Only send if we have data
-            if lines:
-                await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
         except Exception as e:
-            logger.error(f"Fehler beim Senden der Tagesstatistik an {chat_id}: {e}")
+            logger.error(f"Tagesstatistik-Fehler für {chat_id}: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
     if not telethon_client.is_connected():

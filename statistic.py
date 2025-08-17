@@ -417,28 +417,27 @@ def _safe_msg_id(m) -> int | None:
 def _range_for_key(key:str, tz:str):
     now = datetime.now(ZoneInfo(tz))
     today = now.date()
-    if key == "today":
-        return today, today
-    if key == "yesterday":
-        y = today - timedelta(days=1)
-        return y, y
-    if key == "7d":
-        return today - timedelta(days=6), today
-    if key == "30d":
-        return today - timedelta(days=29), today
-    # Fallback
+    if key == "today": return today, today
+    elif key == "yesterday": return today - timedelta(days=1), today - timedelta(days=1)
+    elif key == "7d": return today - timedelta(days=6), today
+    elif key == "14d": return today - timedelta(days=13), today
+    elif key == "30d": return today - timedelta(days=29), today
+    elif key == "60d": return today - timedelta(days=59), today
     return today - timedelta(days=6), today
 
 def _stats_keyboard(cid:int, sel:str, lang:str):
     def btn(label, key):
         mark = "●" if key==sel else "○"
         return InlineKeyboardButton(f"{mark} {label}", callback_data=f"{cid}_stats_range_{key}")
+    
     return InlineKeyboardMarkup([
         [btn("Heute", "today"), btn("Gestern", "yesterday")],
-        [btn("7 Tage", "7d"),   btn("30 Tage", "30d")],
+        [btn("7 Tage", "7d"), btn("14 Tage", "14d")],
+        [btn("30 Tage", "30d"), btn("60 Tage", "60d")],
+        [InlineKeyboardButton("🔄 Aktualisieren", callback_data=f"{cid}_stats_refresh")],
         [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")]
     ])
-    
+
 def _format_ms(ms:int|None):
     if ms is None: return "–"
     s = ms/1000

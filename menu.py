@@ -36,6 +36,9 @@ LANGUAGES = {
 def build_group_menu(cid):
     lang = get_group_language(cid) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(cid) else tr('Inaktiv', lang)
+    ai_faq, ai_rss = get_ai_settings(cid)
+    ai_status = "✅" if (ai_faq or ai_rss) else "❌"
+    
     buttons = [
         [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{cid}_welcome"),
          InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{cid}_captcha")],
@@ -43,32 +46,41 @@ def build_group_menu(cid):
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
         [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
          InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
-        [InlineKeyboardButton(tr('🗑️ Gelöschte Konten entfernen', lang), callback_data=f"{cid}_clean_delete"),
-         InlineKeyboardButton(tr('❓ FAQ', lang), callback_data=f"{cid}_faq")],       
         [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam"),
          InlineKeyboardButton(tr('🧭 Topic-Router', lang), callback_data=f"{cid}_router")],
         [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
-         InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{cid}_stats")],
-        [InlineKeyboardButton(tr('📥 Export CSV', lang), callback_data=f"{cid}_stats_export"),
-         InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats")],
-        [InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood"),
-         InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
-         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")],
-        [InlineKeyboardButton(tr('🔄 Gruppe wechseln', lang), callback_data="group_select")]
+         InlineKeyboardButton(f"🤖 KI {ai_status}", callback_data=f"{cid}_ai")],
+        [InlineKeyboardButton(tr('📊 Statistiken', lang), callback_data=f"{cid}_stats"),
+         InlineKeyboardButton(tr('❓ FAQ', lang), callback_data=f"{cid}_faq")],
+        [InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
+         InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
+        [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
+         InlineKeyboardButton(tr('🗑️ Bereinigen', lang), callback_data=f"{cid}_clean_delete")],
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")]
     ]
     return InlineKeyboardMarkup(buttons)
 
 async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
-    title = tr("📋 Gruppenmenü", get_group_language(cid) or 'de')
+    lang = get_group_language(cid) or 'de'
+    title = tr("📋 Gruppenmenü", lang)
     markup = build_group_menu(cid)
+
     if query:
         try:
-            await query.edit_message_text(title, reply_markup=markup)
-        except BadRequest as e:
-            msg = str(e)
-            if "no text in the message to edit" in msg.lower() or "message is not modified" in msg.lower():
+            # Prüfen ob Message Text hat
+            current_text = getattr(query.message, 'text', None) or getattr(query.message, 'caption', None)
+            if current_text and current_text != title:
+                await query.edit_message_text(title, reply_markup=markup)
+            else:
                 # Fallback: neue Nachricht senden
+                await query.message.reply_text(title, reply_markup=markup)
+                try:
+                    await query.message.delete()
+                except:
+                    pass
+        except BadRequest as e:
+            if "no text in the message to edit" in str(e).lower():
                 await query.message.reply_text(title, reply_markup=markup)
             else:
                 raise
@@ -214,17 +226,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif func == 'faq' and sub is None:
         faqs = list_faqs(cid) or []
-        lines = [f"• <code>{t}</code>" for t,_ in faqs[:20]]
+        lines = [f"• <code>{t}</code> → {a[:30]}..." for t,a in faqs[:10]]
         ai_faq, _ = get_ai_settings(cid)
-        text = "❓ <b>Mini-FAQ</b>\n\n" + ("\n".join(lines) if lines else "Noch keine Einträge.") + \
-            f"\n\nKI-Fallback: {'✅ an' if ai_faq else '❌ aus'}"
+        
+        help_text = (
+            "❓ <b>FAQ-System</b>\n\n"
+            "📝 <b>Hinzufügen:</b> <code>Trigger ⟶ Antwort</code>\n"
+            "Beispiel: <code>hilfe ⟶ Für Unterstützung schreibe @admin</code>\n\n"
+            "🔍 <b>Auslösung:</b> Wenn Nutzer 'hilfe' schreibt oder fragt\n\n"
+            "🤖 <b>KI-Fallback:</b> Bei unbekannten Fragen automatische Antworten\n\n"
+            "<b>Aktuelle FAQs:</b>\n" + 
+            ("\n".join(lines) if lines else "Noch keine Einträge.")
+        )
+        
         kb = [
-            [InlineKeyboardButton("➕ Eintrag", callback_data=f"{cid}_faq_add"),
-            InlineKeyboardButton("🗑 Eintrag löschen", callback_data=f"{cid}_faq_del")],
+            [InlineKeyboardButton("➕ FAQ hinzufügen", callback_data=f"{cid}_faq_add"),
+             InlineKeyboardButton("🗑 FAQ löschen", callback_data=f"{cid}_faq_del")],
             [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} KI-Fallback", callback_data=f"{cid}_faq_ai_toggle")],
+            [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_faq_help")],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+        return await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
     elif func == 'faq' and sub == 'ai_toggle':
         ai_faq, _ = get_ai_settings(cid)
@@ -305,18 +327,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Nachtmodus Aktionen (lokalisiert)
     elif func == 'night' and sub:
-        en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(cid)
+        en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = await _call_db_safe(get_night_mode, cid)
+        
         if sub == 'toggle':
-            set_night_mode(cid, enabled=not en)
-            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            await _call_db_safe(set_night_mode, cid, enabled=not en)
+            await query.answer(tr('Nachtmodus umgeschaltet.', lang), show_alert=True)
+            # Direkt zurück zum Nachtmodus-Menü (NICHT rekursiv)
+            data_new = f"{cid}_night"
+            context.user_data['temp_callback'] = data_new
+            return await menu_callback(update.replace(callback_query=query.replace(data=data_new)), context)
+        
         elif sub == 'hard_toggle':
-            set_night_mode(cid, hard_mode=not hard_mode)
-            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            await _call_db_safe(set_night_mode, cid, hard_mode=not hard_mode)
+            await query.answer(tr('Harter Modus umgeschaltet.', lang), show_alert=True)
+            data_new = f"{cid}_night" 
+            return await menu_callback(update.replace(callback_query=query.replace(data=data_new)), context)
+        
         elif sub == 'del_toggle':
-            set_night_mode(cid, delete_non_admin_msgs=not del_non_admin)
+            await _call_db_safe(set_night_mode, cid, delete_non_admin_msgs=not del_non_admin)
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
         elif sub == 'warnonce_toggle':
-            set_night_mode(cid, warn_once=not warn_once)
+            await _call_db_safe(set_night_mode, cid, warn_once=not warn_once)
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
         elif sub == 'set_start':
             context.user_data['awaiting_nm_time'] = ('start', cid)
@@ -376,27 +407,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif func == 'spam' and sub is None:
         pol = get_spam_policy_topic(cid, 0) or {}
         level = pol.get('level','off')
-        emsg = pol.get('emoji_max_per_msg', 0) or 0
-        rate = pol.get('max_msgs_per_10s', 0) or 0
-        wl = ", ".join(pol.get('link_whitelist') or []) or "–"
-        bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
+        
+        level_info = {
+            'off': '❌ Deaktiviert',
+            'light': '🟡 Leicht (20 Emojis, 10 Msgs/10s)',
+            'medium': '🟠 Mittel (10 Emojis, 60/min, 6 Msgs/10s)', 
+            'strict': '🔴 Streng (6 Emojis, 30/min, 4 Msgs/10s)'
+        }
+        
         text = (
             "🧹 <b>Spamfilter (Default / Topic 0)</b>\n\n"
-            f"Level: <b>{level}</b>\n"
-            f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
-            f"Whitelist: {wl}\nBlacklist: {bl}\n\n"
-            "ℹ️ <i>Topic-spezifische Regeln setzt du am besten direkt im jeweiligen Topic mit</i> "
-            "<code>/spamlevel …</code>."
+            f"📊 <b>Level:</b> {level_info.get(level, level)}\n\n"
+            "⚙️ <b>Funktionen:</b>\n"
+            "• 📊 Emoji-Limits pro Nachricht/Minute\n"
+            "• ⏱ Flood-Protection (Nachrichten/10s)\n"
+            "• 🔗 Domain Whitelist/Blacklist\n"
+            "• 📝 Tageslimits pro Topic & User\n"
+            "• 🎯 Topic-spezifische Regeln\n\n"
+            f"📈 Aktuell: {pol.get('emoji_max_per_msg', 0)} Emojis, "
+            f"{pol.get('max_msgs_per_10s', 0)} Msgs/10s\n"
+            f"✅ Whitelist: {len(pol.get('link_whitelist', []))} Domains\n"
+            f"❌ Blacklist: {len(pol.get('domain_blacklist', []))} Domains"
         )
+        
         kb = [
-            [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_lvl_cycle")],
-            [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_minus"),
-            InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_plus")],
-            [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_minus"),
-            InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_plus")],
-            [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit"),
-            InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit")],
-            [InlineKeyboardButton("Topic auswählen", callback_data=f"{cid}_spam_tsel")],
+            [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
+            [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit"),
+             InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit")],
+            [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
+            [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -483,6 +522,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = tr('🔗 Linkschutz – Einstellungen', lang)
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
+    # KI-Submenü hinzufügen
+    elif func == 'ai' and sub is None:
+        ai_faq, ai_rss = get_ai_settings(cid)
+        text = (
+            "🤖 <b>KI-Einstellungen</b>\n\n"
+            "🎯 <b>Verfügbare Features:</b>\n"
+            f"• FAQ-Fallback: {'✅' if ai_faq else '❌'}\n"
+            f"• RSS-Zusammenfassung: {'✅' if ai_rss else '❌'}\n\n"
+            "🔮 <b>Geplante Features:</b>\n"
+            "• KI-Moderation (Chat-Analyse)\n"
+            "• Sentiment-Erkennung\n"
+            "• Auto-Antworten auf Fragen"
+        )
+        kb = [
+            [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} FAQ-Fallback", callback_data=f"{cid}_ai_faq_toggle")],
+            [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} RSS-Zusammenfassung", callback_data=f"{cid}_ai_rss_toggle")],
+            [InlineKeyboardButton("🔮 KI-Moderation (Beta)", callback_data=f"{cid}_ai_moderation")],
+            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        ]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    
     # 5) DANACH erst die Sub-Aktionen…
     if func and sub:
         # Welcome/Rules/Farewell Aktionen
@@ -559,22 +619,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif func == 'rss':
             if sub == 'setrss':
                 if not get_rss_topic(cid):
-                    await query.answer('❗ Kein RSS-Topic gesetzt.', show_alert=True)
+                    await query.answer('❗ Kein RSS-Topic gesetzt. Bitte erst /settopicrss ausführen.', show_alert=True)
                     return await show_group_menu(query=query, cid=cid, context=context)
                 
-                # Kollision mit anderen Flows vermeiden
+                # Flags setzen
                 context.user_data.pop('awaiting_mood_question', None)
                 context.user_data.pop('last_edit', None)
                 context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
                 
-                # Mit Inline-Keyboard statt ForceReply
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Abbrechen", callback_data=f"{cid}_rss")]
-                ])
-                return await query.edit_message_text(
-                    '➡ Bitte sende die RSS-URL als Antwort auf diese Nachricht:', 
-                    reply_markup=kb
+                # Neue Nachricht mit ForceReply
+                await query.message.reply_text(
+                    '📰 Bitte sende die RSS-URL:',
+                    reply_markup=ForceReply(selective=True)
                 )
+                await query.answer("Sende nun die RSS-URL als Antwort.")
+                return
             elif sub == 'list':
                 feeds = db_list_rss_feeds(cid)
                 if not feeds:

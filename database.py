@@ -1101,40 +1101,44 @@ def set_mood_question(cur, chat_id: int, question: str):
     
 @_with_cursor
 def set_mood_topic(cur, chat_id: int, topic_id: Optional[int]):
-    """Setzt das Topic für Mood-Umfragen"""
-    logger.info(f"DB: Speichere Mood-Topic für Chat {chat_id}: {topic_id}")  # <- Debug-Log
+    logger.info(f"DB: Speichere Mood-Topic für Chat {chat_id}: {topic_id}")
     cur.execute(
         "INSERT INTO mood_topics (chat_id, topic_id) VALUES (%s, %s) "
         "ON CONFLICT (chat_id) DO UPDATE SET topic_id = EXCLUDED.topic_id;",
         (chat_id, topic_id)
     )
-    logger.info(f"DB: Mood-Topic für Chat {chat_id} erfolgreich gespeichert.")  # <- Debug-Log
+    # Auch in group_settings für Kompatibilität
+    cur.execute(
+        "INSERT INTO group_settings (chat_id, mood_topic_id) VALUES (%s, %s) "
+        "ON CONFLICT (chat_id) DO UPDATE SET mood_topic_id = EXCLUDED.mood_topic_id;",
+        (chat_id, topic_id or 0)
+    )
 
-@_with_cursor
-def get_mood_topic(cur, chat_id: int) -> int:
-    # 1) neue Quelle
+@_with_cursor  
+def get_mood_topic(cur, chat_id: int) -> Optional[int]:
+    # Neue Tabelle zuerst
     cur.execute("SELECT topic_id FROM mood_topics WHERE chat_id = %s;", (chat_id,))
     row = cur.fetchone()
     if row and row[0]:
         return int(row[0])
-    # 2) Fallback (Legacy)
+    # Fallback Legacy
     cur.execute("SELECT mood_topic_id FROM group_settings WHERE chat_id = %s;", (chat_id,))
     row = cur.fetchone()
-    return int(row[0]) if row and row[0] else 0
+    return int(row[0]) if row and row[0] else None
 
 # --- Welcome / Rules / Farewell ---
 @_with_cursor
 def set_welcome(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     try:
-        logger.info(f"DB: Speichere Welcome für Chat {chat_id}. Photo: {bool(photo_id)}, Textlänge: {len(text or '')}")
+        logger.info(f"DB: Speichere Welcome für Chat {chat_id}. Photo: {bool(photo_id)}, Text: '{text[:50] if text else 'None'}...'")
         cur.execute(
             "INSERT INTO welcome (chat_id, photo_id, text) VALUES (%s, %s, %s) "
             "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-            (chat_id, photo_id, text)  # Korrekte Reihenfolge: photo_id, dann text
+            (chat_id, photo_id, text)
         )
-        logger.info(f"DB: Welcome für Chat {chat_id} erfolgreich gespeichert/aktualisiert.")
+        logger.info(f"DB: Welcome für Chat {chat_id} erfolgreich gespeichert.")
     except Exception as e:
-        logger.error(f"DB-Fehler in set_welcome für Chat {chat_id}: {e}", exc_info=True)
+        logger.error(f"DB-Fehler in set_welcome: {e}", exc_info=True)
         raise
 
 @_with_cursor
