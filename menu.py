@@ -9,7 +9,7 @@ from database import (
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode,
-    set_pending_input, get_pending_input, clear_pending_input
+    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
@@ -918,7 +918,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     media_id = photo_id or doc_id
     
     # --- DB-Pendings laden (Fallback nach Neustart/Crash) ---
-    pend = get_pending_input(msg.chat.id, update.effective_user.id) or {}
+    pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
 
     # last_edit-Fallback (Welcome/Rules/Farewell)
     if 'last_edit' not in context.user_data and 'edit' in pend:
