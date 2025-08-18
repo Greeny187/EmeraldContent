@@ -3,7 +3,7 @@ import datetime
 import logging
 import statistic
 import asyncio
-from telegram.ext import filters, MessageHandler, Application
+from telegram.ext import filters, MessageHandler, Application, PicklePersistence
 from telethon_client import telethon_client, start_telethon
 from telethon import TelegramClient
 from handlers import register_handlers, error_handler
@@ -79,12 +79,16 @@ def main():
     asyncio.get_event_loop().run_until_complete(start_telethon())
 
     # Erstelle eine Application mit angepasstem Request-Objekt
-    app = Application.builder() \
-        .token(BOT_TOKEN) \
-        .request(create_request_with_increased_pool()) \
-        .post_init(post_init) \
-        .post_shutdown(post_shutdown) \
+    persistence = PicklePersistence(filepath="state.pickle")
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .persistence(persistence)
+        .request(create_request_with_increased_pool())
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
+    )
 
     app.add_error_handler(error_handler)
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-2)
@@ -110,7 +114,7 @@ def main():
         port=PORT,
         url_path=f"/webhook/{BOT_TOKEN}",
         webhook_url=WEBHOOK_URL,
-        drop_pending_updates=True,
+        drop_pending_updates=False,
         max_connections=40
     )
 

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, prune_pending_inputs_older_than, 
                     purge_deleted_members, get_group_stats, get_night_mode) # <-- HIER HINZUGEFÜGT
 from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
@@ -262,10 +262,15 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
         last_status = context.bot_data.get(nm_key, not is_active)
 
         if is_active and not last_status:
-            # Nachtmodus wurde gerade AKTIVIERT
+            # Nachtmodus wurde gerade AKTIVIERT => "bis hh:mm (TZ)"
             lang = get_group_language(chat_id) or 'de'
-            await bot.send_message(chat_id, tr("🌙 Der Nachtmodus ist jetzt aktiv. Nur Admins können schreiben.", lang))
-            # KORREKTUR: In bot_data speichern statt chat_data
+            # Ende-Zeitpunkt berechnen:
+            end_local = dt.datetime.combine(now_local.date(), end_time, tzinfo=group_tz)
+            if start_time > end_time and now_local.time() >= start_time:
+                # über Mitternacht -> Ende am nächsten Tag
+                end_local += dt.timedelta(days=1)
+            human = end_local.strftime("%H:%M")
+            await bot.send_message(chat_id, tr("🌙 Nachtmodus aktiv bis", lang) + f" {human} ({group_tz.key}).")
             context.bot_data[nm_key] = True
             
         elif not is_active and last_status:
@@ -330,5 +335,12 @@ def register_jobs(app):
     
     # NEU: night_mode_job registrieren, damit er jede Minute läuft
     jq.run_repeating(night_mode_job, interval=60, first=10, name="night_mode_job")
-    
+    # Pending-Inputs aufräumen (alle 24h)
+    from database import prune_pending_inputs_older_than
+    async def _prune(_):
+        try:
+            prune_pending_inputs_older_than(48)
+        except Exception as e:
+            logger.warning(f"pending_inputs prune failed: {e}")
+    jq.run_repeating(_prune, interval=86400, first=300, name="pending_inputs_prune")
     logger.info("Jobs registriert: daily_report, telethon_stats, purge_members, dev_stats_nightly, rollup_yesterday, night_mode_job")

@@ -8,7 +8,8 @@ from database import (
     set_captcha_settings, get_farewell, set_farewell, delete_farewell, toggle_topic_router_rule, set_mood_question,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
-    get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode
+    get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode,
+    set_pending_input, get_pending_input, clear_pending_input
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
@@ -162,6 +163,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif func == "welcome" and sub == "edit":
         # Einheitliche Eingabe über ForceReply
         context.user_data['last_edit'] = (cid, 'welcome')
+        set_pending_input(query.message.chat.id, update.effective_user.id, "edit",
+                          {"target_chat_id": cid, "what": "welcome"})
         return await query.message.reply_text(
             tr("✏️ Sende jetzt die neue Begrüßung (Text oder Medien mit Caption).", lang),
             reply_markup=ForceReply(selective=True)
@@ -169,6 +172,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if func == "rules" and sub == "edit":
         context.user_data["last_edit"] = (cid, "rules")
+        set_pending_input(query.message.chat.id, update.effective_user.id, "edit",
+                          {"target_chat_id": cid, "what": "rules"})
         await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=tr("Bitte sende jetzt die neuen Regeln (optional mit Foto als Bild + Caption).", lang)
@@ -177,6 +182,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if func == "farewell" and sub == "edit":
         context.user_data["last_edit"] = (cid, "farewell")
+        set_pending_input(query.message.chat.id, update.effective_user.id, "edit",
+                          {"target_chat_id": cid, "what": "farewell"})
         await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=tr("Bitte sende jetzt die neue Abschiedsnachricht (optional mit Foto als Bild + Caption).", lang)
@@ -260,6 +267,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Format:\n<Trigger> ⟶ <Antwort>",
             reply_markup=ForceReply(selective=True)
         )
+        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_add",
+                      {"chat_id": cid})  
 
     elif func == 'faq' and sub == 'del':
         context.user_data.update(awaiting_faq_del=True, faq_group_id=cid)
@@ -267,6 +276,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Bitte sende den <Trigger>, der gelöscht werden soll.",
             reply_markup=ForceReply(selective=True)
         )
+        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_del",
+                      {"chat_id": cid})
     
     # Language Submenü
     elif func == 'language' and sub is None:
@@ -376,10 +387,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['awaiting_nm_time'] = ('start', cid)
             return await query.message.reply_text(tr('Bitte Startzeit im Format HH:MM senden (z. B. 22:00).', lang),
                                                 reply_markup=ForceReply(selective=True))
+            set_pending_input(query.message.chat.id, update.effective_user.id, "nm_time",
+                      {"chat_id": cid, "which": "start"})
         elif sub == 'set_end':
             context.user_data['awaiting_nm_time'] = ('end', cid)
             return await query.message.reply_text(tr('Bitte Endzeit im Format HH:MM senden (z. B. 06:00).', lang),
                                                 reply_markup=ForceReply(selective=True))
+            set_pending_input(query.message.chat.id, update.effective_user.id, "nm_time",
+                      {"chat_id": cid, "which": "end"})
         elif sub.startswith('quiet_'):
             dur_map = {'15m': 15, '1h': 60, '8h': 480}
             key = sub.split('_', 1)[1]
@@ -413,10 +428,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid)
             return await query.message.reply_text("Format: <topic_id>; wort1, wort2, ...",
                                                 reply_markup=ForceReply(selective=True))
+        set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_kw", {"chat_id": cid})
+        
         if sub == 'add_dom':
             context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid)
             return await query.message.reply_text("Format: <topic_id>; domain1.tld, domain2.tld",
                                                 reply_markup=ForceReply(selective=True))
+        set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_dom", {"chat_id": cid})
+        
         if sub == 'del':
             context.user_data.update(awaiting_router_delete=True, router_group_id=cid)
             return await query.message.reply_text("Gib die Regel-ID an, die gelöscht werden soll:",
@@ -533,6 +552,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['link_warn_group'] = cid
             return await query.message.reply_text(tr("Sende jetzt deinen neuen Warn-Text:", lang),
                                                   reply_markup=ForceReply(selective=True))
+            set_pending_input(query.message.chat.id, update.effective_user.id, "link_warn",
+                      {"chat_id": cid})
+
         elif sub in ("toggle", "warn_toggle", "exc_toggle"):
             prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
             if sub == "toggle":
@@ -658,7 +680,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('awaiting_mood_question', None)
                 context.user_data.pop('last_edit', None)
                 context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
-                
+                set_pending_input(query.message.chat.id, update.effective_user.id, "rss_url",
+                                  {"target_chat_id": cid})
                 # Neue Nachricht mit ForceReply
                 await query.message.reply_text(
                     '📰 Bitte sende die RSS-URL:',
@@ -723,14 +746,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if parts[0] == 'wl':
                     context.user_data.update(awaiting_spam_whitelist=True, spam_group_id=cid, spam_topic_id=topic_id)
                     return await query.message.reply_text("Sende Whitelist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
+                    set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
+                          {"chat_id": cid, "topic_id": topic_id, "which": "whitelist"})
                 else:
                     context.user_data.update(awaiting_spam_blacklist=True, spam_group_id=cid, spam_topic_id=topic_id)
                     return await query.message.reply_text("Sende Blacklist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
+                    set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
+                          {"chat_id": cid, "topic_id": topic_id, "which": "blacklist"})
 
         elif func == 'spam' and sub and sub.startswith('limt_edit_'):
             topic_id = int(sub.split('_')[-1])
             context.user_data.update(awaiting_topic_limit=True, spam_group_id=cid, spam_topic_id=topic_id)
             return await query.message.reply_text("Bitte Limit/Tag/User als Zahl senden (0 = aus):", reply_markup=ForceReply(selective=True))
+            set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
+                          {"chat_id": cid, "topic_id": topic_id, "which": "limit"})
 
         elif func == 'spam' and sub and sub.startswith('qmode_'):
             topic_id = int(sub.split('_')[-1])
@@ -762,9 +791,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 'pick_kw_' in sub:
                 context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid, router_target_tid=topic_id)
                 return await query.message.reply_text("Sende Keywords (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+                set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_kw",
+                          {"chat_id": cid, "target_tid": topic_id})
             else:
                 context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid, router_target_tid=topic_id)
                 return await query.message.reply_text("Sende Domains (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+                set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_dom",
+                          {"chat_id": cid, "target_tid": topic_id})
 
         # === Sprachcode setzen ===
         elif func == 'setlang' and sub:
@@ -848,6 +881,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tr('Bitte sende deine neue Mood-Frage:', lang),
             reply_markup=ForceReply(selective=True)
         )
+        set_pending_input(query.message.chat.id, update.effective_user.id, "mood_q",
+                      {"chat_id": cid})
         await query.answer()
         return
 
@@ -882,11 +917,28 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     doc_id = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
     
+    # --- DB-Pendings laden (Fallback nach Neustart/Crash) ---
+    pend = get_pending_input(msg.chat.id, update.effective_user.id) or {}
+
+    # last_edit-Fallback (Welcome/Rules/Farewell)
+    if 'last_edit' not in context.user_data and 'edit' in pend:
+        payload = pend.get('edit') or {}
+        if isinstance(payload, dict) and payload.get('chat_id') and payload.get('what'):
+            context.user_data['last_edit'] = (int(payload['chat_id']), payload['what'])
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'edit')
+        
     # DEBUG: Log alles
     logger.info(f"DEBUG: Handler aufgerufen mit Text: '{text}'")
     logger.info(f"DEBUG: user_data: {context.user_data}")
     logger.info(f"DEBUG: Media: photo={bool(photo_id)}, doc={bool(doc_id)}")
     
+    # --- DB-Fallback: offener Edit-Flow?
+    if 'last_edit' not in context.user_data:
+        pend = get_pending_input(msg.chat.id, update.effective_user.id, "edit")
+        if pend and isinstance(pend, dict) and pend.get("what") and pend.get("target_chat_id"):
+            context.user_data['last_edit'] = (int(pend["target_chat_id"]), pend["what"])
+            clear_pending_input(msg.chat.id, update.effective_user.id, "edit")
+
     # 'last_edit' Handler
     if 'last_edit' in context.user_data:
         last_edit = context.user_data.pop('last_edit')
@@ -935,14 +987,15 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Linksperre-Warntext (AWAIT hinzufügen)
-    if context.user_data.pop('awaiting_link_warn', False):
-        cid = context.user_data.pop('link_warn_group')
+    if context.user_data.pop('awaiting_link_warn', False) or ('link_warn' in pend):
+        cid = context.user_data.pop('link_warn_group', (pend.get('link_warn') or {}).get('chat_id'))
         await _call_db_safe(set_link_settings, cid, warning_text=text)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'link_warn')
         return await msg.reply_text("✅ Warn-Text gespeichert.")
 
     # Mood-Frage speichern (AWAIT hinzufügen)
-    if context.user_data.pop('awaiting_mood_question', False):
-        cid = context.user_data.pop('mood_group_id', None)
+    if context.user_data.pop('awaiting_mood_question', False) or ('mood_q' in pend):
+        cid = context.user_data.pop('mood_group_id', (pend.get('mood_q') or {}).get('chat_id'))
         if not cid:
             return await msg.reply_text("⚠️ Keine Gruppe ausgewählt.")
         try:
@@ -951,73 +1004,82 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Mood-Frage: {e}")
             return await msg.reply_text(f"⚠️ Fehler beim Speichern der Mood-Frage: {e}")
-
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'mood_q')
+            
     # Weitere Handler mit AWAIT...
-    if context.user_data.pop('awaiting_spam_whitelist', False):
-        cid = context.user_data.pop('spam_group_id')
-        tid = context.user_data.pop('spam_topic_id', 0)
+    if context.user_data.pop('awaiting_spam_whitelist', False) or ((pend.get('spam_edit') or {}).get('which') == 'whitelist'):
+        cid = context.user_data.pop('spam_group_id', (pend.get('spam_edit') or {}).get('chat_id'))
+        tid = context.user_data.pop('spam_topic_id', (pend.get('spam_edit') or {}).get('topic_id', 0))
         wl = [d.strip().lower() for d in text.split(",") if d.strip()]
         await _call_db_safe(set_spam_policy_topic, cid, tid, link_whitelist=wl)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'spam_edit')
         return await msg.reply_text(f"✅ Whitelist gespeichert (Topic {tid}).")
 
-    if context.user_data.pop('awaiting_spam_blacklist', False):
-        cid = context.user_data.pop('spam_group_id')
-        tid = context.user_data.pop('spam_topic_id', 0)
+    if context.user_data.pop('awaiting_spam_blacklist', False)  or ((pend.get('spam_edit') or {}).get('which') == 'blacklist'):
+        cid = context.user_data.pop('spam_group_id', (pend.get('spam_edit') or {}).get('chat_id'))
+        tid = context.user_data.pop('spam_topic_id', (pend.get('spam_edit') or {}).get('topic_id', 0))
         bl = [d.strip().lower() for d in text.split(",") if d.strip()]
         await _call_db_safe(set_spam_policy_topic, cid, tid, domain_blacklist=bl)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'spam_edit')
         return await msg.reply_text(f"✅ Blacklist gespeichert (Topic {tid}).")
 
     # 4) Router: add keywords (mit Ziel-Topic)
-    if context.user_data.pop('awaiting_router_add_keywords', False):
-        cid = context.user_data.pop('router_group_id')
-        tid = context.user_data.pop('router_target_tid', None)
+    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in pend):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_add_kw') or {}).get('chat_id'))
+        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_kw') or {}).get('target_tid'))
         kws = [w.strip() for w in text.split(",") if w.strip()]
         if not tid or not kws:
             return await msg.reply_text("Bitte Keywords angeben.")
         rid = add_topic_router_rule(cid, tid, keywords=kws)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_kw')
         return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Keywords) angelegt.")
 
     # 5) Router: add domains (mit Ziel-Topic)
-    if context.user_data.pop('awaiting_router_add_domains', False):
-        cid = context.user_data.pop('router_group_id')
-        tid = context.user_data.pop('router_target_tid', None)
+    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in pend):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_add_dom') or {}).get('chat_id'))
+        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_dom') or {}).get('target_tid'))
         doms = [d.strip().lower() for d in text.split(",") if d.strip()]
         if not tid or not doms:
             return await msg.reply_text("Bitte Domains angeben.")
         rid = add_topic_router_rule(cid, tid, domains=doms)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_dom')
         return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Domains) angelegt.")
     # 6) Router: delete
-    if context.user_data.pop('awaiting_router_delete', False):
-        cid = context.user_data.pop('router_group_id')
+    if context.user_data.pop('awaiting_router_delete', False) or ('router_delete' in pend):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_delete') or {}).get('chat_id'))
         if not text.isdigit():
             return await msg.reply_text("Bitte eine numerische Regel-ID senden.")
         delete_topic_router_rule(cid, int(text))
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_delete')
         return await msg.reply_text("🗑 Regel gelöscht.")
     # 7) Router: toggle
-    if context.user_data.pop('awaiting_router_toggle', False):
-        cid = context.user_data.pop('router_group_id')
+    if context.user_data.pop('awaiting_router_toggle', False) or ('router_toggle' in pend):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_toggle') or {}).get('chat_id'))
         m = re.match(r'^\s*(\d+)\s+(on|off)\s*$', text, re.I)
         if not m:
             return await msg.reply_text("Format: <regel_id> on|off")
         rid = int(m.group(1)); on = m.group(2).lower() == "on"
         toggle_topic_router_rule(cid, rid, on)
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_toggle')
         return await msg.reply_text("🔁 Regel umgeschaltet.")
     # 8) FAQ add
-    if context.user_data.pop('awaiting_faq_add', False):
-        cid = context.user_data.pop('faq_group_id')
+    if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in pend):
+        cid = context.user_data.pop('faq_group_id', (pend.get('faq_add') or {}).get('chat_id'))
         if "⟶" not in text and "->" not in text:
             return await msg.reply_text("Bitte im Format <Trigger> ⟶ <Antwort> senden.")
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_add')
         splitter = "⟶" if "⟶" in text else "->"
         trig, ans = [p.strip() for p in text.split(splitter, 1)]
         upsert_faq(cid, trig, ans)
         return await msg.reply_text("✅ FAQ gespeichert.")
 
     # 9) FAQ delete
-    if context.user_data.pop('awaiting_faq_del', False):
-        cid = context.user_data.pop('faq_group_id')
+    if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in pend):
+        cid = context.user_data.pop('faq_group_id', (pend.get('faq_del') or {}).get('chat_id'))
         delete_faq(cid, text.strip())
         return await msg.reply_text("🗑 FAQ gelöscht (falls vorhanden).")
-    
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_del')
+        
     if context.user_data.pop('awaiting_topic_limit', False):
         cid = context.user_data.pop('spam_group_id')
         tid = context.user_data.pop('spam_topic_id')
@@ -1027,6 +1089,44 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             return await update.effective_message.reply_text("Bitte eine Zahl senden.")
         set_spam_policy_topic(cid, tid, per_user_daily_limit=max(0, limit))
         return await update.effective_message.reply_text(f"✅ Limit gesetzt: {limit}/Tag/User (Topic {tid}).")
+
+    # Whitelist/Blacklist (Spam)
+    if context.user_data.pop('awaiting_spam_whitelist', False) or (pend.get('spam_edit',{}).get('which')=='whitelist'):
+        cid = context.user_data.pop('spam_group_id', pend.get('spam_edit',{}).get('chat_id'))
+        tid = context.user_data.pop('spam_topic_id', pend.get('spam_edit',{}).get('topic_id',0))
+        doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
+        cur = get_spam_policy_topic(cid, tid) or {}
+        cur.setdefault("link_whitelist", [])
+        cur["link_whitelist"] = sorted(set(cur["link_whitelist"] + doms))
+        set_spam_policy_topic(cid, tid, link_whitelist=cur["link_whitelist"])
+        clear_pending_input(cid, update.effective_user.id, "spam_edit")
+        return await msg.reply_text(f"✅ Whitelist aktualisiert ({len(cur['link_whitelist'])} Domains).")
+
+    if context.user_data.pop('awaiting_spam_blacklist', False) or (pend.get('spam_edit',{}).get('which')=='blacklist'):
+        cid = context.user_data.pop('spam_group_id', pend.get('spam_edit',{}).get('chat_id'))
+        tid = context.user_data.pop('spam_topic_id', pend.get('spam_edit',{}).get('topic_id',0))
+        doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
+        cur = get_spam_policy_topic(cid, tid) or {}
+        cur.setdefault("domain_blacklist", [])
+        cur["domain_blacklist"] = sorted(set(cur["domain_blacklist"] + doms))
+        set_spam_policy_topic(cid, tid, domain_blacklist=cur["domain_blacklist"])
+        clear_pending_input(cid, update.effective_user.id, "spam_edit")
+        return await msg.reply_text(f"✅ Blacklist aktualisiert ({len(cur['domain_blacklist'])} Domains).")
+
+    # Router: Keywords / Domains / Delete / Toggle – analog (gekürzt):
+    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in pend):
+        cid = context.user_data.pop('router_group_id', pend.get('router_add_kw',{}).get('chat_id'))
+        kws = [w.strip().lower() for w in re.split(r"[,\s]+", text) if w.strip()]
+        for kw in kws: add_topic_router_rule(cid, keyword=kw)
+        clear_pending_input(cid, update.effective_user.id, "router_add_kw")
+        return await msg.reply_text(f"✅ {len(kws)} Keyword(s) hinzugefügt.")
+
+    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in pend):
+        cid = context.user_data.pop('router_group_id', pend.get('router_add_dom',{}).get('chat_id'))
+        doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
+        for d in doms: add_topic_router_rule(cid, domain=d)
+        clear_pending_input(cid, update.effective_user.id, "router_add_dom")
+        return await msg.reply_text(f"✅ {len(doms)} Domain(s) hinzugefügt.")
 
 TOPICS_PAGE_SIZE = 10
 

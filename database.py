@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from urllib.parse import urlparse
 from datetime import date
@@ -405,6 +406,18 @@ def init_db(cur):
         """
     )
     
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_inputs (
+            ctx_chat_id BIGINT NOT NULL,
+            user_id     BIGINT NOT NULL,
+            key         TEXT   NOT NULL,
+            payload     JSONB,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (ctx_chat_id, user_id, key)
+        );
+    """)
+
 @_with_cursor
 def migrate_stats_rollup(cur):
     # Tages-Rollup pro Gruppe & Datum
@@ -459,6 +472,51 @@ def get_registered_groups(cur) -> List[Tuple[int, str]]:
 @_with_cursor
 def unregister_group(cur, chat_id: int):
     cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
+
+@_with_cursor
+def set_pending_input(cur, chat_id:int, user_id:int, key:str, payload:dict):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_inputs (
+          chat_id  BIGINT,
+          user_id  BIGINT,
+          key      TEXT,
+          payload  JSONB,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY(chat_id, user_id, key)
+        );
+    """)
+    cur.execute("""
+        INSERT INTO pending_inputs (chat_id,user_id,key,payload)
+        VALUES (%s,%s,%s,%s)
+        ON CONFLICT (chat_id,user_id,key)
+        DO UPDATE SET payload=EXCLUDED.payload, created_at=NOW();
+    """, (chat_id, user_id, key, payload))
+
+@_with_cursor
+def get_pending_inputs(cur, chat_id:int, user_id:int) -> Dict[str,dict]:
+    cur.execute("""
+        SELECT key, payload FROM pending_inputs
+         WHERE chat_id=%s AND user_id=%s;
+    """, (chat_id, user_id))
+    return {k: (p or {}) for (k,p) in cur.fetchall()}
+
+@_with_cursor
+def get_pending_input(cur, chat_id:int, user_id:int, key:str) -> Optional[dict]:
+    cur.execute("SELECT payload FROM pending_inputs WHERE chat_id=%s AND user_id=%s AND key=%s;",
+                (chat_id, user_id, key))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+@_with_cursor
+def clear_pending_input(cur, chat_id:int, user_id:int, key:Optional[str]=None):
+    if key:
+        cur.execute("DELETE FROM pending_inputs WHERE chat_id=%s AND user_id=%s AND key=%s;", (chat_id, user_id, key))
+    else:
+        cur.execute("DELETE FROM pending_inputs WHERE chat_id=%s AND user_id=%s;", (chat_id, user_id))
+
+@_with_cursor
+def prune_pending_inputs_older_than(cur, hours:int=48):
+    cur.execute("DELETE FROM pending_inputs WHERE created_at < NOW() - (%s || ' hours')::interval;", (hours,))
 
 # --- Member Management ---
 @_with_cursor

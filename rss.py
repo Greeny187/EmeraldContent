@@ -5,7 +5,8 @@ from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
 from database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic, get_rss_topic, 
-get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings
+get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, 
+get_pending_input, clear_pending_input
 )
 from utils import ai_summarize
 
@@ -60,6 +61,8 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     if not url:
         context.user_data["awaiting_rss_url"] = True
         context.user_data["rss_group_id"] = chat_id
+        set_pending_input(update.effective_chat.id, update.effective_user.id, "rss_url",
+                          {"target_chat_id": chat_id})
         return await update.message.reply_text("➡ Bitte sende jetzt die RSS-URL:", reply_markup=ForceReply(selective=True))
 
     add_rss_feed(chat_id, url, topic_id)
@@ -212,26 +215,44 @@ async def rss_url_reply(update, context):
     Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
     Nur gültig, wenn es eine Antwort (Reply) auf unsere Aufforderung ist.
     """
-    # STRIKTERE Prüfung: Nur wenn RSS-Flag gesetzt UND es eine Reply ist
-    if not context.user_data.get("awaiting_rss_url", False):
-        return  # Nicht für uns
-
+    # STRIKTER: Wir akzeptieren nur echte Replies auf unsere ForceReply-Botnachricht.
+    # Zusätzlich: DB-Fallback, falls user_data verloren ging.
     msg = update.message
-    if not msg or not msg.reply_to_message:
-        return  # Keine Reply-Nachricht
-
-    # Nur Antworten auf Bot-Nachrichten akzeptieren
+    if not msg:
+        return
     replied_to = msg.reply_to_message
     if not replied_to.from_user or replied_to.from_user.id != context.bot.id:
-        return  # Nicht auf Bot-Nachricht geantwortet
-
-    # Zusätzlich: Prüfen ob die Reply-Nachricht ForceReply hatte
+        return
     if not getattr(replied_to.reply_markup, 'force_reply', False):
-        return  # Nicht auf ForceReply geantwortet
+        return
 
+    target_chat_id = context.user_data.get("rss_group_id")
+    if not context.user_data.get("awaiting_rss_url", False) or not target_chat_id:
+        pend = get_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
+        if not pend:
+            return
+        target_chat_id = int(pend.get("target_chat_id") or 0)
+        if target_chat_id:
+            # Aufräumen, damit das Pending nicht „kleben“ bleibt
+            clear_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
+        # setze einmalig Flags, damit der Rest des Codes identisch bleiben kann
+        context.user_data["awaiting_rss_url"] = True
+        context.user_data["rss_group_id"] = target_chat_id
+
+    # Normale Route: echte Reply auf ForceReply
+    replied_to = msg.reply_to_message
+    is_proper_reply = (
+        replied_to and replied_to.from_user and replied_to.from_user.id == context.bot.id
+        and getattr(replied_to.reply_markup, 'force_reply', False)
+    )
+    # DB-Fallback (z.B. nach Neustart): pending inputs vorhanden?
+    db_pending = get_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
+    if not is_proper_reply and not db_pending:
+        return  # weder richtige Reply noch Pending vorhanden
+    
     url = (msg.text or "").strip()
-    chat_id = context.user_data.get("rss_group_id")
-
+    chat_id = context.user_data.get("rss_group_id") or (db_pending and db_pending.get("chat_id"))
+    
     # Safety-Checks
     if not chat_id:
         return
@@ -251,6 +272,7 @@ async def rss_url_reply(update, context):
     add_rss_feed(chat_id, url, topic_id)
     context.user_data.pop("awaiting_rss_url", None)
     context.user_data.pop("rss_group_id", None)
+    clear_pending_input(chat_id, update.effective_user.id, "rss_url")
     await msg.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
 
 def register_rss(app):

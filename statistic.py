@@ -1260,6 +1260,6 @@ def register_statistics_handlers(app):
     app.add_handler(ChatMemberHandler(on_chat_member_update, ChatMemberHandler.CHAT_MEMBER), group=0)
     app.add_handler(MessageHandler(filters.REPLY, reply_time_handler), group=0)
     app.add_handler(PollAnswerHandler(poll_response_handler), group=0)
-
+    app.add_handler(CallbackQueryHandler(stats_callback, pattern=r"^\d+_stats_(?:range|refresh|export|heat).*"), group=1)
 
 
