@@ -6,7 +6,7 @@ import subprocess
 import psutil
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from patchnotes import __version__
 from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor
@@ -21,34 +21,40 @@ logger = logging.getLogger(__name__)
 
 async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Flexiblere Dev-ID-Erkennung
-    dev_ids_raw = os.getenv("DEVELOPER_CHAT_ID", "")
+
+    # Dev-IDs robust lesen (vereinheitlicht: liest beide ENV-Varianten)
     dev_ids = set()
-    for part in re.split(r'[,;\s]+', dev_ids_raw):
-        if part.strip() and part.strip().lstrip('-').isdigit():
-            dev_ids.add(int(part.strip()))
+    for envkey in ["DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS"]:
+        raw = os.getenv(envkey, "")
+        for part in re.split(r'[,;\s]+', raw):
+            if part.strip() and part.strip().lstrip('-').isdigit():
+                dev_ids.add(int(part.strip()))
     if not dev_ids and os.getenv("ENVIRONMENT", "").lower() == "development":
         dev_ids.add(user_id)
     if user_id not in dev_ids:
         return await update.message.reply_text(f"❌ Nur für Entwickler verfügbar.\nDeine User-ID: {user_id}")
-    
+
+    # Scope-Label (Alle Gruppen oder konkrete Gruppe)
+    scope_label = get_scope_label(context)
+
     kb = [
+        [InlineKeyboardButton(f"🔽 Gruppenauswahl ({scope_label})", callback_data="dev_group_select_0")],
         [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
         [InlineKeyboardButton("💰 Pro-Verwaltung", callback_data="dev_pro_management")],
         [InlineKeyboardButton("📢 Werbung-Dashboard", callback_data="dev_ads_dashboard")],
         [InlineKeyboardButton("🗄 DB-Management", callback_data="dev_db_management")],
         [InlineKeyboardButton("🔄 Bot neustarten", callback_data="dev_restart_bot")],
-        [InlineKeyboardButton("📝 Logs anzeigen", callback_data="dev_show_logs")]
+        [InlineKeyboardButton("📝 Logs anzeigen", callback_data="dev_show_logs")],
     ]
-    
+
     start_time = context.bot_data.get('start_time', datetime.datetime.now())
     uptime = datetime.datetime.now() - start_time
     text = (
         "⚙️ **Entwickler-Menü**\n\n"
         f"🤖 Bot-Version: {__version__}\n"
         f"⏰ Uptime: {uptime}\n"
-        f"👥 Registrierte Gruppen: {len(get_registered_groups())}"
+        f"👥 Registrierte Gruppen: {len(get_registered_groups())}\n"
+        f"🔎 Datenquelle: {scope_label}"
     )
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -77,6 +83,82 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]]
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
+    elif data.startswith("dev_group_select_"):
+        # Seite aus Callback lesen
+        try:
+            page = int(data.rsplit("_", 1)[-1])
+        except:
+            page = 0
+
+        groups = get_registered_groups()
+        page_size = 10
+        total = len(groups)
+        total_pages = max(1, (total - 1)//page_size + 1)
+        page = max(0, min(page, total_pages-1))
+
+        start_idx = page * page_size
+        end_idx = min(start_idx + page_size, total)
+        current = groups[start_idx:end_idx]
+
+        text = (
+            "🔽 **Gruppenauswahl**\n\n"
+            "Wähle eine einzelne Gruppe **oder** „Alle Gruppen (Aggregiert)“.\n"
+            f"Seite {page+1}/{total_pages} · Zeige {start_idx+1}-{end_idx} von {total}\n"
+        )
+
+        kb = [
+            [InlineKeyboardButton("🌐 Alle Gruppen (Aggregiert)", callback_data="dev_group_all")]
+        ]
+
+        # je Gruppe ein Button (Titel kürzen)
+        row = []
+        for chat_id, title in current:
+            label = f"{title[:28]}{'…' if len(title)>28 else ''}"
+            row = [InlineKeyboardButton(label, callback_data=f"dev_group_pick:{chat_id}")]
+            kb.append(row)
+
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️", callback_data=f"dev_group_select_{page-1}"))
+        if page < total_pages-1:
+            nav.append(InlineKeyboardButton("▶️", callback_data=f"dev_group_select_{page+1}"))
+        if nav:
+            kb.append(nav)
+
+        kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")])
+
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data == "dev_group_all":
+        # Aggregierter Modus
+        context.user_data['scope'] = {'type': 'all'}
+        await query.answer("Datenquelle: Alle Gruppen (Aggregiert)")
+        return await dev_callback_handler(update, context)  # Refresh aufrufend
+
+    elif data.startswith("dev_group_pick:"):
+        # Konkrete Gruppe wählen
+        _, raw = data.split(":", 1)
+        try:
+            chat_id = int(raw)
+        except:
+            return await query.answer("Ungültige Auswahl.", show_alert=True)
+
+        # Titel aus Liste holen (fallback: Chat-ID)
+        title = next((t for cid, t in get_registered_groups() if cid == chat_id), str(chat_id))
+        context.user_data['scope'] = {'type': 'group', 'chat_id': chat_id, 'title': title}
+        await query.answer(f"Datenquelle gesetzt: {title}")
+        # Zurück ins Menü (oder einfach System-Stats öffnen)
+        kb = [
+            [InlineKeyboardButton(f"🔽 Gruppenauswahl ({get_scope_label(context)})", callback_data="dev_group_select_0")],
+            [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
+            [InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")],
+        ]
+        await query.edit_message_text(
+            f"✅ **Datenquelle gesetzt:** {get_scope_label(context)}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    
     elif data == "dev_pro_management":
         # Pro-Verwaltung Dashboard - Alle Gruppen anzeigen, egal ob Pro oder nicht
         try:
@@ -204,6 +286,34 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info(f"Bot-Neustart durch Admin {user_id} initiiert.")
         restart_bot(context)
     
+    elif data == "dev_system_stats":
+        groups = get_registered_groups()
+        active_groups = len([g for g in groups if is_daily_stats_enabled(g[0])])
+
+        # Scope lesen (None = Aggregiert)
+        scope = context.user_data.get('scope', {'type': 'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+
+        overview = get_global_overview(chat_id=chat_id)
+
+        text = (
+            "📊 **System-Statistiken**\n\n"
+            f"🔎 Datenquelle: {get_scope_label(context)}\n"
+            f"👥 Gruppen gesamt: {len(groups)}\n"
+            f"✅ Aktive Gruppen: {active_groups}\n"
+            f"💾 DB-Pool: {_db_pool.closed}/{_db_pool.maxconn}\n"
+            f"⚡ Handler: {len(context.application.handlers)}\n"
+            f"🧠 RAM: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB\n\n"
+            "🗂 **Datenbank (ausgewählte Quelle)**\n"
+            f"• Nachrichten gesamt: {overview.get('messages_total','–')}\n"
+            f"• Nachrichten heute: {overview.get('messages_today','–')}\n"
+            f"• Eindeutige Nutzer (gesamt): {overview.get('unique_users','–')}\n"
+            f"• Ad-Impressions heute: {overview.get('impr_today','–')}\n"
+            f"• Ad-Impressions gesamt: {overview.get('impr_total','–')}\n"
+        )
+        kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]]
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    
     elif data == "dev_show_logs":
         # Logs anzeigen
         logs = get_recent_logs()
@@ -217,8 +327,8 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     
     elif data == "dev_back_to_menu":
-        # Zurück zum Hauptmenü
         kb = [
+            [InlineKeyboardButton(f"🔽 Gruppenauswahl ({get_scope_label(context)})", callback_data="dev_group_select_0")],
             [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
             [InlineKeyboardButton("💰 Pro-Verwaltung", callback_data="dev_pro_management")],
             [InlineKeyboardButton("📢 Werbung-Dashboard", callback_data="dev_ads_dashboard")],
@@ -226,14 +336,15 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔄 Bot neustarten", callback_data="dev_restart_bot")],
             [InlineKeyboardButton("📝 Logs anzeigen", callback_data="dev_show_logs")]
         ]
-        
+
         start_time = context.bot_data.get('start_time', datetime.datetime.now())
         uptime = datetime.datetime.now() - start_time
         text = (
             "⚙️ **Entwickler-Menü**\n\n"
             f"🤖 Bot-Version: {__version__}\n"
             f"⏰ Uptime: {uptime}\n"
-            f"👥 Registrierte Gruppen: {len(get_registered_groups())}"
+            f"👥 Registrierte Gruppen: {len(get_registered_groups())}\n"
+            f"🔎 Datenquelle: {get_scope_label(context)}"
         )
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -278,6 +389,68 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("ℹ️ Aktion wird implementiert.", show_alert=False)
 
 # Hilfsfunktionen für Entwicklermenü
+
+def get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
+    scope = context.user_data.get('scope', {'type': 'all'})
+    if scope.get('type') == 'group':
+        return scope.get('title', f"Gruppe {scope.get('chat_id')}")
+    return "Alle Gruppen"
+
+@_with_cursor
+def get_global_overview(cur, chat_id: int | None = None):
+    """
+    Liefert einfache, robuste Kennzahlen über message_logs & adv_impressions.
+    Funktioniert aggregiert (chat_id=None) oder gruppenspezifisch (chat_id gesetzt).
+    Fällt bei fehlenden Tabellen/Spalten robust zurück.
+    """
+    out = {
+        'messages_total': 0,
+        'messages_today': 0,
+        'unique_users': 0,
+        'impr_today': 0,
+        'impr_total': 0,
+    }
+
+    # --- message_logs ---
+    try:
+        if chat_id is None:
+            cur.execute("SELECT COUNT(*) FROM message_logs;")
+        else:
+            cur.execute("SELECT COUNT(*) FROM message_logs WHERE chat_id = %s;", (chat_id,))
+        out['messages_total'] = cur.fetchone()[0]
+
+        if chat_id is None:
+            cur.execute("SELECT COUNT(*) FROM message_logs WHERE ts >= CURRENT_DATE;")
+        else:
+            cur.execute("SELECT COUNT(*) FROM message_logs WHERE chat_id = %s AND ts >= CURRENT_DATE;", (chat_id,))
+        out['messages_today'] = cur.fetchone()[0]
+
+        if chat_id is None:
+            cur.execute("SELECT COUNT(DISTINCT user_id) FROM message_logs;")
+        else:
+            cur.execute("SELECT COUNT(DISTINCT user_id) FROM message_logs WHERE chat_id = %s;", (chat_id,))
+        out['unique_users'] = cur.fetchone()[0]
+    except Exception:
+        # Tabelle/Spalten existieren ggf. (noch) nicht – einfach überspringen
+        pass
+
+    # --- adv_impressions ---
+    try:
+        if chat_id is None:
+            cur.execute("SELECT COUNT(*) FROM adv_impressions;")
+        else:
+            cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE chat_id = %s;", (chat_id,))
+        out['impr_total'] = cur.fetchone()[0]
+
+        if chat_id is None:
+            cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE ts >= CURRENT_DATE;")
+        else:
+            cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE chat_id = %s AND ts >= CURRENT_DATE;", (chat_id,))
+        out['impr_today'] = cur.fetchone()[0]
+    except Exception:
+        pass
+
+    return out
 
 def restart_bot(context):
     """Bot neustarten durch Skript-Neustart"""
