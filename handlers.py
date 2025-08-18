@@ -129,44 +129,47 @@ async def spam_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             remaining = daily_lim - used
 
             if remaining < 0:
-                # Über Limit -> löschen + Hinweis
+                # 1) Nachricht entfernen
+                deleted = False
                 try:
                     await msg.delete()
-                except Exception:
-                    pass
+                    deleted = True
+                except Exception as e:
+                    logger.warning(f"Limit delete failed in {chat_id}/{topic_id}: {e}")
+
+                # 2) Primär-Aktion gemäß Policy
+                did_action = "delete" if deleted else "none"
+                primary = (policy.get("action_primary") or "delete").lower()
+                if primary in ("mute", "stumm"):
+                    try:
+                        until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+                        await context.bot.restrict_chat_member(
+                            chat_id, user.id, ChatPermissions(can_send_messages=False), until_date=until
+                        )
+                        did_action = (did_action + "/mute60m") if did_action != "none" else "mute60m"
+                    except Exception as e:
+                        logger.warning(f"Limit mute failed in {chat_id}: {e}")
+
+                # 3) Hinweis im Topic
                 try:
+                    extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
                     await context.bot.send_message(
                         chat_id=chat_id,
                         message_thread_id=topic_id,
-                        text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.",
+                        text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
                     )
                 except Exception:
                     pass
+
+                # 4) Logging (best-effort, Schema kann je nach Stand variieren)
                 try:
                     from statistic import log_spam_event
-                    log_spam_event(chat_id, user.id, "limit_day", "delete",
+                    log_spam_event(chat_id, user.id, "limit_day", did_action,
                                 {"limit": daily_lim, "used": used, "topic_id": topic_id})
                 except Exception:
                     pass
+
                 return
-            else:
-                # Restkontingent melden (je nach Modus)
-                try:
-                    if notify_mode == "always":
-                        await context.bot.send_message(
-                            chat_id=chat_id, message_thread_id=topic_id,
-                            reply_to_message_id=msg.message_id,
-                            text=f"ℹ️ Rest heute: {remaining}/{daily_lim}"
-                        )
-                    elif notify_mode == "smart":
-                        if remaining in (1, 0):
-                            txt = "Achtung: letztes Posting heute (0 übrig)" if remaining == 0 else "Noch 1 Nachricht heute übrig"
-                            await context.bot.send_message(
-                                chat_id=chat_id, message_thread_id=topic_id,
-                                reply_to_message_id=msg.message_id, text=f"ℹ️ {txt}"
-                            )
-                except Exception:
-                    pass
 
     
     # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)

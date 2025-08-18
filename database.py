@@ -386,6 +386,19 @@ def init_db(cur):
         """
     )
     
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topic_router_rules (
+          rule_id BIGSERIAL PRIMARY KEY,
+          chat_id BIGINT NOT NULL,
+          target_topic_id BIGINT NOT NULL,
+          enabled BOOLEAN DEFAULT TRUE,
+          delete_original BOOLEAN DEFAULT TRUE,
+          warn_user BOOLEAN DEFAULT TRUE,
+          keywords TEXT[],                -- irgendeins matcht → Route
+          domains  TEXT[]                 -- Domain-Matches → Route
+        );
+    """)
+    
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS group_subscriptions (
@@ -950,33 +963,26 @@ def get_top_responders(cur, chat_id: int, d_start, d_end, limit: int = 10):
 @_with_cursor
 def ensure_spam_topic_schema(cur):
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS spam_policy_topic (
-          chat_id BIGINT,
-          topic_id BIGINT,
-          level TEXT,                     -- 'off'|'light'|'medium'|'strict'
-          link_whitelist TEXT[],          -- Domains, die immer erlaubt sind
-          domain_blacklist TEXT[],        -- Domains, die immer geblockt werden
-          emoji_max_per_msg INT,          -- 0 = kein Limit
-          emoji_max_per_min INT,          -- 0 = kein Limit
-          max_msgs_per_10s INT,           -- Flood-Guard pro User
-          action_primary TEXT,            -- 'delete'|'warn'|'mute'
-          action_secondary TEXT,          -- 'none'|'mute'|'ban'
-          escalation_threshold INT,       -- ab wievielen Treffern eskalieren
-          PRIMARY KEY(chat_id, topic_id)
-        );
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS topic_router_rules (
-          rule_id BIGSERIAL PRIMARY KEY,
-          chat_id BIGINT NOT NULL,
-          target_topic_id BIGINT NOT NULL,
-          enabled BOOLEAN DEFAULT TRUE,
-          delete_original BOOLEAN DEFAULT TRUE,
-          warn_user BOOLEAN DEFAULT TRUE,
-          keywords TEXT[],                -- irgendeins matcht → Route
-          domains  TEXT[]                 -- Domain-Matches → Route
-        );
-    """)
+    CREATE TABLE IF NOT EXISTS spam_policy_topic (
+      chat_id BIGINT,
+      topic_id BIGINT,
+      level TEXT,
+      link_whitelist TEXT[],
+      domain_blacklist TEXT[],
+      emoji_max_per_msg INT,
+      emoji_max_per_min INT,
+      max_msgs_per_10s INT,
+      per_user_daily_limit INT,   -- NEU
+      quota_notify TEXT,          -- NEU: 'off'|'smart'|'always'
+      action_primary TEXT,        -- 'delete'|'warn'|'mute'
+      action_secondary TEXT,      -- 'none'|'mute'|'ban'
+      escalation_threshold INT,
+      PRIMARY KEY(chat_id, topic_id)
+    );
+""")
+    # Migration für bestehende Installationen
+    cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS per_user_daily_limit INT;")
+    cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS quota_notify TEXT;")
 
 def _default_policy():
     return {
@@ -1034,44 +1040,19 @@ def set_spam_policy_topic(cur, chat_id: int, topic_id: int, **fields):
 
 @_with_cursor
 def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:
-    cur.execute("""
-        SELECT
-          level,
-          link_whitelist,
-          domain_blacklist,
-          emoji_max_per_msg,
-          emoji_max_per_min,
-          max_msgs_per_10s,
-          per_user_daily_limit,
-          quota_notify,
-          action_primary,
-          action_secondary,
-          escalation_threshold
-        FROM spam_policy_topic
-        WHERE chat_id=%s AND topic_id=%s;
+    cols = [
+        "level", "link_whitelist", "domain_blacklist",
+        "emoji_max_per_msg", "emoji_max_per_min", "max_msgs_per_10s",
+        "per_user_daily_limit", "quota_notify",
+        "action_primary", "action_secondary", "escalation_threshold"
+    ]
+    cur.execute(f"""
+        SELECT {", ".join(cols)}
+          FROM spam_policy_topic
+         WHERE chat_id=%s AND topic_id=%s;
     """, (chat_id, topic_id))
     row = cur.fetchone()
-    if not row:
-        return None
-    keys = [
-        "level",
-        "link_whitelist",
-        "domain_blacklist",
-        "emoji_max_per_msg",
-        "emoji_max_per_min",
-        "max_msgs_per_10s",
-        "per_user_daily_limit",
-        "quota_notify",
-        "action_primary",
-        "action_secondary",
-        "escalation_threshold",
-    ]
-    # robustes Mapping (falls DB-Schema temporär noch nicht migriert ist)
-    data = dict(zip(keys, row))
-    # fehlende Felder mit Defaults ergänzen
-    for k, v in _default_policy().items():
-        data.setdefault(k, v)
-    return data
+    return dict(zip(cols, row)) if row else None
 
 @_with_cursor
 def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):

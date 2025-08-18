@@ -34,6 +34,24 @@ LANGUAGES = {
     'fr': 'Français', 'it': 'Italiano', 'ru': 'Русский'
 }
 
+async def _edit_or_send(query, title, markup):
+    """Versucht die vorhandene Menü-Nachricht zu ersetzen; fällt notfalls auf neue Nachricht zurück."""
+    try:
+        # Wichtig: erst answer(), damit alte Queries nicht ablaufen
+        await query.answer()
+        await query.edit_message_text(title, reply_markup=markup, disable_web_page_preview=True)
+    except BadRequest as e:
+        # Fallback, z. B. wenn Original kein Text war ("There is no text in the message to edit")
+        # oder "message is not modified"
+        try:
+            await query.message.reply_text(title, reply_markup=markup, disable_web_page_preview=True)
+        except Exception:
+            # letzter Fallback: nur das Markup updaten (falls Text identisch)
+            try:
+                await query.edit_message_reply_markup(markup)
+            except Exception:
+                pass
+
 def build_group_menu(cid):
     lang = get_group_language(cid) or 'de'
     status = tr('Aktiv', lang) if is_daily_stats_enabled(cid) else tr('Inaktiv', lang)
