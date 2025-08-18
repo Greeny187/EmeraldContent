@@ -78,30 +78,79 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "dev_pro_management":
-        # Pro-Verwaltung Dashboard
-        groups = get_registered_groups()
-        pro_groups = []
-        
-        for chat_id, title in groups:
-            info = get_subscription_info(chat_id)
-            if info["active"]:
-                until = info["valid_until"].strftime("%Y-%m-%d") if info["valid_until"] else "∞"
-                pro_groups.append(f"• {title[:25]}: {info['tier']} (bis {until})")
-        
-        text = "💰 **Pro-Abonnements**\n\n"
-        if pro_groups:
-            text += "\n".join(pro_groups[:10])
-            if len(pro_groups) > 10:
-                text += f"\n\n...und {len(pro_groups) - 10} weitere"
-        else:
-            text += "Keine aktiven Pro-Abonnements."
+        # Pro-Verwaltung Dashboard - Alle Gruppen anzeigen, egal ob Pro oder nicht
+        try:
+            # Alle Gruppen holen, nicht gefiltert nach Pro-Status
+            groups = get_registered_groups()
+            total_groups = len(groups)
             
-        kb = [
-            [InlineKeyboardButton("➕ Pro-Abo hinzufügen", callback_data="dev_pro_add")],
-            [InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]
-        ]
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-    
+            page = context.user_data.get('pro_page', 0)
+            page_size = 10
+            
+            # Stellen sicher, dass die Seite im gültigen Bereich liegt
+            total_pages = max(1, (total_groups - 1) // page_size + 1)
+            if page >= total_pages:
+                page = 0
+                context.user_data['pro_page'] = 0
+                
+            # Aktuelle Gruppen für diese Seite berechnen
+            start_idx = page * page_size
+            end_idx = min(start_idx + page_size, total_groups)
+            current_groups = groups[start_idx:end_idx]
+            
+            group_status_lines = []
+            pro_count = 0
+            
+            for chat_id, title in current_groups:
+                info = get_subscription_info(chat_id)
+                status = "✅ Ja" if info["active"] else "❌ Nein"
+                if info["active"]:
+                    pro_count += 1
+                    tier = info["tier"]
+                    until = info["valid_until"].strftime("%Y-%m-%d") if info["valid_until"] else "∞"
+                    details = f" - {tier} (bis {until})"
+                else:
+                    details = ""
+                
+                group_status_lines.append(f"• {title[:20]}: {status}{details}")
+            
+            text = (
+                f"💰 **Pro-Abonnements** (Seite {page+1}/{total_pages})\n\n"
+                f"Zeige Gruppen {start_idx+1}-{end_idx} von {total_groups}\n"
+                f"Pro-Gruppen auf dieser Seite: {pro_count}/{len(current_groups)}\n\n"
+            )
+            
+            if group_status_lines:
+                text += "\n".join(group_status_lines)
+            else:
+                text += "Keine Gruppen gefunden."
+                
+            # Pagination controls
+            kb = []
+            nav_buttons = []
+            
+            if page > 0:
+                nav_buttons.append(InlineKeyboardButton("◀️ Zurück", callback_data="dev_pro_prev"))
+            
+            if page < total_pages - 1:
+                nav_buttons.append(InlineKeyboardButton("▶️ Weiter", callback_data="dev_pro_next"))
+            
+            if nav_buttons:
+                kb.append(nav_buttons)
+                
+            kb.append([InlineKeyboardButton("➕ Pro-Abo hinzufügen", callback_data="dev_pro_add")])
+            kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")])
+            
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        
+        except Exception as e:
+            logger.error(f"Fehler beim Anzeigen der Pro-Verwaltung: {e}", exc_info=True)
+            await query.edit_message_text(
+                f"⚠️ Fehler beim Laden der Gruppen-Daten: {e}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]]),
+                parse_mode="Markdown"
+            )
+
     elif data == "dev_ads_dashboard":
         # Werbung-Dashboard
         campaigns = list_active_campaigns()
