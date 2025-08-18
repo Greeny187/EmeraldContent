@@ -1035,14 +1035,43 @@ def set_spam_policy_topic(cur, chat_id: int, topic_id: int, **fields):
 @_with_cursor
 def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:
     cur.execute("""
-        SELECT level, link_whitelist, domain_blacklist, emoji_max_per_msg, emoji_max_per_min,
-               max_msgs_per_10s, action_primary, action_secondary, escalation_threshold
-          FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;
+        SELECT
+          level,
+          link_whitelist,
+          domain_blacklist,
+          emoji_max_per_msg,
+          emoji_max_per_min,
+          max_msgs_per_10s,
+          per_user_daily_limit,
+          quota_notify,
+          action_primary,
+          action_secondary,
+          escalation_threshold
+        FROM spam_policy_topic
+        WHERE chat_id=%s AND topic_id=%s;
     """, (chat_id, topic_id))
     row = cur.fetchone()
-    if not row: return None
-    keys = list(_default_policy().keys())
-    return {k: row[i] for i, k in enumerate(keys)}
+    if not row:
+        return None
+    keys = [
+        "level",
+        "link_whitelist",
+        "domain_blacklist",
+        "emoji_max_per_msg",
+        "emoji_max_per_min",
+        "max_msgs_per_10s",
+        "per_user_daily_limit",
+        "quota_notify",
+        "action_primary",
+        "action_secondary",
+        "escalation_threshold",
+    ]
+    # robustes Mapping (falls DB-Schema temporär noch nicht migriert ist)
+    data = dict(zip(keys, row))
+    # fehlende Felder mit Defaults ergänzen
+    for k, v in _default_policy().items():
+        data.setdefault(k, v)
+    return data
 
 @_with_cursor
 def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
