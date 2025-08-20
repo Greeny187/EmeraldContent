@@ -1785,6 +1785,30 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
             SET link = EXCLUDED.link, posted_at = EXCLUDED.posted_at;
     """, (chat_id, feed_url, link))
 
+def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
+    """
+    Vereinheitlicht Link- und Spam-Infos:
+    - admins_only, warning_text  aus link_settings (falls vorhanden)
+    - whitelist/blacklist, action_primary aus spam_policy_topic (Topic-spezifisch)
+    """
+    ls = get_link_settings(chat_id) or {}
+    sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
+
+    admins_only = bool(ls.get("admins_only") or ls.get("only_admin_links") or False)
+    warn_text   = (ls.get("warning_text") or "🚫 Nur Admins dürfen Links posten.")
+
+    wl = list(sp.get("link_whitelist") or [])
+    bl = list(sp.get("domain_blacklist") or [])
+    action = (sp.get("action_primary") or "delete").lower()  # 'delete' | 'mute' | 'warn'
+
+    return {
+        "admins_only": admins_only,
+        "warning_text": warn_text,
+        "whitelist": wl,
+        "blacklist": bl,
+        "action": action,
+    }
+
 def _pending_inputs_col(cur) -> str:
     """Ermittelt, ob pending_inputs die Spalte 'chat_id' oder 'ctx_chat_id' hat."""
     global _pi_col_cache

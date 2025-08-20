@@ -12,8 +12,8 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
-get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
-add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
+get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic,
+add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy,
 toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
 effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
 effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
@@ -71,6 +71,7 @@ def _is_quiet_now(start_min: int, end_min: int, now_min: int) -> bool:
         return start_min <= now_min < end_min
     else:
         return now_min >= start_min or now_min < end_min
+    
 def _aimod_acquire(context, chat_id:int, max_per_min:int) -> bool:
     key = ("aimod_rate", chat_id)
     now = time.time()
@@ -117,15 +118,13 @@ def _already_seen(context, chat_id: int, message_id: int) -> bool:
     return False
 
 def _once(context, key: tuple, ttl: float = 5.0) -> bool:
-    """Nur einmal innerhalb TTL – für Hinweistexte/Warnungen."""
     now = time.time()
-    bucket = context.chat_data.get("once")
-    if bucket is None:
-        bucket = context.chat_data["once"] = {}
+    bucket = context.chat_data.get("once") or {}
     last = bucket.get(key)
     if last and (now - last) < ttl:
         return False
     bucket[key] = now
+    context.chat_data["once"] = bucket
     return True
 
 async def _safe_delete(msg):
@@ -134,15 +133,14 @@ async def _safe_delete(msg):
         return True
     except BadRequest as e:
         s = str(e).lower()
-        # schon gelöscht / nicht löschbar -> nicht als harter Fehler werten
         if "can't be deleted" in s or "message to delete not found" in s:
             return False
         raise
 
 async def spam_enforcer(update, context):
     msg = update.effective_message
+    if not msg: return
     chat_id = msg.chat.id
-    # Deduplizierung: wenn bereits moderiert, hier abbrechen
     if _already_seen(context, chat_id, msg.message_id):
         return
     chat = update.effective_chat
@@ -161,7 +159,60 @@ async def spam_enforcer(update, context):
     is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat_id)
     is_topic_owner = link_settings[3] and has_topic(chat_id, user.id) if user else False  # exceptions_on
     privileged = is_admin or is_anon_admin or is_topic_owner
+    policy = get_effective_link_policy(chat_id, msg.message_thread_id or 0)
+    text = (msg.text or msg.caption or "")
+    urls = _URL_RE.findall(text)
 
+    violation = False
+    reason = None
+
+    if urls:
+        # 1) Blacklist (Topic)
+        for u in urls:
+            host = u.split('/')[2].lower() if '://' in u else u.lower()
+            if any(host.endswith('.'+d) or host == d for d in (policy["blacklist"] or [])):
+                violation = True; reason = "domain_blacklist"
+                break
+
+        # 2) Nur-Admin-Links (global), Whitelist erlaubt
+        if not violation and policy["admins_only"] and not is_admin:
+            def allowed(u):
+                h = u.split('/')[2].lower() if '://' in u else u.lower()
+                return any(h.endswith('.'+d) or h == d for d in (policy["whitelist"] or []))
+            if not any(allowed(u) for u in urls):
+                violation = True; reason = "admins_only"
+
+    if violation:
+        deleted = await _safe_delete(msg)
+        # Aktion
+        act = policy["action"]
+        did = "delete" if deleted else "none"
+        if act == "mute" and not is_admin:
+            try:
+                until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+                await context.bot.restrict_chat_member(
+                    chat_id, msg.from_user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=until
+                )
+                did += "/mute60m"
+            except Exception as e:
+                logger.warning(f"mute failed: {e}")
+
+        # Hinweis nur einmal pro Nutzer/5s
+        if _once(context, ("link_warn", chat_id, msg.from_user.id), ttl=5.0):
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=msg.message_thread_id,
+                    text=policy["warning_text"]
+                )
+            except Exception:
+                pass
+
+        # optional: logging deiner Wahl …
+        return
+    
     # (A) Tageslimit pro Topic & User
     daily_lim = int(policy.get("per_user_daily_limit") or 0)
     if topic_id and daily_lim > 0 and not privileged and user:

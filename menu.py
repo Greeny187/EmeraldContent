@@ -90,8 +90,7 @@ def build_group_menu(cid):
          InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{cid}_captcha")],
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
-        [InlineKeyboardButton(tr('🔗 Linksperre', lang), callback_data=f"{cid}_linkprot"),
-         InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
+        [InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
         [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam"),
          InlineKeyboardButton(tr('🧭 Topic-Router', lang), callback_data=f"{cid}_router")],
         [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
@@ -312,19 +311,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
         return await query.message.reply_text(
             "Format:\n<Trigger> ⟶ <Antwort>",
-            reply_markup=ForceReply(selective=True)
-        )
-        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_add",
-                      {"chat_id": cid})  
+            reply_markup=ForceReply(selective=True))
+        
+    elif func == 'faq' and sub == 'add':
+        context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
+        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_add", {"chat_id": cid})
+        return await query.message.reply_text(
+            "Format:\n<Trigger> ⟶ <Antwort>",
+            reply_markup=ForceReply(selective=True))
 
     elif func == 'faq' and sub == 'del':
         context.user_data.update(awaiting_faq_del=True, faq_group_id=cid)
+        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_del", {"chat_id": cid})
         return await query.message.reply_text(
             "Bitte sende den <Trigger>, der gelöscht werden soll.",
-            reply_markup=ForceReply(selective=True)
-        )
-        set_pending_input(query.message.chat.id, update.effective_user.id, "faq_del",
-                      {"chat_id": cid})
+            reply_markup=ForceReply(selective=True))
     
     # Language Submenü
     elif func == 'language' and sub is None:
@@ -433,23 +434,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_feature_interaction(cid, update.effective_user.id, "menu:night",
                                     {"action":"del_toggle","from":del_non_admin,"to":(not del_non_admin)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            
         elif sub == 'warnonce_toggle':
             await _call_db_safe(set_night_mode, cid, warn_once=not warn_once)
             log_feature_interaction(cid, update.effective_user.id, "menu:night",
                                     {"action":"warnonce_toggle","from":warn_once,"to":(not warn_once)})
+            await _call_db_safe(set_night_mode, cid, warn_once=not warn_once)
+            log_feature_interaction(cid, update.effective_user.id, "menu:night",
+                                    {"action":"warnonce_toggle","from":warn_once,"to":(not warn_once)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-        elif sub == 'set_start':
-            context.user_data['awaiting_nm_time'] = ('start', cid)
-            return await query.message.reply_text(tr('Bitte Startzeit im Format HH:MM senden (z. B. 22:00).', lang),
-                                                reply_markup=ForceReply(selective=True))
-            set_pending_inputs(query.message.chat.id, update.effective_user.id, "nm_time",
-                      {"chat_id": cid, "which": "start"})
-        elif sub == 'set_end':
-            context.user_data['awaiting_nm_time'] = ('end', cid)
-            return await query.message.reply_text(tr('Bitte Endzeit im Format HH:MM senden (z. B. 06:00).', lang),
-                                                reply_markup=ForceReply(selective=True))
-            set_pending_inputs(query.message.chat.id, update.effective_user.id, "nm_time",
-                      {"chat_id": cid, "which": "end"})
+            
         elif sub.startswith('quiet_'):
             dur_map = {'15m': 15, '1h': 60, '8h': 480}
             key = sub.split('_', 1)[1]
@@ -510,6 +504,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif func == 'spam' and sub is None:
         pol = get_spam_policy_topic(cid, 0) or {}
         level = pol.get('level','off')
+        prot_on, *_ = get_link_settings(cid)
         
         level_info = {
             'off': '❌ Deaktiviert',
@@ -537,6 +532,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
             [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit"),
              InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit")],
+            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} 🔗 Nur Admin-Links (Gruppe)",
+                                  callback_data=f"{cid}_spam_link_admins_global")],
             [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
             [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
@@ -585,6 +582,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
             [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
             InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
+            [InlineKeyboardButton("🔗 Nur Admin-Links: TOGGLE", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
+             InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
             [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
             InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
             [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
@@ -643,6 +642,31 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = tr('🔗 Linkschutz – Einstellungen', lang)
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
+    elif func == 'spam' and sub.startswith('link_admins_'):
+        tid = int(sub.split('_')[-1])
+        ls = get_link_settings(cid) or {}
+        new_val = not bool(ls.get("admins_only") or ls.get("only_admin_links") or False)
+        set_link_settings(cid, admins_only=new_val)  # bestehende Funktion, erweitert um Field
+        await query.answer("Gespeichert.")
+        return await show_group_menu(query=query, cid=cid, context=context)
+
+    elif func == 'spam' and sub.startswith('link_warn_'):
+        tid = int(sub.split('_')[-1])
+        context.user_data['awaiting_link_warn'] = True
+        context.user_data['link_warn_group'] = cid
+        # (DB-Pending optional)
+        await query.message.reply_text("Bitte neuen Warntext senden:", reply_markup=ForceReply(selective=True))
+        await query.answer()
+        return
+    
+    elif func == 'spam' and sub == 'link_admins_global':
+        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
+        set_link_settings(cid, protection=not prot_on)
+        await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+        # Spam-Startseite neu rendern
+        update.callback_query.data = f"{cid}_spam"
+        return await menu_callback(update, context)
+    
     # KI-Submenü hinzufügen
     elif func == 'ai' and sub is None:
         ai_faq, ai_rss = get_ai_settings(cid)
