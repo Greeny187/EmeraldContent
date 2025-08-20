@@ -3,11 +3,11 @@ import datetime
 import re
 import logging
 import random
-import time
+import time, telegram
 from collections import deque
 from urllib.parse import urlparse
 from datetime import date, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions, telegram
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
@@ -16,11 +16,11 @@ get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic
 add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
 toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
 effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
-effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings
+effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai_moderate_text, _extract_domains_from_text, heuristic_link_risk
+from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
 from user_manual import help_handler
 from menu import show_group_menu
 from statistic import log_spam_event, log_night_event
@@ -328,6 +328,34 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
     # Moderation (AI)
     scores = {"toxicity":0,"hate":0,"sexual":0,"harassment":0,"selfharm":0,"violence":0}
     flagged = False
+    
+    media_scores = None
+    media_kind = None
+    file_id = None
+
+    if msg.photo:
+        media_kind = "photo"
+        file_id = msg.photo[-1].file_id
+    elif msg.sticker:
+        media_kind = "sticker"
+        file_id = msg.sticker.file_id
+    elif msg.animation:  # GIF
+        if getattr(msg.animation, "thumbnail", None):
+            media_kind = "animation_thumb"
+            file_id = msg.animation.thumbnail.file_id
+    elif msg.video:
+        if getattr(msg.video, "thumbnail", None):
+            media_kind = "video_thumb"
+            file_id = msg.video.thumbnail.file_id
+
+    if file_id and ai_available():
+        try:
+            f = await context.bot.get_file(file_id)
+            img_url = f.file_path  # Telegram CDN URL
+            media_scores = await ai_moderate_image(img_url) or {}
+        except Exception:
+            media_scores = None
+    
     if ai_available():
         res = await ai_moderate_text(text, model=policy.get("model","omni-moderation-latest"))
         if res:
@@ -343,61 +371,105 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
     if scores["selfharm"]   >= policy["selfharm_thresh"]:violations.append(("selfharm", scores["selfharm"]))
     if scores["violence"]   >= policy["violence_thresh"]:violations.append(("violence", scores["violence"]))
     if link_score           >= policy["link_risk_thresh"]: violations.append(("link_risk", link_score))
-
+    if media_scores:
+        if media_scores.get("nudity",0) >= policy["visual_nudity_thresh"]:
+            violations.append(("nudity", float(media_scores["nudity"])))
+        if policy.get("block_sexual_minors", True) and media_scores.get("sexual_minors",0) >= 0.01:
+            violations.append(("sexual_minors", float(media_scores["sexual_minors"])))
+        if media_scores.get("violence",0) >= policy["visual_violence_thresh"]:
+            violations.append(("violence_visual", float(media_scores["violence"])))
+        if media_scores.get("weapons",0) >= policy["visual_weapons_thresh"]:
+            violations.append(("weapons", float(media_scores["weapons"])))
+        if media_scores.get("gore",0) >= policy["visual_violence_thresh"]:
+            violations.append(("gore", float(media_scores["gore"])))
     if not violations:
-        # optional: in Shadow-Mode immer loggen
         if policy.get("shadow_mode"):
-            log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, "ok", 0.0, "allow",
-                              {"scores":scores,"link_score":link_score,"domains":domains})
+            log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id,
+                              "ok", 0.0, "allow",
+                              {"text_scores":scores, "media_scores":media_scores, "link_score":link_score})
         return
 
-    # Shadow-Mode: nur Log + evtl. Admin-Hinweis
     if policy.get("shadow_mode"):
-        log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, violations[0][0], violations[0][1], "shadow", {"scores":scores,"link_score":link_score,"domains":domains})
+        log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id,
+                          violations[0][0], float(violations[0][1]), "shadow",
+                          {"text_scores":scores, "media_scores":media_scores, "domains":domains, "link_score":link_score})
         return
 
-    # Aktionslogik + Eskalation
+    # Primäraktion + Eskalation (heutige Treffer)
     action = policy.get("action_primary","delete")
     hits_today = count_ai_hits_today(chat.id, user.id if user else 0)
     if hits_today + 1 >= int(policy.get("escalate_after",3)):
         action = policy.get("escalate_action","mute")
 
+    # STRIKES: Punkte vergeben (Schwere je Kategorie)
+    severity = {
+        "toxicity":1,"hate":2,"sexual":2,"harassment":1,"selfharm":2,"violence":2,"link_risk":1,
+        "nudity":2,"sexual_minors":5,"violence_visual":2,"weapons":2,"gore":3
+    }
+    strike_points = max(1, int(policy.get("strike_points_per_hit",1)))
+    main_cat = violations[0][0]
+    multi = severity.get(main_cat, 1)
+    total_points = strike_points * multi
+    try:
+        if user:
+            add_strike_points(chat.id, user.id, total_points, reason=main_cat)
+    except Exception:
+        pass
+
+    # Strike-Eskalation (persistente Punkte)
+    strikes = get_strike_points(chat.id, user.id if user else 0)
+    if strikes >= int(policy.get("strike_ban_threshold",5)):
+        action = "ban"
+    elif strikes >= int(policy.get("strike_mute_threshold",3)) and action != "ban":
+        action = "mute"
+
     warn_text = policy.get("warn_text") or "⚠️ Inhalt entfernt (KI-Moderation)."
     appeal_url = policy.get("appeal_url")
 
-    # ausführen
     try:
-        if action in ("delete","warn","mute","ban"):
-            # löschen wenn nötig
-            if action in ("delete","warn","mute","ban"):
-                try: await msg.delete()
-                except: pass
+        # Delete (falls sinnvoll für alle Aktionsarten)
+        try: await msg.delete()
+        except: pass
 
-            # warnen
-            if action in ("warn","delete","mute","ban"):
-                txt = warn_text
-                if appeal_url: txt += f"\n\nWiderspruch: {appeal_url}"
-                await context.bot.send_message(chat_id=chat.id, message_thread_id=topic_id, text=txt)
+        # Warnen
+        txt = warn_text
+        if appeal_url: txt += f"\n\nWiderspruch: {appeal_url}"
+        await context.bot.send_message(chat_id=chat.id, message_thread_id=topic_id, text=txt)
 
-            # mute/ban
-            if action in ("mute","ban") and user:
-                try:
-                    if action == "ban":
-                        await context.bot.ban_chat_member(chat.id, user.id)
-                    else:
-                        until = datetime.utcnow() + timedelta(minutes=int(policy.get("mute_minutes",60)))
-                        perms = telegram.ChatPermissions(can_send_messages=False)
-                        await context.bot.restrict_chat_member(chat.id, user.id, permissions=perms, until_date=until)
-                except Exception as e:
-                    pass
+        # mute/ban
+        if action in ("mute","ban") and user:
+            try:
+                if action == "ban":
+                    await context.bot.ban_chat_member(chat.id, user.id)
+                else:
+                    until = datetime.utcnow() + timedelta(minutes=int(policy.get("mute_minutes",60)))
+                    perms = telegram.ChatPermissions(can_send_messages=False)
+                    await context.bot.restrict_chat_member(chat.id, user.id, permissions=perms, until_date=until)
+            except Exception:
+                pass
 
-            context.bot_data[cd_key] = time.time()
-            log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id,
-                              violations[0][0], float(violations[0][1]), action,
-                              {"scores":scores,"link_score":link_score,"domains":domains})
+        context.bot_data[("aimod_cooldown", chat.id)] = time.time()
+        log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id,
+                          main_cat, float(violations[0][1]), action,
+                          {"text_scores":scores, "media_scores":media_scores, "domains":domains, "link_score":link_score, "strikes":strikes, "added_points":total_points})
     except Exception as e:
-        # Fallback: immer loggen
         log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, "error", 0.0, "error", {"err":str(e)})
+
+async def mystrikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat; user = update.effective_user
+    pts = get_strike_points(chat.id, user.id)
+    await update.effective_message.reply_text(f"Du hast aktuell {pts} Strike-Punkte.")
+
+async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    # /strikes -> Topliste
+    rows = top_strike_users(chat.id, limit=10)
+    if not rows: 
+        return await update.effective_message.reply_text("Keine Strikes vorhanden.")
+    lines = []
+    for uid, pts in rows:
+        lines.append(f"• {uid}: {pts} Pkt")
+    await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -1244,7 +1316,8 @@ def register_handlers(app):
     app.add_handler(CommandHandler("faq", faq_command), group=0)
     app.add_handler(CommandHandler("topiclimit", topiclimit_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("myquota", myquota_command, filters=filters.ChatType.GROUPS))
-    
+    app.add_handler(CommandHandler("mystrikes", mystrikes_command, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("strikes",   strikes_command,   filters=filters.ChatType.GROUPS))
     # Sehr frühe Handler (Gruppe -1)
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.StatusUpdate.ALL, 

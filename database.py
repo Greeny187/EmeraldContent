@@ -548,8 +548,40 @@ def ensure_ai_moderation_schema(cur):
           ts          TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
     """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_mod_logs_chat_ts ON ai_mod_logs(chat_id, ts DESC);")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS visual_nudity_thresh   REAL NOT NULL DEFAULT 0.90;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS visual_violence_thresh REAL NOT NULL DEFAULT 0.90;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS visual_weapons_thresh  REAL NOT NULL DEFAULT 0.95;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS block_sexual_minors    BOOLEAN NOT NULL DEFAULT TRUE;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS strike_points_per_hit  INT NOT NULL DEFAULT 1;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS strike_mute_threshold  INT NOT NULL DEFAULT 3;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS strike_ban_threshold   INT NOT NULL DEFAULT 5;")
+    cur.execute("ALTER TABLE ai_mod_settings ADD COLUMN IF NOT EXISTS strike_decay_days      INT NOT NULL DEFAULT 30;")
+
+    # Logs existieren: ai_mod_logs – ok.
+
+    # Strike-Speicher
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_strikes (
+          chat_id   BIGINT,
+          user_id   BIGINT,
+          points    INT NOT NULL DEFAULT 0,
+          updated   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (chat_id, user_id)
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_strike_events (
+          chat_id   BIGINT,
+          user_id   BIGINT,
+          points    INT NOT NULL,
+          reason    TEXT,
+          ts        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+    
     # Sinnvolle Zusatzindizes
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_strike_ev_chat_ts ON user_strike_events(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_mod_logs_chat_ts ON ai_mod_logs(chat_id, ts DESC);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_mod_logs_user_day ON ai_mod_logs(chat_id, user_id, ts DESC);")
 
 @_with_cursor
@@ -579,29 +611,62 @@ def get_ai_mod_settings(cur, chat_id:int, topic_id:int) -> dict|None:
              tox_thresh, hate_thresh, sex_thresh, harass_thresh, selfharm_thresh, violence_thresh,
              link_risk_thresh, action_primary, action_secondary, escalate_after, escalate_action,
              mute_minutes, exempt_admins, exempt_topic_owner, max_calls_per_min, cooldown_s,
-             warn_text, appeal_url
-        FROM ai_mod_settings
-       WHERE chat_id=%s AND topic_id=%s;
+             warn_text, appeal_url,
+             visual_nudity_thresh, visual_violence_thresh, visual_weapons_thresh, block_sexual_minors,
+             strike_points_per_hit, strike_mute_threshold, strike_ban_threshold, strike_decay_days
+        FROM ai_mod_settings WHERE chat_id=%s AND topic_id=%s;
     """, (chat_id, topic_id))
     r = cur.fetchone()
     if not r: return None
-    keys = ["enabled","shadow_mode","model","lang","tox_thresh","hate_thresh","sex_thresh","harass_thresh",
-            "selfharm_thresh","violence_thresh","link_risk_thresh","action_primary","action_secondary",
-            "escalate_after","escalate_action","mute_minutes","exempt_admins","exempt_topic_owner",
-            "max_calls_per_min","cooldown_s","warn_text","appeal_url"]
+    keys = ["enabled","shadow_mode","model","lang",
+            "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh",
+            "link_risk_thresh","action_primary","action_secondary","escalate_after","escalate_action",
+            "mute_minutes","exempt_admins","exempt_topic_owner","max_calls_per_min","cooldown_s",
+            "warn_text","appeal_url",
+            "visual_nudity_thresh","visual_violence_thresh","visual_weapons_thresh","block_sexual_minors",
+            "strike_points_per_hit","strike_mute_threshold","strike_ban_threshold","strike_decay_days"]
     return {k: r[i] for i,k in enumerate(keys)}
 
 def effective_ai_mod_policy(chat_id:int, topic_id:int|None) -> dict:
-    base = get_ai_mod_settings(chat_id, 0) or {"enabled": False, "shadow_mode": True, "model":"omni-moderation-latest",
-        "lang":"de","tox_thresh":0.90,"hate_thresh":0.85,"sex_thresh":0.90,"harass_thresh":0.90,"selfharm_thresh":0.95,
-        "violence_thresh":0.90,"link_risk_thresh":0.95,"action_primary":"delete","action_secondary":"warn",
+    base = get_ai_mod_settings(chat_id, 0) or {
+        "enabled": False, "shadow_mode": True, "model":"omni-moderation-latest", "lang":"de",
+        "tox_thresh":0.90,"hate_thresh":0.85,"sex_thresh":0.90,"harass_thresh":0.90,"selfharm_thresh":0.95,"violence_thresh":0.90,
+        "link_risk_thresh":0.95, "action_primary":"delete","action_secondary":"warn",
         "escalate_after":3,"escalate_action":"mute","mute_minutes":60,"exempt_admins":True,"exempt_topic_owner":True,
-        "max_calls_per_min":20,"cooldown_s":30,"warn_text":"⚠️ Inhalt entfernt (KI-Moderation).","appeal_url":None}
+        "max_calls_per_min":20,"cooldown_s":30,"warn_text":"⚠️ Inhalt entfernt (KI-Moderation).","appeal_url":None,
+        "visual_nudity_thresh":0.90,"visual_violence_thresh":0.90,"visual_weapons_thresh":0.95,"block_sexual_minors":True,
+        "strike_points_per_hit":1,"strike_mute_threshold":3,"strike_ban_threshold":5,"strike_decay_days":30,
+    }
     if topic_id:
         ov = get_ai_mod_settings(chat_id, topic_id)
-        if ov:
-            base.update({k:v for k,v in ov.items() if v is not None})
+        if ov: base.update({k:v for k,v in ov.items() if v is not None})
     return base
+
+@_with_cursor
+def add_strike_points(cur, chat_id:int, user_id:int, points:int, reason:str):
+    cur.execute("""
+      INSERT INTO user_strikes (chat_id, user_id, points, updated)
+      VALUES (%s,%s,%s,NOW())
+      ON CONFLICT (chat_id,user_id) DO UPDATE SET points=user_strikes.points+EXCLUDED.points, updated=NOW();
+    """, (chat_id, user_id, points))
+    cur.execute("INSERT INTO user_strike_events (chat_id,user_id,points,reason) VALUES (%s,%s,%s,%s);",
+                (chat_id, user_id, points, reason))
+
+@_with_cursor
+def get_strike_points(cur, chat_id:int, user_id:int) -> int:
+    cur.execute("SELECT points FROM user_strikes WHERE chat_id=%s AND user_id=%s;", (chat_id, user_id))
+    r = cur.fetchone()
+    return int(r[0]) if r else 0
+
+@_with_cursor
+def decay_strikes(cur, chat_id:int, days:int):
+    cur.execute("UPDATE user_strikes SET points=GREATEST(points-1,0), updated=NOW() WHERE chat_id=%s AND updated < NOW()-(%s||' days')::interval;",
+                (chat_id, days))
+
+@_with_cursor
+def top_strike_users(cur, chat_id:int, limit:int=10):
+    cur.execute("SELECT user_id, points FROM user_strikes WHERE chat_id=%s ORDER BY points DESC, updated DESC LIMIT %s;", (chat_id, limit))
+    return cur.fetchall() or []
 
 @_with_cursor
 def log_ai_mod_action(cur, chat_id:int, topic_id:int|None, user_id:int|None, message_id:int|None,

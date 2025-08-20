@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import logging
+import json
 from urllib.parse import urlparse
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
@@ -161,6 +162,41 @@ def _extract_domains_from_text(text:str) -> list[str]:
 def ai_available() -> bool:
     return bool(os.getenv("OPENAI_API_KEY"))
 
+async def ai_moderate_image(image_url:str) -> dict|None:
+    """
+    Liefert Scores 0..1 für: nudity, sexual_minors, violence, weapons, gore.
+    Nutzt gpt-4o-mini (Vision) per JSON-Ausgabe.
+    """
+    key = os.getenv("OPENAI_API_KEY")
+    if not key or not image_url:
+        return None
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        prompt = ("Bewerte das Bild. Antworte NUR mit JSON-Objekt: "
+                  '{"nudity":0..1,"sexual_minors":0..1,"violence":0..1,"weapons":0..1,"gore":0..1}')
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            max_tokens=120,
+            messages=[
+                {"role":"system","content":"Du antwortest ausschließlich mit JSON."},
+                {"role":"user","content":[
+                    {"type":"text","text":prompt},
+                    {"type":"image_url","image_url":{"url": image_url}}
+                ]}
+            ]
+        )
+        data = res.choices[0].message.content.strip()
+        out = json.loads(data)
+        # Normiere & sichere Keys
+        for k in ("nudity","sexual_minors","violence","weapons","gore"):
+            out[k] = float(out.get(k,0))
+        return out
+    except Exception as e:
+        logger.info(f"AI vision unavailable: {e}")
+        return None
+    
 async def ai_moderate_text(text:str, model:str="omni-moderation-latest") -> dict|None:
     """
     Rückgabe: {'categories': {'toxicity':score,...}, 'flagged': bool}

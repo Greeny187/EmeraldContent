@@ -410,6 +410,21 @@ def log_feature_interaction(cur, chat_id: int, user_id: int, feature: str, meta:
         VALUES (%s, %s, %s, %s);
     """, (chat_id, user_id, feature, Json(meta, dumps=json.dumps) if meta is not None else None))
 
+@_with_cursor
+def get_ai_mod_logs_range(cur, chat_id:int, d0, d1):
+    cur.execute("""
+      SELECT ts, user_id, topic_id, category, score, action
+        FROM ai_mod_logs
+       WHERE chat_id=%s AND DATE(ts) BETWEEN %s AND %s
+       ORDER BY ts ASC;
+    """, (chat_id, d0, d1))
+    return cur.fetchall() or []
+
+@_with_cursor
+def get_user_strikes_snapshot(cur, chat_id:int):
+    cur.execute("SELECT user_id, points, updated FROM user_strikes WHERE chat_id=%s ORDER BY points DESC;", (chat_id,))
+    return cur.fetchall() or []
+
 def _safe_user_id(m) -> int | None:
     u = getattr(m, "from_user", None)
     return u.id if u else None
@@ -999,6 +1014,18 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
         for uid, last_seen in inactive_30d:
             wr.writerow([uid, getattr(last_seen, "isoformat", lambda: str(last_seen))()])
 
+            # AI Moderation Logs
+        rows = get_ai_mod_logs_range(chat.id, d0, d1)
+        wr.writerow(["ts","user_id","topic_id","category","score","action"])
+        for ts, uid, tid, cat, sc, act in rows:
+            wr.writerow([ts, uid, tid, cat, sc, act])
+
+        # User Strikes Snapshot
+        rows = get_user_strikes_snapshot(chat.id)
+        wr.writerow(["user_id","points","updated"])
+        for uid, pts, upd in rows:
+            wr.writerow([uid, pts, upd])
+        
     await update.effective_message.reply_document(
         open(fname, "rb"),
         filename=f"stats_{chat.id}_{d0}_{d1}.csv"

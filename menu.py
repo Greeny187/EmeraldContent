@@ -10,7 +10,7 @@ from database import (
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode,
     set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
-    effective_ai_mod_policy, set_ai_mod_settings, get_ai_mod_settings
+    effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings, effective_ai_mod_policy, top_strike_users, get_strike_points
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
@@ -678,17 +678,45 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
             InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
-            [InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act"),
-            InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal")],
-            [InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes"),
-            InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate")],
-            [InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
+            [InlineKeyboardButton("⚖️ Strikes", callback_data=f"{cid}_aimod_strikes"),
+             InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act")],
+            [InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal"),
+             InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes")],
+            [InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate"),
+             InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
             [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
             InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
             [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
             [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
         ]
         return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    
+    elif func == 'aimod' and sub == 'strikes':
+        pol = effective_ai_mod_policy(cid, 0)
+        top = top_strike_users(cid, 10)
+        lines = [f"• <code>{uid}</code>: {pts} Pkt" for uid,pts in top] or ["(keine)"]
+        txt = (
+            "⚖️ <b>Strike-System</b>\n"
+            f"Mute ab: <b>{pol['strike_mute_threshold']}</b> • Ban ab: <b>{pol['strike_ban_threshold']}</b>\n"
+            f"Decay: <b>{pol['strike_decay_days']} Tage</b> • Punkte/Hit: <b>{pol['strike_points_per_hit']}</b>\n\n" +
+            "\n".join(lines)
+        )
+        kb = [
+            [InlineKeyboardButton("Mute-Schwelle",  callback_data=f"{cid}_aimod_strk_mute"),
+            InlineKeyboardButton("Ban-Schwelle",   callback_data=f"{cid}_aimod_strk_ban")],
+            [InlineKeyboardButton("Decay (Tage)",   callback_data=f"{cid}_aimod_strk_decay"),
+            InlineKeyboardButton("Punkte/Hit",     callback_data=f"{cid}_aimod_strk_pph")],
+            [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_aimod")]
+        ]
+        return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+    elif func == 'aimod' and sub in ('strk_mute','strk_ban','strk_decay','strk_pph'):
+        key = {'strk_mute':'strike_mute_threshold','strk_ban':'strike_ban_threshold',
+            'strk_decay':'strike_decay_days','strk_pph':'strike_points_per_hit'}[sub]
+        context.user_data.update(awaiting_aimod_strike_cfg=True, aimod_chat_id=cid, aimod_key=key)
+        label = {"strike_mute_threshold":"Mute-Schwelle","strike_ban_threshold":"Ban-Schwelle",
+                "strike_decay_days":"Decay (Tage)","strike_points_per_hit":"Punkte/Hit"}[key]
+        return await query.message.reply_text(f"{label} als Zahl senden:", reply_markup=ForceReply(selective=True))
     
     elif func == 'aimod' and sub == 'topics':
         return await query.edit_message_text("Wähle Topic für Override:", reply_markup=_topics_keyboard(cid, 0), parse_mode="HTML")
@@ -1375,6 +1403,16 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             set_ai_mod_settings(cid, tid, **fields)
             return await update.effective_message.reply_text("✅ Limits gespeichert.")
         return await update.effective_message.reply_text("❌ Format: max_per_min=20 cooldown_s=30 mute_minutes=60")
+    
+    if context.user_data.pop('awaiting_aimod_strike_cfg', False):
+        cid = context.user_data.pop('aimod_chat_id'); key = context.user_data.pop('aimod_key')
+        try:
+            val = int((update.effective_message.text or "").strip())
+        except:
+            return await update.effective_message.reply_text("Bitte eine Zahl senden.")
+        set_ai_mod_settings(cid, 0, **{key: val})
+        return await update.effective_message.reply_text("✅ Gespeichert.")
+    
 # /menu 
 def register_menu(app):
     # Callback Handler (Gruppe 0 - Commands haben Vorrang)
