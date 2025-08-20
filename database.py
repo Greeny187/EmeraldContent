@@ -500,6 +500,125 @@ def migrate_stats_rollup(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_spam_events_chat_ts    ON spam_events(chat_id, ts DESC);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_night_events_chat_ts   ON night_events(chat_id, ts DESC);")
 
+# --- KI Management ---
+
+@_with_cursor
+def ensure_ai_moderation_schema(cur):
+    # Settings (global=topic_id=0; overrides pro Topic möglich)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_mod_settings (
+          chat_id            BIGINT,
+          topic_id           BIGINT,
+          enabled            BOOLEAN   NOT NULL DEFAULT FALSE,
+          shadow_mode        BOOLEAN   NOT NULL DEFAULT TRUE,        -- nur loggen, nicht handeln
+          model              TEXT      NOT NULL DEFAULT 'omni-moderation-latest',
+          lang               TEXT      NOT NULL DEFAULT 'de',
+          tox_thresh         REAL      NOT NULL DEFAULT 0.90,
+          hate_thresh        REAL      NOT NULL DEFAULT 0.85,
+          sex_thresh         REAL      NOT NULL DEFAULT 0.90,
+          harass_thresh      REAL      NOT NULL DEFAULT 0.90,
+          selfharm_thresh    REAL      NOT NULL DEFAULT 0.95,
+          violence_thresh    REAL      NOT NULL DEFAULT 0.90,
+          link_risk_thresh   REAL      NOT NULL DEFAULT 0.95,
+          action_primary     TEXT      NOT NULL DEFAULT 'delete',    -- delete|warn|mute|ban
+          action_secondary   TEXT      NOT NULL DEFAULT 'warn',
+          escalate_after     INT       NOT NULL DEFAULT 3,           -- nach X Treffern eskalieren
+          escalate_action    TEXT      NOT NULL DEFAULT 'mute',      -- mute|ban
+          mute_minutes       INT       NOT NULL DEFAULT 60,
+          exempt_admins      BOOLEAN   NOT NULL DEFAULT TRUE,
+          exempt_topic_owner BOOLEAN   NOT NULL DEFAULT TRUE,
+          max_calls_per_min  INT       NOT NULL DEFAULT 20,
+          cooldown_s         INT       NOT NULL DEFAULT 30,
+          warn_text          TEXT      NOT NULL DEFAULT '⚠️ Inhalt entfernt (KI-Moderation).',
+          appeal_url         TEXT,
+          PRIMARY KEY (chat_id, topic_id)
+        );
+    """)
+    # Logs
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ai_mod_logs (
+          chat_id     BIGINT,
+          topic_id    BIGINT,
+          user_id     BIGINT,
+          message_id  BIGINT,
+          category    TEXT,
+          score       REAL,
+          action      TEXT,
+          details     JSONB,
+          ts          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_mod_logs_chat_ts ON ai_mod_logs(chat_id, ts DESC);")
+    # Sinnvolle Zusatzindizes
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_mod_logs_user_day ON ai_mod_logs(chat_id, user_id, ts DESC);")
+
+@_with_cursor
+def set_ai_mod_settings(cur, chat_id:int, topic_id:int, **fields):
+    allowed = {
+        "enabled","shadow_mode","model","lang",
+        "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh",
+        "link_risk_thresh","action_primary","action_secondary",
+        "escalate_after","escalate_action","mute_minutes",
+        "exempt_admins","exempt_topic_owner","max_calls_per_min","cooldown_s",
+        "warn_text","appeal_url"
+    }
+    cols, vals = [], []
+    for k,v in fields.items():
+        if k in allowed:
+            cols.append(f"{k}=%s"); vals.append(v)
+    if not cols: return
+    cur.execute(f"""
+      INSERT INTO ai_mod_settings (chat_id, topic_id) VALUES (%s,%s)
+      ON CONFLICT (chat_id, topic_id) DO UPDATE SET {", ".join(cols)};
+    """, (chat_id, topic_id, *vals))
+
+@_with_cursor
+def get_ai_mod_settings(cur, chat_id:int, topic_id:int) -> dict|None:
+    cur.execute("""
+      SELECT enabled, shadow_mode, model, lang,
+             tox_thresh, hate_thresh, sex_thresh, harass_thresh, selfharm_thresh, violence_thresh,
+             link_risk_thresh, action_primary, action_secondary, escalate_after, escalate_action,
+             mute_minutes, exempt_admins, exempt_topic_owner, max_calls_per_min, cooldown_s,
+             warn_text, appeal_url
+        FROM ai_mod_settings
+       WHERE chat_id=%s AND topic_id=%s;
+    """, (chat_id, topic_id))
+    r = cur.fetchone()
+    if not r: return None
+    keys = ["enabled","shadow_mode","model","lang","tox_thresh","hate_thresh","sex_thresh","harass_thresh",
+            "selfharm_thresh","violence_thresh","link_risk_thresh","action_primary","action_secondary",
+            "escalate_after","escalate_action","mute_minutes","exempt_admins","exempt_topic_owner",
+            "max_calls_per_min","cooldown_s","warn_text","appeal_url"]
+    return {k: r[i] for i,k in enumerate(keys)}
+
+def effective_ai_mod_policy(chat_id:int, topic_id:int|None) -> dict:
+    base = get_ai_mod_settings(chat_id, 0) or {"enabled": False, "shadow_mode": True, "model":"omni-moderation-latest",
+        "lang":"de","tox_thresh":0.90,"hate_thresh":0.85,"sex_thresh":0.90,"harass_thresh":0.90,"selfharm_thresh":0.95,
+        "violence_thresh":0.90,"link_risk_thresh":0.95,"action_primary":"delete","action_secondary":"warn",
+        "escalate_after":3,"escalate_action":"mute","mute_minutes":60,"exempt_admins":True,"exempt_topic_owner":True,
+        "max_calls_per_min":20,"cooldown_s":30,"warn_text":"⚠️ Inhalt entfernt (KI-Moderation).","appeal_url":None}
+    if topic_id:
+        ov = get_ai_mod_settings(chat_id, topic_id)
+        if ov:
+            base.update({k:v for k,v in ov.items() if v is not None})
+    return base
+
+@_with_cursor
+def log_ai_mod_action(cur, chat_id:int, topic_id:int|None, user_id:int|None, message_id:int|None,
+                      category:str, score:float, action:str, details:dict|None):
+    cur.execute("""
+      INSERT INTO ai_mod_logs (chat_id, topic_id, user_id, message_id, category, score, action, details)
+      VALUES (%s,%s,%s,%s,%s,%s,%s,%s);
+    """, (chat_id, topic_id, user_id, message_id, category, score, action, json.dumps(details or {})))
+
+@_with_cursor
+def count_ai_hits_today(cur, chat_id:int, user_id:int) -> int:
+    cur.execute("""
+      SELECT COUNT(*) FROM ai_mod_logs
+       WHERE chat_id=%s AND user_id=%s AND ts::date=NOW()::date AND action IN ('delete','warn','mute','ban')
+    """, (chat_id, user_id))
+    return int(cur.fetchone()[0])
+
 # --- Group Management ---
 @_with_cursor
 def register_group(cur, chat_id: int, title: str, welcome_topic_id: int = 0):
@@ -553,9 +672,8 @@ def get_pending_inputs(cur, chat_id: int, user_id: int) -> dict[str, dict]:
         (chat_id, user_id)
     )
     rows = cur.fetchall() or []
-    out: dict[str, dict] = {}
+    out = {}
     for k, p in rows:
-        # JSONB kann als dict oder str zurückkommen – sicher normalisieren
         if isinstance(p, dict):
             out[k] = p
         elif isinstance(p, str):
@@ -566,7 +684,7 @@ def get_pending_inputs(cur, chat_id: int, user_id: int) -> dict[str, dict]:
                 out[k] = {}
         else:
             out[k] = {}
-    return {k: (p or {}) for (k, p) in rows} if rows else {}
+    return out  # niemals None
 
 @_with_cursor
 def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None):
@@ -1942,6 +2060,7 @@ def init_all_schemas():
     migrate_stats_rollup()
     ensure_spam_topic_schema()
     ensure_forum_topics_schema()
+    ensure_ai_moderation_schema()
     logger.info("✅ All schemas initialized successfully")
 
 if __name__ == "__main__":

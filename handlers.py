@@ -6,8 +6,8 @@ import random
 import time
 from collections import deque
 from urllib.parse import urlparse
-from datetime import date
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
+from datetime import date, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions, telegram
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
@@ -16,10 +16,11 @@ get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic
 add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
 toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
 effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
+effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat, ai_summarize
+from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai_moderate_text, _extract_domains_from_text, heuristic_link_risk
 from user_manual import help_handler
 from menu import show_group_menu
 from statistic import log_spam_event, log_night_event
@@ -70,6 +71,15 @@ def _is_quiet_now(start_min: int, end_min: int, now_min: int) -> bool:
         return start_min <= now_min < end_min
     else:
         return now_min >= start_min or now_min < end_min
+def _aimod_acquire(context, chat_id:int, max_per_min:int) -> bool:
+    key = ("aimod_rate", chat_id)
+    now = time.time()
+    q = [t for t in context.bot_data.get(key, []) if now - t < 60.0]
+    if len(q) >= max_per_min:
+        context.bot_data[key] = q
+        return False
+    q.append(now); context.bot_data[key] = q
+    return True
 
 async def _apply_hard_permissions(context, chat_id: int, active: bool):
     try:
@@ -279,6 +289,115 @@ async def spam_enforcer(update, context):
                                    {"count_10s": n, "limit": flood_lim})
                 except Exception: pass
                 return
+
+async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg  = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not msg or not chat or chat.type not in ("group","supergroup"): return
+    text = msg.text or msg.caption or ""
+    if not text:  # (optional) Medien/OCR könntest du später ergänzen
+        return
+
+    topic_id = getattr(msg, "message_thread_id", None)
+    policy = effective_ai_mod_policy(chat.id, topic_id)
+
+    if not policy.get("enabled"):
+        return
+
+    # Privilegien
+    admins = await context.bot.get_chat_administrators(chat.id)
+    is_admin = any(a.user.id == (user.id if user else 0) for a in admins)
+    is_topic_owner = False  # falls du Topic-Owner-Check hast: hier einsetzen
+    if (is_admin and policy.get("exempt_admins", True)) or (is_topic_owner and policy.get("exempt_topic_owner", True)):
+        return
+
+    # Rate-Limit / Cooldown
+    if not _aimod_acquire(context, chat.id, int(policy.get("max_calls_per_min", 20))):
+        return
+    # optionale Cooldown pro Chat: einfache Sperre (letzte Aktion)
+    cd_key = ("aimod_cooldown", chat.id)
+    last_t = context.bot_data.get(cd_key)
+    if last_t and time.time() - last_t < int(policy.get("cooldown_s", 30)):
+        return
+
+    # Domains & Link-Risiko
+    domains = _extract_domains_from_text(text)
+    link_score = heuristic_link_risk(domains)
+
+    # Moderation (AI)
+    scores = {"toxicity":0,"hate":0,"sexual":0,"harassment":0,"selfharm":0,"violence":0}
+    flagged = False
+    if ai_available():
+        res = await ai_moderate_text(text, model=policy.get("model","omni-moderation-latest"))
+        if res:
+            scores.update(res.get("categories") or {})
+            flagged = bool(res.get("flagged"))
+
+    # Entscheidung
+    violations = []
+    if scores["toxicity"]   >= policy["tox_thresh"]:     violations.append(("toxicity", scores["toxicity"]))
+    if scores["hate"]       >= policy["hate_thresh"]:    violations.append(("hate", scores["hate"]))
+    if scores["sexual"]     >= policy["sex_thresh"]:     violations.append(("sexual", scores["sexual"]))
+    if scores["harassment"] >= policy["harass_thresh"]:  violations.append(("harassment", scores["harassment"]))
+    if scores["selfharm"]   >= policy["selfharm_thresh"]:violations.append(("selfharm", scores["selfharm"]))
+    if scores["violence"]   >= policy["violence_thresh"]:violations.append(("violence", scores["violence"]))
+    if link_score           >= policy["link_risk_thresh"]: violations.append(("link_risk", link_score))
+
+    if not violations:
+        # optional: in Shadow-Mode immer loggen
+        if policy.get("shadow_mode"):
+            log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, "ok", 0.0, "allow",
+                              {"scores":scores,"link_score":link_score,"domains":domains})
+        return
+
+    # Shadow-Mode: nur Log + evtl. Admin-Hinweis
+    if policy.get("shadow_mode"):
+        log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, violations[0][0], violations[0][1], "shadow", {"scores":scores,"link_score":link_score,"domains":domains})
+        return
+
+    # Aktionslogik + Eskalation
+    action = policy.get("action_primary","delete")
+    hits_today = count_ai_hits_today(chat.id, user.id if user else 0)
+    if hits_today + 1 >= int(policy.get("escalate_after",3)):
+        action = policy.get("escalate_action","mute")
+
+    warn_text = policy.get("warn_text") or "⚠️ Inhalt entfernt (KI-Moderation)."
+    appeal_url = policy.get("appeal_url")
+
+    # ausführen
+    try:
+        if action in ("delete","warn","mute","ban"):
+            # löschen wenn nötig
+            if action in ("delete","warn","mute","ban"):
+                try: await msg.delete()
+                except: pass
+
+            # warnen
+            if action in ("warn","delete","mute","ban"):
+                txt = warn_text
+                if appeal_url: txt += f"\n\nWiderspruch: {appeal_url}"
+                await context.bot.send_message(chat_id=chat.id, message_thread_id=topic_id, text=txt)
+
+            # mute/ban
+            if action in ("mute","ban") and user:
+                try:
+                    if action == "ban":
+                        await context.bot.ban_chat_member(chat.id, user.id)
+                    else:
+                        until = datetime.utcnow() + timedelta(minutes=int(policy.get("mute_minutes",60)))
+                        perms = telegram.ChatPermissions(can_send_messages=False)
+                        await context.bot.restrict_chat_member(chat.id, user.id, permissions=perms, until_date=until)
+                except Exception as e:
+                    pass
+
+            context.bot_data[cd_key] = time.time()
+            log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id,
+                              violations[0][0], float(violations[0][1]), action,
+                              {"scores":scores,"link_score":link_score,"domains":domains})
+    except Exception as e:
+        # Fallback: immer loggen
+        log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, "error", 0.0, "error", {"err":str(e)})
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -1147,11 +1266,8 @@ def register_handlers(app):
     ), group=0)
     
     # Spam-Filter (Gruppe 1) - NUR IN GRUPPEN
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
-        spam_enforcer
-    ), group=1)
-    
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, spam_enforcer), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_moderation_enforcer), group=1)
     # Text-Handler (Gruppe 2) - ALLE CHATS (falls nötig)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, 

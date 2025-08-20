@@ -2,7 +2,7 @@ import os
 import re
 import asyncio
 import logging
-from typing import Dict
+from urllib.parse import urlparse
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
 from telegram import ChatMember
@@ -144,3 +144,80 @@ async def ai_summarize(text: str, lang: str = "de") -> str | None:
     except Exception as e:
         logger.info(f"OpenAI unavailable: {e}")
         return None
+
+def _extract_domains_from_text(text:str) -> list[str]:
+    if not text: return []
+    urls = re.findall(r'(https?://\S+|www\.\S+)', text, flags=re.I)
+    doms = []
+    for u in urls:
+        if not u.startswith("http"): u = "http://" + u
+        try:
+            d = urlparse(u).netloc.lower()
+            if d.startswith("www."): d = d[4:]
+            if d: doms.append(d)
+        except: pass
+    return doms
+
+def ai_available() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY"))
+
+async def ai_moderate_text(text:str, model:str="omni-moderation-latest") -> dict|None:
+    """
+    Rückgabe: {'categories': {'toxicity':score,...}, 'flagged': bool}
+    Versucht erst Moderation-API, fallback auf Chat-Classifier (gpt-4o-mini).
+    """
+    key = os.getenv("OPENAI_API_KEY")
+    if not key or not text:
+        return None
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        try:
+            # Moderations-Endpoint
+            res = client.moderations.create(model=model, input=text)
+            out = res.results[0]
+            scores = {}
+            # Map auf unsere Keys
+            cats = out.category_scores or {}
+            # heuristische Zuordnung (je nach API-Version)
+            scores["toxicity"]   = float(cats.get("harassment/threats", 0.0) or cats.get("harassment", 0.0))
+            scores["hate"]       = float(cats.get("hate", 0.0) or cats.get("hate/threatening", 0.0))
+            scores["sexual"]     = float(cats.get("sexual/minors", 0.0) or cats.get("sexual", 0.0))
+            scores["harassment"] = float(cats.get("harassment", 0.0))
+            scores["selfharm"]   = float(cats.get("self-harm", 0.0))
+            scores["violence"]   = float(cats.get("violence", 0.0) or cats.get("violence/graphic", 0.0))
+            return {"categories": scores, "flagged": bool(out.flagged)}
+        except Exception:
+            # Fallback via Chat-Classifier
+            prompt = (
+                "Klassifiziere den folgenden Text. Gib JSON zurück mit keys: "
+                "toxicity,hate,sexual,harassment,selfharm,violence (Werte 0..1). "
+                "Nur das JSON, keine Erklärungen.\n\n" + text[:6000]
+            )
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role":"system","content":"Du antwortest nur mit JSON."},
+                          {"role":"user","content":prompt}],
+                temperature=0, max_tokens=200
+            )
+            import json as _json
+            data = _json.loads(res.choices[0].message.content)
+            return {"categories": {k: float(data.get(k,0)) for k in ["toxicity","hate","sexual","harassment","selfharm","violence"]},
+                    "flagged": any(float(data.get(k,0))>=0.8 for k in data)}
+    except Exception as e:
+        logger.info(f"AI moderation unavailable: {e}")
+        return None
+
+def heuristic_link_risk(domains:list[str]) -> float:
+    """
+    Grobe Risikobewertung für Links ohne AI: Shortener/Suspicious TLDs etc.
+    """
+    if not domains: return 0.0
+    shorteners = {"bit.ly","tinyurl.com","goo.gl","t.co","ow.ly","buff.ly","shorturl.at","is.gd","rb.gy","cutt.ly"}
+    bad_tlds   = {".ru",".cn",".tk",".gq",".ml",".ga",".cf"}
+    score = 0.0
+    for d in domains:
+        if d in shorteners: score += 0.4
+        if any(d.endswith(t) for t in bad_tlds): score += 0.3
+        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', d): score += 0.5  # blanke IP
+    return min(1.0, score)

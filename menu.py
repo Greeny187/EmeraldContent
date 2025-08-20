@@ -9,7 +9,8 @@ from database import (
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode,
-    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input
+    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
+    effective_ai_mod_policy, set_ai_mod_settings, get_ai_mod_settings
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
@@ -51,6 +52,32 @@ async def _edit_or_send(query, title, markup):
                 await query.edit_message_reply_markup(markup)
             except Exception:
                 pass
+
+TOPICS_PAGE_SIZE = 10
+
+def _topics_keyboard(cid:int, page:int, purpose:str):
+    # purpose: 'spam' | 'router_kw' | 'router_dom'
+    offset = page * TOPICS_PAGE_SIZE
+    rows = list_forum_topics(cid, limit=TOPICS_PAGE_SIZE, offset=offset)
+    total = count_forum_topics(cid)
+    kb = []
+    for topic_id, name, _ in rows:
+        if purpose == "spam":
+            cb = f"{cid}_spam_t_{topic_id}"
+        elif purpose == "router_kw":
+            cb = f"{cid}_router_pick_kw_{topic_id}"
+        else:
+            cb = f"{cid}_router_pick_dom_{topic_id}"
+        kb.append([InlineKeyboardButton(name[:56], callback_data=cb)])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"{cid}_{purpose}_tp_{page-1}"))
+    if offset + TOPICS_PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"{cid}_{purpose}_tp_{page+1}"))
+    if nav: kb.append(nav)
+    kb.append([InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")])
+    return InlineKeyboardMarkup(kb)
 
 def build_group_menu(cid):
     lang = get_group_language(cid) or 'de'
@@ -632,10 +659,62 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} FAQ-Fallback", callback_data=f"{cid}_ai_faq_toggle")],
             [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} RSS-Zusammenfassung", callback_data=f"{cid}_ai_rss_toggle")],
-            [InlineKeyboardButton("🔮 KI-Moderation (Beta)", callback_data=f"{cid}_ai_moderation")],
+            [InlineKeyboardButton("🛡️ Moderation", callback_data=f"{cid}_aimod")]
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    
+    elif func == 'aimod' and sub is None:
+        pol = effective_ai_mod_policy(cid, 0)
+        text = (
+            "🛡️ <b>KI-Moderation (global)</b>\n\n"
+            f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
+            f"Aktionsfolge: <b>{pol['action_primary']}</b> → Eskalation nach {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
+            f"Mute-Dauer: <b>{pol['mute_minutes']} min</b>\n"
+            f"Ratenlimit: <b>{pol['max_calls_per_min']}/min</b> • Cooldown: <b>{pol['cooldown_s']}s</b>\n\n"
+            f"Schwellen (0..1): tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} "
+            f"harass={pol['harass_thresh']} self={pol['selfharm_thresh']} viol={pol['violence_thresh']} link={pol['link_risk_thresh']}\n"
+        )
+        kb = [
+            [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
+            InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
+            [InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act"),
+            InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal")],
+            [InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes"),
+            InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate")],
+            [InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
+            [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
+            InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
+            [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
+            [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
+        ]
+        return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    
+    elif func == 'aimod' and sub == 'topics':
+        return await query.edit_message_text("Wähle Topic für Override:", reply_markup=_topics_keyboard(cid, 0), parse_mode="HTML")
+
+    elif func == 'aimod' and sub and sub.startswith('tp_'):
+        page = int(sub.split('_',1)[1])
+        return await query.edit_message_reply_markup(reply_markup=_topics_keyboard(cid, page))
+
+    elif func == 'aimod' and sub and sub.startswith('topic_'):
+        tid = int(sub.split('_',1)[1])
+        pol = effective_ai_mod_policy(cid, tid)
+        kb = [
+            [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_tgl_{tid}"),
+            InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shd_{tid}")],
+            [InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act_{tid}"),
+            InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_esc_{tid}")],
+            [InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr_{tid}")],
+            [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_wr_{tid}"),
+            InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_ap_{tid}")],
+            [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_aimod_topics")]
+        ]
+        txt = (f"🛡️ <b>Topic {tid} – KI-Moderation</b>\n"
+            f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
+            f"Aktionsfolge: <b>{pol['action_primary']}</b> → {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
+            f"Schwellen: tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} ...")
+        return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
     
     # 5) DANACH erst die Sub-Aktionen…
     if func and sub:
@@ -910,7 +989,50 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                      reply_markup=InlineKeyboardMarkup(
                                                         [[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{cid}_mood")]]
                                                      ))
+            
+            elif func == 'aimod' and sub == 'toggle':
+                pol = effective_ai_mod_policy(cid, 0)
+                set_ai_mod_settings(cid, 0, enabled=not pol['enabled'])
+                return await menu_callback(update, context)
 
+            elif func == 'aimod' and sub == 'shadow':
+                pol = effective_ai_mod_policy(cid, 0)
+                set_ai_mod_settings(cid, 0, shadow_mode=not pol['shadow_mode'])
+                return await menu_callback(update, context)
+
+            elif func == 'aimod' and sub == 'act':
+                order = ['delete','warn','mute','ban']
+                cur = effective_ai_mod_policy(cid, 0)['action_primary']
+                nxt = order[(order.index(cur)+1)%len(order)]
+                set_ai_mod_settings(cid, 0, action_primary=nxt)
+                return await menu_callback(update, context)
+
+            elif func == 'aimod' and sub == 'escal':
+                order = ['mute','ban']
+                cur = effective_ai_mod_policy(cid, 0)['escalate_action']
+                nxt = order[(order.index(cur)+1)%len(order)]
+                set_ai_mod_settings(cid, 0, escalate_action=nxt)
+                return await menu_callback(update, context)
+
+            elif func == 'aimod' and sub == 'thr':
+                # einfache Schwellen-Steuerung über ForceReply
+                context.user_data.update(awaiting_aimod_thresholds=True, aimod_chat_id=cid, aimod_topic_id=0)
+                return await query.message.reply_text("Schwellen senden (JSON, z.B.):\n"
+                                                    '{"tox":0.9,"hate":0.85,"sex":0.9,"harass":0.9,"self":0.95,"viol":0.9,"link":0.95}')
+
+            elif func == 'aimod' and sub == 'warn':
+                context.user_data.update(awaiting_aimod_warn=True, aimod_chat_id=cid, aimod_topic_id=0)
+                return await query.message.reply_text("Neuen Warn-Text senden:", reply_markup=ForceReply(selective=True))
+
+            elif func == 'aimod' and sub == 'appeal':
+                context.user_data.update(awaiting_aimod_appeal=True, aimod_chat_id=cid, aimod_topic_id=0)
+                return await query.message.reply_text("Appeal-URL senden (leer = entfernen):", reply_markup=ForceReply(selective=True))
+
+            elif func == 'aimod' and sub == 'rate':
+                context.user_data.update(awaiting_aimod_rate=True, aimod_chat_id=cid, aimod_topic_id=0)
+                return await query.message.reply_text("Format: max_per_min=20 cooldown_s=30 mute_minutes=60", reply_markup=ForceReply(selective=True))
+            
+            
     # 6) DANACH die Einzelfunktionen…
     if func == 'toggle' and sub == 'stats':
         cur = is_daily_stats_enabled(cid)
@@ -1069,14 +1191,14 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Linksperre-Warntext (AWAIT hinzufügen)
-    if context.user_data.pop('awaiting_link_warn', False) or ('link_warn' in pend):
+    if context.user_data.pop('awaiting_link_warn', False) or ('link_warn' in (pend or {})):
         cid = context.user_data.pop('link_warn_group', (pend.get('link_warn') or {}).get('chat_id'))
         await _call_db_safe(set_link_settings, cid, warning_text=text)
         clear_pending_input(msg.chat.id, update.effective_user.id, 'link_warn')
         return await msg.reply_text("✅ Warn-Text gespeichert.")
 
     # Mood-Frage speichern (AWAIT hinzufügen)
-    if context.user_data.pop('awaiting_mood_question', False) or ('mood_q' in pend):
+    if context.user_data.pop('awaiting_mood_question', False) or ('mood_q' in (pend or {})):
         cid = context.user_data.pop('mood_group_id', (pend.get('mood_q') or {}).get('chat_id'))
         if not cid:
             return await msg.reply_text("⚠️ Keine Gruppe ausgewählt.")
@@ -1196,7 +1318,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         return await msg.reply_text(f"✅ Blacklist aktualisiert ({len(cur['domain_blacklist'])} Domains).")
 
     # Router: Keywords / Domains / Delete / Toggle – analog (gekürzt):
-    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in pend):
+    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in (pend or {})):
         cid = context.user_data.pop('router_group_id', pend.get('router_add_kw',{}).get('chat_id'))
         kws = [w.strip().lower() for w in re.split(r"[,\s]+", text) if w.strip()]
         for kw in kws: add_topic_router_rule(cid, keyword=kw)
@@ -1209,33 +1331,50 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         for d in doms: add_topic_router_rule(cid, domain=d)
         clear_pending_input(cid, update.effective_user.id, "router_add_dom")
         return await msg.reply_text(f"✅ {len(doms)} Domain(s) hinzugefügt.")
+    
+    if context.user_data.pop('awaiting_aimod_thresholds', False):
+        cid = context.user_data.pop('aimod_chat_id'); tid = context.user_data.pop('aimod_topic_id', 0)
+        import json as _json
+        try:
+            data = _json.loads((update.effective_message.text or "").strip())
+            set_ai_mod_settings(cid, tid,
+                tox_thresh=float(data.get("tox", data.get("toxicity", 0.9))),
+                hate_thresh=float(data.get("hate", 0.85)),
+                sex_thresh=float(data.get("sex", 0.9)),
+                harass_thresh=float(data.get("harass", 0.9)),
+                selfharm_thresh=float(data.get("self", 0.95)),
+                violence_thresh=float(data.get("viol", 0.9)),
+                link_risk_thresh=float(data.get("link", 0.95)),
+            )
+            return await update.effective_message.reply_text("✅ Schwellen gespeichert.")
+        except Exception as e:
+            return await update.effective_message.reply_text("❌ Ungültiges JSON.")
 
-TOPICS_PAGE_SIZE = 10
+    # KI-Moderation Warntext
+    if context.user_data.pop('awaiting_aimod_warn', False):
+        cid = context.user_data.pop('aimod_chat_id'); tid = context.user_data.pop('aimod_topic_id', 0)
+        set_ai_mod_settings(cid, tid, warn_text=(update.effective_message.text or "").strip())
+        return await update.effective_message.reply_text("✅ Warn-Text gespeichert.")
 
-def _topics_keyboard(cid:int, page:int, purpose:str):
-    # purpose: 'spam' | 'router_kw' | 'router_dom'
-    offset = page * TOPICS_PAGE_SIZE
-    rows = list_forum_topics(cid, limit=TOPICS_PAGE_SIZE, offset=offset)
-    total = count_forum_topics(cid)
-    kb = []
-    for topic_id, name, _ in rows:
-        if purpose == "spam":
-            cb = f"{cid}_spam_t_{topic_id}"
-        elif purpose == "router_kw":
-            cb = f"{cid}_router_pick_kw_{topic_id}"
-        else:
-            cb = f"{cid}_router_pick_dom_{topic_id}"
-        kb.append([InlineKeyboardButton(name[:56], callback_data=cb)])
+    # KI-Moderation Appeal-URL
+    if context.user_data.pop('awaiting_aimod_appeal', False):
+        cid = context.user_data.pop('aimod_chat_id'); tid = context.user_data.pop('aimod_topic_id', 0)
+        url = (update.effective_message.text or "").strip()
+        set_ai_mod_settings(cid, tid, appeal_url=url if url else None)
+        return await update.effective_message.reply_text("✅ Appeal-URL gespeichert.")
 
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"{cid}_{purpose}_tp_{page-1}"))
-    if offset + TOPICS_PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"{cid}_{purpose}_tp_{page+1}"))
-    if nav: kb.append(nav)
-    kb.append([InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")])
-    return InlineKeyboardMarkup(kb)
-
+    # KI-Moderation Rate/Cooldown/Mute
+    if context.user_data.pop('awaiting_aimod_rate', False):
+        cid = context.user_data.pop('aimod_chat_id'); tid = context.user_data.pop('aimod_topic_id', 0)
+        params = {k:v for a in (update.effective_message.text or "").split() if "=" in a for k,v in [a.split("=",1)]}
+        fields={}
+        if "max_per_min" in params: fields["max_calls_per_min"] = int(params["max_per_min"])
+        if "cooldown_s" in params:  fields["cooldown_s"] = int(params["cooldown_s"])
+        if "mute_minutes" in params:fields["mute_minutes"] = int(params["mute_minutes"])
+        if fields:
+            set_ai_mod_settings(cid, tid, **fields)
+            return await update.effective_message.reply_text("✅ Limits gespeichert.")
+        return await update.effective_message.reply_text("❌ Format: max_per_min=20 cooldown_s=30 mute_minutes=60")
 # /menu 
 def register_menu(app):
     # Callback Handler (Gruppe 0 - Commands haben Vorrang)
