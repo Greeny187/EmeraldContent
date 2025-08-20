@@ -1,3 +1,6 @@
+# Cache für Spaltenerkennung in pending_inputs
+_pi_col_cache: str | None = None
+
 import os
 import json
 import logging
@@ -461,6 +464,8 @@ def init_db(cur):
             PRIMARY KEY (ctx_chat_id, user_id, key)
         );
     """)
+
+    _pending_inputs_col(cur)
 
 @_with_cursor
 def migrate_stats_rollup(cur):
@@ -1584,7 +1589,7 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
 def _pending_inputs_col(cur) -> str:
     """Ermittelt, ob pending_inputs die Spalte 'chat_id' oder 'ctx_chat_id' hat."""
     global _pi_col_cache
-    if _pi_col_cache:
+    if _pi_col_cache is not None:
         return _pi_col_cache
     cur.execute("""
         SELECT column_name
