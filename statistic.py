@@ -2,6 +2,8 @@ import re
 import os
 import logging
 import csv
+import json
+from psycopg2.extras import Json
 from openai import OpenAI
 from collections import Counter
 from datetime import datetime, timedelta, date
@@ -15,6 +17,7 @@ from database import (_with_cursor, _db_pool, record_reply_time, get_group_langu
 upsert_agg_group_day, get_agg_summary, get_heatmap, get_agg_rows, get_group_stats, get_top_responders
 )
 from translator import translate_hybrid
+
 
 logger = logging.getLogger(__name__)
 
@@ -391,7 +394,7 @@ def log_spam_event(cur, chat_id: int, user_id: int, rule: str, action: str, deta
     cur.execute("""
         INSERT INTO spam_events (chat_id, user_id, rule, action, details)
         VALUES (%s, %s, %s, %s, %s);
-    """, (chat_id, user_id, rule, action, details))
+    """, (chat_id, user_id, rule, action, Json(details, dumps=json.dumps) if details is not None else None))
 
 @_with_cursor
 def log_night_event(cur, chat_id: int, kind: str, count: int = 1, until_ts = None):
@@ -405,7 +408,7 @@ def log_feature_interaction(cur, chat_id: int, user_id: int, feature: str, meta:
     cur.execute("""
         INSERT INTO feature_interactions (chat_id, user_id, feature, meta)
         VALUES (%s, %s, %s, %s);
-    """, (chat_id, user_id, feature, meta))
+    """, (chat_id, user_id, feature, Json(meta, dumps=json.dumps) if meta is not None else None))
 
 def _safe_user_id(m) -> int | None:
     u = getattr(m, "from_user", None)
