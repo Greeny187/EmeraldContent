@@ -566,7 +566,7 @@ def get_pending_inputs(cur, chat_id: int, user_id: int) -> dict[str, dict]:
                 out[k] = {}
         else:
             out[k] = {}
-    return out
+    return {k: (p or {}) for (k, p) in rows} if rows else {}
 
 @_with_cursor
 def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None):

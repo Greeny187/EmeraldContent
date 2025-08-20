@@ -4,12 +4,13 @@ import re
 import logging
 import random
 import time
+from collections import deque
 from urllib.parse import urlparse
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
-from database import (_db_pool, register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
+from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic, 
 add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, 
@@ -95,9 +96,44 @@ def _parse_hhmm(txt: str) -> int | None:
         return hh*60 + mm
     return None
 
-async def spam_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def _already_seen(context, chat_id: int, message_id: int) -> bool:
+    dq = context.chat_data.get("mod_seen")
+    if dq is None:
+        dq = context.chat_data["mod_seen"] = deque(maxlen=1000)
+    key = (chat_id, message_id)
+    if key in dq:
+        return True
+    dq.append(key)
+    return False
+
+def _once(context, key: tuple, ttl: float = 5.0) -> bool:
+    """Nur einmal innerhalb TTL – für Hinweistexte/Warnungen."""
+    now = time.time()
+    bucket = context.chat_data.get("once")
+    if bucket is None:
+        bucket = context.chat_data["once"] = {}
+    last = bucket.get(key)
+    if last and (now - last) < ttl:
+        return False
+    bucket[key] = now
+    return True
+
+async def _safe_delete(msg):
+    try:
+        await msg.delete()
+        return True
+    except BadRequest as e:
+        s = str(e).lower()
+        # schon gelöscht / nicht löschbar -> nicht als harter Fehler werten
+        if "can't be deleted" in s or "message to delete not found" in s:
+            return False
+        raise
+
+async def spam_enforcer(update, context):
     msg = update.effective_message
-    if not msg or not (msg.text or msg.caption):
+    chat_id = msg.chat.id
+    # Deduplizierung: wenn bereits moderiert, hier abbrechen
+    if _already_seen(context, chat_id, msg.message_id):
         return
     chat = update.effective_chat
     user = update.effective_user

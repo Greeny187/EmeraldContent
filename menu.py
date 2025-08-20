@@ -989,6 +989,13 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Pendings sicher laden und IMMER zu dict normalisieren
     try:
         pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
+        if not isinstance(pend, dict):
+            pend = {}
+
+        # Wenn gerade ein RSS-URL-Pending existiert, NICHT hier weiterverarbeiten –
+        # der rss.py-Handler übernimmt (wir lassen einfach durchlaufen).
+        if 'rss_url' in pend:
+            return
     except Exception as e:
         logger.warning(f"pending_inputs read failed: {e}")
         pend = {}
@@ -1241,5 +1248,5 @@ def register_menu(app):
         & ~filters.COMMAND  # <- WICHTIG: Commands ausschließen
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
-    ), group=1)
+    ), group=5)
 
