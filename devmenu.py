@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from patchnotes import __version__
-from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor
+from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor 
 from ads import list_active_campaigns, get_subscription_info, set_pro_until
 
 # Logger konfigurieren
@@ -19,17 +19,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
+    scope = context.user_data.get('scope', {'type': 'all'})
+    if scope.get('type') == 'group':
+        title = scope.get('title')
+        return title or f"Gruppe {scope.get('chat_id')}"
+    return "Alle Gruppen"
+
 async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     dev_ids = _dev_ids_from_env(user_id)
     if user_id not in dev_ids:
         return await update.message.reply_text(f"❌ Nur für Entwickler verfügbar.\nDeine User-ID: {user_id}")
 
-    _ensure_scope_defaults(context)
+    _set_dev_aggregate_scope(context)  # << immer Aggregat für Dev
     scope_label = get_scope_label(context)
 
     kb = [
-        [InlineKeyboardButton(f"🔽 Gruppenauswahl ({scope_label})", callback_data="dev_group_select_0")],
         [InlineKeyboardButton("📊 System-Stats", callback_data="dev_system_stats")],
         [InlineKeyboardButton("💰 Pro-Verwaltung", callback_data="dev_pro_management")],
         [InlineKeyboardButton("📢 Werbung-Dashboard", callback_data="dev_ads_dashboard")],
@@ -55,11 +61,11 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
     user_id = update.effective_user.id
 
-    # Einheitlich beide ENV-Varianten lesen
-    dev_ids = _dev_ids_from_env(user_id)
+    dev_ids = _dev_ids_from_env(user_id)  # vereinheitlicht
     if user_id not in dev_ids:
         return await query.answer("❌ Nur für Entwickler.", show_alert=True)
-    _ensure_scope_defaults(context)
+
+    _set_dev_aggregate_scope(context)  # << Aggregat für Dev erzwingen
 
     # --- Gruppenauswahl (paginierte Liste + Aggregat) ---
     if data.startswith("dev_group_select_"):
@@ -118,78 +124,61 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     
     elif data == "dev_pro_management":
-        # Pro-Verwaltung Dashboard - Alle Gruppen anzeigen, egal ob Pro oder nicht
-        try:
-            # Alle Gruppen holen, nicht gefiltert nach Pro-Status
-            groups = get_registered_groups()
-            total_groups = len(groups)
-            
-            page = context.user_data.get('pro_page', 0)
-            page_size = 10
-            
-            # Stellen sicher, dass die Seite im gültigen Bereich liegt
-            total_pages = max(1, (total_groups - 1) // page_size + 1)
-            if page >= total_pages:
-                page = 0
-                context.user_data['pro_page'] = 0
-                
-            # Aktuelle Gruppen für diese Seite berechnen
-            start_idx = page * page_size
-            end_idx = min(start_idx + page_size, total_groups)
-            current_groups = groups[start_idx:end_idx]
-            
-            group_status_lines = []
-            pro_count = 0
-            
-            for chat_id, title in current_groups:
-                info = get_subscription_info(chat_id)
-                status = "✅ Ja" if info["active"] else "❌ Nein"
-                if info["active"]:
-                    pro_count += 1
-                    tier = info["tier"]
-                    until = info["valid_until"].strftime("%Y-%m-%d") if info["valid_until"] else "∞"
-                    details = f" - {tier} (bis {until})"
-                else:
-                    details = ""
-                
-                group_status_lines.append(f"• {title[:20]}: {status}{details}")
-            
-            text = (
-                f"💰 **Pro-Abonnements** (Seite {page+1}/{total_pages})\n\n"
-                f"Zeige Gruppen {start_idx+1}-{end_idx} von {total_groups}\n"
-                f"Pro-Gruppen auf dieser Seite: {pro_count}/{len(current_groups)}\n\n"
-            )
-            
-            if group_status_lines:
-                text += "\n".join(group_status_lines)
+        # Seite merken/initialisieren
+        page = context.user_data.get('pro_page', 0)
+        page_size = 8
+
+        groups = get_registered_groups()
+        total = len(groups)
+        total_pages = max(1, (total - 1)//page_size + 1)
+        page = max(0, min(page, total_pages-1))
+        context.user_data['pro_page'] = page
+
+        start_idx = page * page_size
+        end_idx = min(start_idx + page_size, total)
+        current = groups[start_idx:end_idx]
+
+        lines = []
+        for chat_id, title in current:
+            info = get_subscription_info(chat_id)
+            if info.get("active"):
+                until = info.get("valid_until")
+                until_str = until.strftime("%Y-%m-%d") if until else "∞"
+                lines.append(f"• {title[:28]}: ✅ PRO (bis {until_str})")
             else:
-                text += "Keine Gruppen gefunden."
-                
-            # Pagination controls
-            kb = []
-            nav_buttons = []
-            
-            if page > 0:
-                nav_buttons.append(InlineKeyboardButton("◀️ Zurück", callback_data="dev_pro_prev"))
-            
-            if page < total_pages - 1:
-                nav_buttons.append(InlineKeyboardButton("▶️ Weiter", callback_data="dev_pro_next"))
-            
-            if nav_buttons:
-                kb.append(nav_buttons)
-                
-            kb.append([InlineKeyboardButton("➕ Pro-Abo hinzufügen", callback_data="dev_pro_add")])
-            kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")])
-            
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-        
-        except Exception as e:
-            logger.error(f"Fehler beim Anzeigen der Pro-Verwaltung: {e}", exc_info=True)
-            await query.edit_message_text(
-                f"⚠️ Fehler beim Laden der Gruppen-Daten: {e}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]]),
-                parse_mode="Markdown"
-            )
+                lines.append(f"• {title[:28]}: ❌ PRO")
+
+        scope_label = get_scope_label(context)
+        text = (
+            f"💰 **Pro-Verwaltung**\n\n"
+            f"🔎 Datenquelle: {scope_label}\n"
+            f"Seite {page+1}/{total_pages} · Gruppen {start_idx+1}-{end_idx} von {total}\n\n" +
+            ("\n".join(lines) if lines else "Keine Gruppen auf dieser Seite.")
+            + "\n\nWähle eine Gruppe und setze PRO manuell:"
+        )
+
+        # Tastatur: Für jede Gruppe zwei Buttons ( +30d | Entfernen )
+        kb = []
+        for chat_id, title in current:
+            kb.append([
+                InlineKeyboardButton(f"⭐ +30d: {title[:14]}", callback_data=f"dev_pro_set:{chat_id}:30"),
+                InlineKeyboardButton("🧹 Entfernen", callback_data=f"dev_pro_clear:{chat_id}")
+            ])
+
+        # Navigations- & Bulk-Buttons
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️ Zurück", callback_data="dev_pro_prev"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("▶️ Weiter", callback_data="dev_pro_next"))
+        if nav:
+            kb.append(nav)
+
+        # Bulk auf Seite (optional)
+        kb.append([InlineKeyboardButton("⭐ PRO +30d (alle auf Seite)", callback_data="dev_pro_page_extend_30d")])
+
+        kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")])
+        return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == "dev_ads_dashboard":
         # Werbung-Dashboard
@@ -206,6 +195,9 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         
         kb = [
             [InlineKeyboardButton("➕ Neue Kampagne", callback_data="dev_ad_new")],
+            [InlineKeyboardButton("🟢/🔴 Aktiv/Deaktiv", callback_data="dev_ad_toggle_menu")],
+            [InlineKeyboardButton("✏️ Bearbeiten", callback_data="dev_ad_edit_menu")],
+            [InlineKeyboardButton("🗑 Löschen", callback_data="dev_ad_delete_menu")],
             [InlineKeyboardButton("📊 Statistiken", callback_data="dev_ad_stats")],
             [InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]
         ]
@@ -244,13 +236,13 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info(f"Bot-Neustart durch Admin {user_id} initiiert.")
         restart_bot(context)
     
-    elif data == "dev_system_stats":
+    if data == "dev_system_stats":
         groups = get_registered_groups()
         active_groups = len([g for g in groups if is_daily_stats_enabled(g[0])])
 
         scope = context.user_data.get('scope', {'type': 'all'})
         chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
-        overview = get_global_overview(chat_id=chat_id)
+        overview = _get_global_overview(chat_id=chat_id)
 
         text = (
             "📊 **System-Statistiken**\n\n"
@@ -260,7 +252,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             f"💾 DB-Pool: {_db_pool.closed}/{_db_pool.maxconn}\n"
             f"⚡ Handler: {len(context.application.handlers)}\n"
             f"🧠 RAM: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB\n\n"
-            "🗂 **Datenbank (ausgewählte Quelle)**\n"
+            "🗂 **Datenbank (aggregiert)**\n"
             f"• Nachrichten gesamt: {overview.get('messages_total','–')}\n"
             f"• Nachrichten heute: {overview.get('messages_today','–')}\n"
             f"• Eindeutige Nutzer (gesamt): {overview.get('unique_users','–')}\n"
@@ -283,7 +275,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     
     elif data == "dev_back_to_menu":
-        _ensure_scope_defaults(context)
+        _set_dev_aggregate_scope(context)
         scope_label = get_scope_label(context)
         kb = [
             [InlineKeyboardButton(f"🔽 Gruppenauswahl ({scope_label})", callback_data="dev_group_select_0")],
@@ -307,6 +299,16 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     # Zusätzliche Callback-Handler
+    elif data in ("dev_ad_new", "dev_ad_toggle_menu", "dev_ad_edit_menu", "dev_ad_delete_menu"):
+        await query.edit_message_text(
+            "🧰 **Werbung-Verwaltung**\n\n"
+            "Diese Aktion ist vorbereitet, wird aber erst mit der Ads-API/DB vollständig verfügbar.\n"
+            "• Free-Regel: Werbung nur in Gruppen **ohne** PRO.\n"
+            "• Du kannst bis dahin die Kampagnenliste/Stats nutzen.\n",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]])
+        )
+    
     elif data == "dev_db_vacuum":
         # VACUUM Datenbank
         await query.edit_message_text("🔄 VACUUM wird ausgeführt...", parse_mode="Markdown")
@@ -315,6 +317,68 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         
         kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_db_management")]]
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    
+    elif data == "dev_pro_prev":
+        context.user_data['pro_page'] = max(0, context.user_data.get('pro_page', 0) - 1)
+        return await dev_callback_handler(update, context)
+
+    elif data == "dev_pro_next":
+        context.user_data['pro_page'] = context.user_data.get('pro_page', 0) + 1
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_pro_set:"):
+        # Format: dev_pro_set:<chat_id>:<days>
+        try:
+            _, chat_id_str, days_str = data.split(":")
+            chat_id = int(chat_id_str)
+            days = int(days_str)
+        except Exception:
+            return await query.answer("Ungültige Eingabe.", show_alert=True)
+
+        until = (datetime.datetime.utcnow() + datetime.timedelta(days=days)).replace(microsecond=0)
+        try:
+            set_pro_until(chat_id, until)
+        except Exception as e:
+            return await query.answer(f"Fehler: {e}", show_alert=True)
+
+        await query.answer(f"PRO bis {until.date().isoformat()} gesetzt.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_pro_clear:"):
+        # Format: dev_pro_clear:<chat_id>
+        try:
+            _, chat_id_str = data.split(":")
+            chat_id = int(chat_id_str)
+        except Exception:
+            return await query.answer("Ungültige Eingabe.", show_alert=True)
+
+        now = datetime.datetime.utcnow().replace(microsecond=0)
+        try:
+            set_pro_until(chat_id, now)
+        except Exception as e:
+            return await query.answer(f"Fehler: {e}", show_alert=True)
+
+        await query.answer("PRO entfernt.")
+        return await dev_callback_handler(update, context)
+
+    elif data == "dev_pro_page_extend_30d":
+        page = context.user_data.get('pro_page', 0)
+        page_size = 8
+        groups = get_registered_groups()
+        start_idx = page * page_size
+        end_idx = min(start_idx + page_size, len(groups))
+        until = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).replace(microsecond=0)
+
+        changed = 0
+        for chat_id, _title in groups[start_idx:end_idx]:
+            try:
+                set_pro_until(chat_id, until)
+                changed += 1
+            except Exception:
+                pass
+
+        await query.answer(f"PRO +30d gesetzt für {changed} Gruppen (Seite).")
+        return await dev_callback_handler(update, context)
     
     elif data == "dev_db_tables":
         # Tabellen-Statistiken
@@ -349,49 +413,69 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # Hilfsfunktionen für Entwicklermenü
 
 def _dev_ids_from_env(user_id_hint: int | None = None) -> set[int]:
-    """Liest DEVELOPER_CHAT_ID und DEVELOPER_CHAT_IDS (kommagetrennt)."""
+    """
+    Liest DEVELOPER_CHAT_ID und DEVELOPER_CHAT_IDS (komma/leerzeichen-getrennt).
+    Fallback: im ENVIRONMENT=development den aktuellen Nutzer zulassen.
+    """
     ids = set()
     for key in ("DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS"):
         raw = os.getenv(key, "")
         for part in re.split(r"[,\s;]+", raw):
             if part.strip().lstrip("-").isdigit():
                 ids.add(int(part.strip()))
-    # Fallback: im Development-Mode den aktuellen Nutzer zulassen
     if not ids and os.getenv("ENVIRONMENT", "").lower() == "development" and user_id_hint:
         ids.add(user_id_hint)
     return ids
 
-def _ensure_scope_defaults(context: ContextTypes.DEFAULT_TYPE):
-    """Sorgt dafür, dass immer ein Aggregat-Scope existiert."""
-    if 'scope' not in context.user_data:
-        context.user_data['scope'] = {'type': 'all'}  # Aggregiert als Default
+def _set_dev_aggregate_scope(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Erzwingt für den Dev ein 'Aggregat' als gewählte Gruppe und schreibt
+    kompatible Felder in user_data *und* chat_data, damit vorhandene
+    Guards wie 'require_selected_group' zufrieden sind.
+    """
+    scope = {'type': 'all'}  # Aggregierte Datenquelle
+    context.user_data['scope'] = scope
+    # Kompatibilität zu evtl. vorhandenen Checks:
+    for store in (context.user_data, context.chat_data):
+        store['selected_group'] = 'ALL'
+        store['selected_group_title'] = 'Alle Gruppen'
+        store['chat_id'] = None  # None signalisiert Aggregat
 
-def get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
-    scope = context.user_data.get('scope', {'type': 'all'})
-    if scope.get('type') == 'group':
-        return scope.get('title', f"Gruppe {scope.get('chat_id')}")
-    return "Alle Gruppen"
+def _get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
+    s = context.user_data.get('scope', {'type': 'all'})
+    return "Alle Gruppen" if s.get('type') != 'group' else s.get('title') or f"Gruppe {s.get('chat_id')}"
 
 @_with_cursor
-def get_global_overview(cur, chat_id: int | None = None):
-    """Einfache Kennzahlen – aggregiert (chat_id=None) oder gruppenspezifisch."""
+def _get_global_overview(cur, chat_id: int | None = None):
+    """
+    Liefert robuste Kennzahlen aus message_logs & adv_impressions.
+    chat_id=None => Aggregat über alle Gruppen.
+    """
     out = {'messages_total': 0, 'messages_today': 0, 'unique_users': 0, 'impr_today': 0, 'impr_total': 0}
     try:
-        cur.execute("SELECT COUNT(*) FROM message_logs" + ("" if chat_id is None else " WHERE chat_id=%s") + ";", (() if chat_id is None else (chat_id,)))
+        cur.execute("SELECT COUNT(*) FROM message_logs" + ("" if chat_id is None else " WHERE chat_id=%s") + ";",
+                    (() if chat_id is None else (chat_id,)))
         out['messages_total'] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM message_logs WHERE ts >= CURRENT_DATE" + ("" if chat_id is None else " AND chat_id=%s") + ";", (() if chat_id is None else (chat_id,)))
+        cur.execute("SELECT COUNT(*) FROM message_logs WHERE ts >= CURRENT_DATE" +
+                    ("" if chat_id is None else " AND chat_id=%s") + ";",
+                    (() if chat_id is None else (chat_id,)))
         out['messages_today'] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(DISTINCT user_id) FROM message_logs" + ("" if chat_id is None else " WHERE chat_id=%s") + ";", (() if chat_id is None else (chat_id,)))
+        cur.execute("SELECT COUNT(DISTINCT user_id) FROM message_logs" +
+                    ("" if chat_id is None else " WHERE chat_id=%s") + ";",
+                    (() if chat_id is None else (chat_id,)))
         out['unique_users'] = cur.fetchone()[0]
     except Exception:
         pass
     try:
-        cur.execute("SELECT COUNT(*) FROM adv_impressions" + ("" if chat_id is None else " WHERE chat_id=%s") + ";", (() if chat_id is None else (chat_id,)))
+        cur.execute("SELECT COUNT(*) FROM adv_impressions" + ("" if chat_id is None else " WHERE chat_id=%s") + ";",
+                    (() if chat_id is None else (chat_id,)))
         out['impr_total'] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE ts >= CURRENT_DATE" + ("" if chat_id is None else " AND chat_id=%s") + ";", (() if chat_id is None else (chat_id,)))
+        cur.execute("SELECT COUNT(*) FROM adv_impressions WHERE ts >= CURRENT_DATE" +
+                    ("" if chat_id is None else " AND chat_id=%s") + ";",
+                    (() if chat_id is None else (chat_id,)))
         out['impr_today'] = cur.fetchone()[0]
     except Exception:
         pass
