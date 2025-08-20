@@ -1,11 +1,97 @@
-import logging
-import asyncio
 import os
-from database import list_active_members, mark_member_deleted
-from telegram.error import BadRequest
+import re
+import asyncio
+import logging
+from typing import Dict
+from telegram.error import BadRequest, Forbidden, RetryAfter
+from telegram.ext import ExtBot
+from telegram import ChatMember
+from database import list_members, remove_member
 from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
+
+# Heuristik: "Deleted Account" in verschiedenen Sprachen/Varianten
+_DELETED_NAME_RX = re.compile(
+    r"(deleted\s+account|gelösch(tes|ter)\s+(konto|account)|"
+    r"(аккаунт\s+удалён|удалённый\s+аккаунт)|"
+    r"(حساب\s+محذوف)|"
+    r"(compte\s+supprimé)|"
+    r"(cuenta\s+eliminada)|"
+    r"(konto\s+gelöscht|konto\s+usunięte)|"
+    r"(account\s+cancellato)|"
+    r"(已删除的帐户|已刪除的帳號)|"
+    r"(cont\s+șters)|"
+    r"(счет\s+удален))",
+    re.IGNORECASE
+)
+
+def _looks_deleted(user) -> bool:
+    """Erkennt gelöschte Konten anhand Bot-API-Daten (Heuristik)."""
+    if not user or getattr(user, "is_bot", False):
+        return False
+    name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+    # Typischerweise kein @username und Vorname wie "Deleted Account"
+    if not getattr(user, "username", None) and _DELETED_NAME_RX.search(name or ""):
+        return True
+    return False
+
+async def _get_member(bot: ExtBot, chat_id: int, user_id: int) -> ChatMember | None:
+    try:
+        return await bot.get_chat_member(chat_id, user_id)
+    except RetryAfter as e:
+        await asyncio.sleep(getattr(e, "retry_after", 1))
+        return await bot.get_chat_member(chat_id, user_id)
+    except BadRequest as e:
+        # z. B. "Chat member not found" → nicht (mehr) Mitglied
+        logger.debug(f"get_chat_member({chat_id},{user_id}) -> {e}")
+        return None
+
+async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *, dry_run: bool = False) -> int:
+    """
+    Entfernt NUR gelöschte Accounts aus dem Chat (Ban+Unban) und räumt die DB-Mitgliederliste auf.
+    Gibt die Anzahl tatsächlich entfernter (gekickter) gelöschter Accounts zurück.
+    """
+    user_ids = list_members(chat_id)  # aus eurer DB – keine Bot-API-Iteration nötig
+    removed = 0
+
+    for uid in user_ids:
+        member = await _get_member(bot, chat_id, uid)
+        if member is None:
+            # Nicht (mehr) im Chat → nur DB aufräumen
+            remove_member(chat_id, uid)
+            continue
+
+        # Admins/Owner NIE anfassen
+        if member.status in ("administrator", "creator"):
+            continue
+
+        if _looks_deleted(member.user):
+            if dry_run:
+                removed += 1
+                continue
+
+            # Kick durch ban + optionales unban (so "verschwindet" der Ghost)
+            try:
+                await bot.ban_chat_member(chat_id, uid)
+                try:
+                    # Nur wenn gebannt – verhindert Fehlerflut
+                    await bot.unban_chat_member(chat_id, uid, only_if_banned=True)
+                except BadRequest:
+                    pass
+                removed += 1
+            except Forbidden as e:
+                logger.warning(f"Keine Rechte um {uid} zu entfernen in {chat_id}: {e}")
+            except BadRequest as e:
+                logger.warning(f"Ban/Unban fehlgeschlagen für {uid} in {chat_id}: {e}")
+
+            # Egal ob erfolgreich gebannt: aus eurer DB entfernen
+            try:
+                remove_member(chat_id, uid)
+            except Exception as e:
+                logger.debug(f"remove_member DB fail ({chat_id},{uid}): {e}")
+
+    return removed
 
 def tr(text: str, lang: str) -> str:
     try:
@@ -58,21 +144,3 @@ async def ai_summarize(text: str, lang: str = "de") -> str | None:
     except Exception as e:
         logger.info(f"OpenAI unavailable: {e}")
         return None
-    
-async def clean_delete_accounts_for_chat(chat_id: int, bot):
-    """Entfernt gelöschte Telegram-Accounts aus der Gruppe"""
-    removed_count = 0
-    try:
-        admins = await bot.get_chat_administrators(chat_id)
-        async for member in bot.iter_chat_members(chat_id):
-            if member.user.is_deleted:
-                try:
-                    await bot.ban_chat_member(chat_id, member.user.id)
-                    await bot.unban_chat_member(chat_id, member.user.id)
-                    mark_member_deleted(chat_id, member.user.id)
-                    removed_count += 1
-                except Exception as e:
-                    logger.warning(f"Konnte User {member.user.id} nicht entfernen: {e}")
-    except Exception as e:
-        logger.error(f"Fehler beim Bereinigen von Chat {chat_id}: {e}")
-    return removed_count

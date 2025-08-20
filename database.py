@@ -548,9 +548,25 @@ def get_pending_input(cur, chat_id: int, user_id: int, key: str) -> dict | None:
 @_with_cursor
 def get_pending_inputs(cur, chat_id: int, user_id: int) -> dict[str, dict]:
     col = _pending_inputs_col(cur)
-    cur.execute(f"SELECT key, payload FROM pending_inputs WHERE {col}=%s AND user_id=%s;",
-                (chat_id, user_id))
-    return {k: (p or {}) for (k, p) in (cur.fetchall() or [])}
+    cur.execute(
+        f"SELECT key, payload FROM pending_inputs WHERE {col}=%s AND user_id=%s;",
+        (chat_id, user_id)
+    )
+    rows = cur.fetchall() or []
+    out: dict[str, dict] = {}
+    for k, p in rows:
+        # JSONB kann als dict oder str zurückkommen – sicher normalisieren
+        if isinstance(p, dict):
+            out[k] = p
+        elif isinstance(p, str):
+            try:
+                import json
+                out[k] = json.loads(p) if p else {}
+            except Exception:
+                out[k] = {}
+        else:
+            out[k] = {}
+    return out
 
 @_with_cursor
 def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None):

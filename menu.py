@@ -162,20 +162,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_group_language(cid) or "de"
     back = InlineKeyboardMarkup([[InlineKeyboardButton(tr("↩️ Zurück", lang), callback_data=f"group_{cid}")]])
 
-    # 2) help / patchnotes
-    if func == "help":
-        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
-        path = f'user_manual_{lang}.md'
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(translated)
-        await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
-        return await show_group_menu(query=query, cid=cid, context=context)
-
-    if func == "patchnotes":
-        notes = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
-        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
-        await query.message.reply_text(text, parse_mode="HTML")
-        return await show_group_menu(query=query, cid=cid, context=context)
+    # Handbuch/Patchnotes ohne cid (Fallback)
+    if data in ("help", "patchnotes"):
+        cid = context.user_data.get("selected_chat_id") or query.message.chat.id
+        lang = get_group_language(cid) or "de"
+        if data == "help":
+            translated = translate_hybrid(HELP_TEXT, target_lang=lang)
+            path = f'user_manual_{lang}.md'
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(translated)
+            await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
+            return await show_group_menu(query=query, cid=cid, context=context)
+        else:
+            notes = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
+            text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
+            await query.message.reply_text(text, parse_mode="HTML")
+            return await show_group_menu(query=query, cid=cid, context=context)
 
     # --- Bearbeiten-Flow aktivieren (last_edit korrigiert) ---
     elif func == "welcome" and sub == "edit":
@@ -984,7 +986,14 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     media_id = photo_id or doc_id
     
     # --- DB-Pendings laden (Fallback nach Neustart/Crash) ---
-    pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
+    # Pendings sicher laden und IMMER zu dict normalisieren
+    try:
+        pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
+    except Exception as e:
+        logger.warning(f"pending_inputs read failed: {e}")
+        pend = {}
+    if not isinstance(pend, dict):
+        pend = {}
 
     # last_edit-Fallback (Welcome/Rules/Farewell)
     if 'last_edit' not in context.user_data and 'edit' in pend:
