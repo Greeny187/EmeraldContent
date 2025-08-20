@@ -559,6 +559,7 @@ async def fetch_message_stats(chat_id: int, days: int = 7):
         "by_type": Counter(),
         "by_hour": Counter(),
         "hashtags": Counter(),
+        "by_weekday_hour": {d: Counter() for d in range(7)}  # NEU
     }
 
     async for msg in telethon_client.iter_messages(chat_id, offset_date=since):
@@ -589,6 +590,11 @@ async def fetch_message_stats(chat_id: int, days: int = 7):
         msg_date = getattr(msg, "date", None)
         if msg_date:
             stats["by_hour"][msg_date.hour] += 1
+            try:
+                wd = msg_date.weekday()  # 0=Mo
+                stats["by_weekday_hour"][wd][msg_date.hour] += 1
+            except Exception:
+                pass
 
         # Hashtags
         if msg.text:
@@ -777,6 +783,18 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
         """, (chat.id, ts_start, ts_end))
         by_hour = cur.fetchall() or []
 
+        # NEU: Wochentag×Stunde
+        cur.execute("""
+            SELECT EXTRACT(DOW FROM timestamp)::INT AS dow,
+                   EXTRACT(HOUR FROM timestamp)::INT AS hour,
+                   COUNT(*) AS cnt
+            FROM message_logs
+            WHERE group_id=%s AND timestamp BETWEEN %s AND %s
+            GROUP BY 1,2
+            ORDER BY 1,2
+        """, (chat.id, ts_start, ts_end))
+        by_wd_hour = cur.fetchall() or []
+
         cur.execute("""
             SELECT rule, COUNT(*) AS cnt
             FROM spam_events
@@ -829,6 +847,29 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
             LIMIT 20
         """, (chat.id, ts_start, ts_end))
         autoresp_by_trigger = cur.fetchall() or []
+
+        # --- NEU: Inaktive Nutzer (14d / 30d) ---
+        cur.execute("""
+            SELECT user_id, MAX(last_message_time) AS last_seen
+            FROM message_logs
+            WHERE group_id=%s
+            GROUP BY user_id
+            HAVING MAX(last_message_time) < NOW() - INTERVAL '14 days'
+            ORDER BY last_seen ASC
+            LIMIT 200
+        """, (chat.id,))
+        inactive_14d = cur.fetchall() or []
+
+        cur.execute("""
+            SELECT user_id, MAX(last_message_time) AS last_seen
+            FROM message_logs
+            WHERE group_id=%s
+            GROUP BY user_id
+            HAVING MAX(last_message_time) < NOW() - INTERVAL '30 days'
+            ORDER BY last_seen ASC
+            LIMIT 200
+        """, (chat.id,))
+        inactive_30d = cur.fetchall() or []
 
     finally:
         _db_pool.putconn(conn)
@@ -937,6 +978,23 @@ async def export_stats_csv_command(update: Update, context: ContextTypes.DEFAULT
         wr.writerow(["user_id","messages"])
         for row in top_posters:
             wr.writerow([int(row["user_id"]), int(row["msgs"])])
+
+        # NEU: Heatmap (Wochentag×Stunde)
+        wr.writerow([])
+        wr.writerow(["# Heatmap Wochentag×Stunde (dow; hour; cnt)  (0=So/PG abhängig; bei uns 0=So, 1=Mo ... je nach DB)"])
+        for dow, hour, cnt in by_wd_hour:
+            wr.writerow([int(dow), int(hour), int(cnt)])
+
+        # --- NEU: Inaktive Nutzer ---
+        wr.writerow([])
+        wr.writerow(["# Inaktive Nutzer >14 Tage (user_id; last_seen_iso)"])
+        for uid, last_seen in inactive_14d:
+            wr.writerow([uid, getattr(last_seen, "isoformat", lambda: str(last_seen))()])
+
+        wr.writerow([])
+        wr.writerow(["# Inaktive Nutzer >30 Tage (user_id; last_seen_iso)"])
+        for uid, last_seen in inactive_30d:
+            wr.writerow([uid, getattr(last_seen, "isoformat", lambda: str(last_seen))()])
 
     await update.effective_message.reply_document(
         open(fname, "rb"),

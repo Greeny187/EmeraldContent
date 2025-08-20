@@ -103,7 +103,7 @@ async def fetch_rss_feed(context: CallbackContext):
             continue
 
         lang = get_group_language(chat_id) or "de"
-        ai_faq, ai_rss = get_ai_settings(chat_id)
+        ai_rss = get_ai_settings(chat_id)
         kwargs = {}
         if etag:      kwargs["etag"] = etag
         if last_mod:  kwargs["modified"] = last_mod
@@ -147,7 +147,7 @@ async def fetch_rss_feed(context: CallbackContext):
 
         # poste maximal 3 (älteste zuerst, um Reihenfolge zu halten)
         to_post = to_post[-3:] if to_post else ([] if last_link else [entries[-1]])
-
+        fail_streak = 0
         for entry in to_post:
             title = getattr(entry, "title", "Neuer Artikel")
             link  = getattr(entry, "link", None)
@@ -198,9 +198,19 @@ async def fetch_rss_feed(context: CallbackContext):
                         message_thread_id=topic_id, parse_mode="HTML"
                     )
                 set_last_posted_link(chat_id, url, link)
+                fail_streak = 0  # success -> reset
             except Exception as e:
                 logger.error(f"Failed to post RSS entry: {e}")
+                fail_streak += 1
                 continue
+
+        # Auto-Fallback: wenn Bilder dreimal in Folge scheitern -> post_images=False
+        try:
+            if fail_streak >= 3 and post_images:
+                set_rss_feed_options(chat_id, url, post_images=False)
+                logger.info(f"RSS auto-fallback: post_images disabled for {url} in chat {chat_id}")
+        except Exception:
+            pass
 
         # optional Hausputz
         try:

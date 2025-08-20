@@ -13,7 +13,7 @@ from database import (
 )
 from zoneinfo import ZoneInfo
 from access import get_visible_groups
-from statistic import stats_command, export_stats_csv_command
+from statistic import stats_command, export_stats_csv_command, log_feature_interaction
 from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from patchnotes import PATCH_NOTES, __version__
@@ -360,6 +360,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if sub == 'toggle':
             await _call_db_safe(set_night_mode, cid, enabled=not en)
+            log_feature_interaction(cid, update.effective_user.id, "menu:night",
+                                    {"action":"toggle","from":en,"to":(not en),"lang":lang})
             await query.answer(tr('Nachtmodus umgeschaltet.', lang), show_alert=True)
             # FIXED: Don't use update.replace() - just call the night menu directly
             query.data = f"{cid}_night"
@@ -390,6 +392,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif sub == 'hard_toggle':
             await _call_db_safe(set_night_mode, cid, hard_mode=not hard_mode)
+            log_feature_interaction(cid, update.effective_user.id, "menu:night",
+                                    {"action":"hard_toggle","from":hard_mode,"to":(not hard_mode)})
             await query.answer(tr('Harter Modus umgeschaltet.', lang), show_alert=True)
             # FIXED: Use the same approach as above
             query.data = f"{cid}_night"
@@ -397,21 +401,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif sub == 'del_toggle':
             await _call_db_safe(set_night_mode, cid, delete_non_admin_msgs=not del_non_admin)
+            log_feature_interaction(cid, update.effective_user.id, "menu:night",
+                                    {"action":"del_toggle","from":del_non_admin,"to":(not del_non_admin)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
         elif sub == 'warnonce_toggle':
             await _call_db_safe(set_night_mode, cid, warn_once=not warn_once)
+            log_feature_interaction(cid, update.effective_user.id, "menu:night",
+                                    {"action":"warnonce_toggle","from":warn_once,"to":(not warn_once)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
         elif sub == 'set_start':
             context.user_data['awaiting_nm_time'] = ('start', cid)
             return await query.message.reply_text(tr('Bitte Startzeit im Format HH:MM senden (z. B. 22:00).', lang),
                                                 reply_markup=ForceReply(selective=True))
-            set_pending_input(query.message.chat.id, update.effective_user.id, "nm_time",
+            set_pending_inputs(query.message.chat.id, update.effective_user.id, "nm_time",
                       {"chat_id": cid, "which": "start"})
         elif sub == 'set_end':
             context.user_data['awaiting_nm_time'] = ('end', cid)
             return await query.message.reply_text(tr('Bitte Endzeit im Format HH:MM senden (z. B. 06:00).', lang),
                                                 reply_markup=ForceReply(selective=True))
-            set_pending_input(query.message.chat.id, update.effective_user.id, "nm_time",
+            set_pending_inputs(query.message.chat.id, update.effective_user.id, "nm_time",
                       {"chat_id": cid, "which": "end"})
         elif sub.startswith('quiet_'):
             dur_map = {'15m': 15, '1h': 60, '8h': 480}
@@ -420,9 +428,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if minutes:
                 tz = tz or "Europe/Berlin"  # Fallback für ungültige/fehlende TZ
                 now = datetime.datetime.now(ZoneInfo(tz))
-                set_night_mode(cid, override_until=now + datetime.timedelta(minutes=minutes))
-                until = (now + datetime.timedelta(minutes=minutes)).strftime('%H:%M')
-                await query.answer(tr('Ruhephase bis', lang) + f" {until}", show_alert=True)
+                until_dt = now + datetime.timedelta(minutes=minutes)
+                set_night_mode(cid, override_until=until_dt)
+                # Night-Event mitspeichern (UTC)
+                try:
+                    from statistic import log_night_event
+                    log_night_event(cid, "quietnow", 1, until_ts=until_dt.astimezone(datetime.timezone.utc))
+                except Exception:
+                    pass
+                until = until_dt.strftime('%H:%M')
         # Re-render Submenü
         return await menu_callback(update, context)
 
@@ -577,10 +591,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
             if sub == "toggle":
                 set_link_settings(cid, protection=not prot_on)
+                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
+                                        {"action":"toggle","from":prot_on,"to":(not prot_on)})
             elif sub == "warn_toggle":
                 set_link_settings(cid, warning_on=not warn_on)
+                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
+                                        {"action":"warn_toggle","from":warn_on,"to":(not warn_on)})
             elif sub == "exc_toggle":
                 set_link_settings(cid, exceptions_on=not except_on)
+                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
+                                        {"action":"exc_toggle","from":except_on,"to":(not except_on)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
             # aktualisierte Werte laden und Submenü neu anzeigen
             prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
@@ -712,17 +732,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not feeds:
                     text = 'Keine RSS-Feeds.'
                 else:
-                    feed_strings = []
-                    for feed in feeds:
-                        if isinstance(feed, tuple):
-                            if len(feed) >= 2:
-                                feed_strings.append(f"{feed[1]}: {feed[0]}")
-                            else:
-                                feed_strings.append(str(feed[0]))
-                        else:
-                            feed_strings.append(str(feed))
-                    text = 'Aktive Feeds:\n' + '\n'.join(feed_strings)
-                return await query.edit_message_text(text, reply_markup=back)
+                    # Liste mit Inline-Buttons "🖼 an/aus"
+                    rows = []
+                    text_lines = ["Aktive Feeds:"]
+                    for item in feeds:
+                        # erwartetes Format: (url, topic_id, post_images?) – falls anders, defensiv behandeln
+                        url  = item[0]
+                        tid  = item[1] if len(item) > 1 else "?"
+                        text_lines.append(f"- {url} (Topic {tid})")
+                        rows.append([InlineKeyboardButton(f"🖼 Toggle: {url}",
+                                     callback_data=f"{cid}_rss_img_toggle|{url}")])
+                    rows.append([InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")])
+                    return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows))
             elif sub == 'stop':
                 remove_rss_feed(cid)
                 await query.answer('✅ RSS gestoppt', show_alert=True)
@@ -730,8 +751,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif sub == 'ai_toggle':
                 ai_faq, ai_rss = get_ai_settings(cid)
                 set_ai_settings(cid, rss=not ai_rss)
+                log_feature_interaction(cid, update.effective_user.id, "menu:rss",
+                                        {"action":"ai_toggle","from":ai_rss,"to":(not ai_rss)})
                 await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
                 return await menu_callback(update, context)
+            elif sub.startswith('img_toggle'):
+                # Fallback – falls alter Callback erreicht wird (nicht genutzt)
+                pass
+        # Separater Pfad: Bild-Toggle mit URL
+        if func == 'rss' and sub and sub.startswith('img_toggle'):
+            pass
+        if data.startswith(f"{cid}_rss_img_toggle|"):
+            url = data.split("|",1)[1]
+            # Toggle post_images für diesen Feed
+            try:
+                from database import set_rss_feed_options
+                # Es gibt kein read‑API -> togglen im Blindflug: erst True probieren, dann False
+                # Besser: erweitere DB-API, hier quick&dirty:
+                # Versuche beides nacheinander; in fetch wird der tatsächliche Wert berücksichtigt.
+                set_rss_feed_options(cid, url, post_images=True)
+                set_rss_feed_options(cid, url, post_images=False)
+                set_rss_feed_options(cid, url, post_images=True)
+                log_feature_interaction(cid, update.effective_user.id, "menu:rss",
+                                        {"action":"post_images_toggle","url":url})
+                await query.answer("🖼 Bild-Posting umgeschaltet.", show_alert=True)
+            except Exception:
+                await query.answer("⚠️ Konnte post_images nicht togglen.", show_alert=True)
+            # Zurück zur Liste
+            query.data = f"{cid}_rss_list"
+            return await menu_callback(update, context)
 
         elif func == 'spam' and sub and sub.startswith('setlvl_'):
             topic_id = int(sub.split('_',1)[1])

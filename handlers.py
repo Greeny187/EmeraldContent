@@ -21,7 +21,7 @@ from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, ai_summarize
 from user_manual import help_handler
 from menu import show_group_menu
-from statistic import log_spam_event
+from statistic import log_spam_event, log_night_event
 from access import get_visible_groups
 from translator import translate_hybrid
 
@@ -342,6 +342,10 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now(ZoneInfo(tz))
     until = now + dur
     set_night_mode(chat.id, override_until=until)
+    try:
+        log_night_event(chat.id, "quietnow", 1, until_ts=until.astimezone(datetime.timezone.utc))
+    except Exception:
+        pass
 
     if hard_mode:
         # sofort sperren

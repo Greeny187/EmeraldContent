@@ -4,7 +4,8 @@ import logging
 from urllib.parse import urlparse
 from datetime import date
 from typing import List, Dict, Tuple, Optional, Any
-from psycopg2 import pool
+from psycopg2 import pool, OperationalError, InterfaceError
+from psycopg2.extras import Json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -42,16 +43,46 @@ _db_pool = _init_pool(dsn, minconn=1, maxconn=10)
 # Decorator to acquire/release connections and cursors
 def _with_cursor(func):
     def wrapped(*args, **kwargs):
-        conn = _db_pool.getconn()
-        try:
-            with conn.cursor() as cur:
-                result = func(cur, *args, **kwargs)
-                # immer committen, damit z.B. add_posted_link tatsächlich gespeichert wird
-                conn.commit()
-                return result
-        finally:
-            # Immer sicherstellen, dass die Verbindung zurückgegeben wird
-            _db_pool.putconn(conn)
+        # bis zu 2 Versuche bei transienten Verbindungsproblemen
+        import time
+        last_exc = None
+        for attempt in (1, 2):
+            conn = _db_pool.getconn()
+            try:
+                # Verbindung „gesund“? (sofortiger Ping)
+                if getattr(conn, "closed", 0):
+                    raise OperationalError("connection closed")
+                with conn.cursor() as cur_ping:
+                    cur_ping.execute("SELECT 1;")
+                # eigentlicher DB-Call
+                with conn.cursor() as cur:
+                    res = func(cur, *args, **kwargs)
+                    conn.commit()
+                    return res
+            except (OperationalError, InterfaceError) as e:
+                last_exc = e
+                # defekte Verbindung hart schließen und aus dem Pool entfernen
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    _db_pool.putconn(conn, close=True)
+                except TypeError:
+                    # ältere psycopg2 ohne close-Flag
+                    try: _db_pool.putconn(conn)
+                    except Exception: pass
+                if attempt == 2:
+                    raise
+                # kurzer Backoff, dann neuer Versuch
+                time.sleep(0.2)
+                continue
+            finally:
+                try:
+                    if conn and not getattr(conn, "closed", 0):
+                        _db_pool.putconn(conn)
+                except Exception:
+                    pass
     return wrapped
 
 # --- Schema Initialization & Migrations ---
@@ -487,45 +518,44 @@ def unregister_group(cur, chat_id: int):
     cur.execute("DELETE FROM groups WHERE chat_id = %s;", (chat_id,))
 
 @_with_cursor
-def set_pending_input(cur, chat_id:int, user_id:int, key:str, payload:dict):
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS pending_inputs (
-          chat_id  BIGINT,
-          user_id  BIGINT,
-          key      TEXT,
-          payload  JSONB,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          PRIMARY KEY(chat_id, user_id, key)
-        );
-    """)
-    cur.execute("""
-        INSERT INTO pending_inputs (chat_id,user_id,key,payload)
-        VALUES (%s,%s,%s,%s)
-        ON CONFLICT (chat_id,user_id,key)
-        DO UPDATE SET payload=EXCLUDED.payload, created_at=NOW();
-    """, (chat_id, user_id, key, payload))
+def set_pending_input(cur, chat_id: int, user_id: int, key: str, payload: dict | None):
+    if payload is None:
+        payload = {}
+    col = _pending_inputs_col(cur)
+    cur.execute(
+        f"""
+        INSERT INTO pending_inputs ({col}, user_id, key, payload)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT ({col}, user_id, key)
+        DO UPDATE SET payload = EXCLUDED.payload, created_at = NOW();
+        """,
+        (chat_id, user_id, key, Json(payload, dumps=json.dumps))
+    )
 
 @_with_cursor
-def get_pending_inputs(cur, chat_id:int, user_id:int) -> Dict[str,dict]:
-    cur.execute("""
-        SELECT key, payload FROM pending_inputs
-         WHERE chat_id=%s AND user_id=%s;
-    """, (chat_id, user_id))
-    return {k: (p or {}) for (k,p) in cur.fetchall()}
-
-@_with_cursor
-def get_pending_input(cur, chat_id:int, user_id:int, key:str) -> Optional[dict]:
-    cur.execute("SELECT payload FROM pending_inputs WHERE chat_id=%s AND user_id=%s AND key=%s;",
+def get_pending_input(cur, chat_id: int, user_id: int, key: str) -> dict | None:
+    col = _pending_inputs_col(cur)
+    cur.execute(f"SELECT payload FROM pending_inputs WHERE {col}=%s AND user_id=%s AND key=%s;",
                 (chat_id, user_id, key))
     row = cur.fetchone()
     return row[0] if row else None
 
 @_with_cursor
-def clear_pending_input(cur, chat_id:int, user_id:int, key:Optional[str]=None):
+def get_pending_inputs(cur, chat_id: int, user_id: int) -> dict[str, dict]:
+    col = _pending_inputs_col(cur)
+    cur.execute(f"SELECT key, payload FROM pending_inputs WHERE {col}=%s AND user_id=%s;",
+                (chat_id, user_id))
+    return {k: (p or {}) for (k, p) in (cur.fetchall() or [])}
+
+@_with_cursor
+def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None):
+    col = _pending_inputs_col(cur)
     if key:
-        cur.execute("DELETE FROM pending_inputs WHERE chat_id=%s AND user_id=%s AND key=%s;", (chat_id, user_id, key))
+        cur.execute(f"DELETE FROM pending_inputs WHERE {col}=%s AND user_id=%s AND key=%s;",
+                    (chat_id, user_id, key))
     else:
-        cur.execute("DELETE FROM pending_inputs WHERE chat_id=%s AND user_id=%s;", (chat_id, user_id))
+        cur.execute(f"DELETE FROM pending_inputs WHERE {col}=%s AND user_id=%s;",
+                    (chat_id, user_id))
 
 @_with_cursor
 def prune_pending_inputs_older_than(cur, hours:int=48):
@@ -1551,6 +1581,24 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
             SET link = EXCLUDED.link, posted_at = EXCLUDED.posted_at;
     """, (chat_id, feed_url, link))
 
+def _pending_inputs_col(cur) -> str:
+    """Ermittelt, ob pending_inputs die Spalte 'chat_id' oder 'ctx_chat_id' hat."""
+    global _pi_col_cache
+    if _pi_col_cache:
+        return _pi_col_cache
+    cur.execute("""
+        SELECT column_name
+          FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name   = 'pending_inputs'
+           AND column_name IN ('chat_id','ctx_chat_id')
+         ORDER BY CASE column_name WHEN 'chat_id' THEN 1 ELSE 2 END
+         LIMIT 1;
+    """)
+    row = cur.fetchone()
+    _pi_col_cache = row[0] if row else 'chat_id'   # Default falls Tabelle leer/neu
+    return _pi_col_cache
+
 def prune_posted_links(chat_id, keep_last=100):
     conn = _db_pool.getconn()
     try:
@@ -1730,6 +1778,35 @@ def migrate_db():
         except psycopg2.Error as e:
             logging.warning(f"Could not alter reply_times, might not exist yet: {e}")
             conn.rollback() # Rollback this specific transaction
+        
+        try:
+            # Tabelle anlegen, falls sie nicht existiert (gleich mit 'chat_id')
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_inputs (
+                chat_id   BIGINT NOT NULL,
+                user_id   BIGINT NOT NULL,
+                key       TEXT   NOT NULL,
+                payload   JSONB  NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (chat_id, user_id, key)
+                );
+            """)
+            # Altspalte ctx_chat_id -> chat_id migrieren (idempotent)
+            cur.execute("""
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema=current_schema()
+                AND table_name='pending_inputs'
+                AND column_name='ctx_chat_id';
+            """)
+            if cur.fetchone():
+                cur.execute("ALTER TABLE pending_inputs ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
+                cur.execute("UPDATE pending_inputs SET chat_id = ctx_chat_id WHERE chat_id IS NULL;")
+                cur.execute("ALTER TABLE pending_inputs DROP CONSTRAINT IF EXISTS pending_inputs_pkey;")
+                cur.execute("ALTER TABLE pending_inputs ADD CONSTRAINT pending_inputs_pkey PRIMARY KEY (chat_id, user_id, key);")
+                cur.execute("ALTER TABLE pending_inputs DROP COLUMN IF EXISTS ctx_chat_id;")
+        except Exception as e:
+            logger.warning(f"[pending_inputs] Migration übersprungen: {e}")
         
         cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS chat_id  BIGINT;")
         cur.execute("ALTER TABLE message_logs  ADD COLUMN IF NOT EXISTS user_id  BIGINT;")
