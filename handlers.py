@@ -1369,7 +1369,7 @@ def register_handlers(app):
     
     # Spam-Filter (Gruppe 1) - NUR IN GRUPPEN
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, spam_enforcer), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_moderation_enforcer), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, ai_moderation_enforcer), group=1)
     # Text-Handler (Gruppe 2) - ALLE CHATS (falls nötig)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, 

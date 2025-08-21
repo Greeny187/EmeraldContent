@@ -1,6 +1,8 @@
 import logging
 import inspect
 import asyncio
+import re
+from telegram.constants import ChatType
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, filters
 from database import save_mood, get_mood_counts, get_mood_question, set_mood_topic, get_mood_topic
@@ -56,59 +58,65 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat.id, text="⚠️ Mood konnte nicht gesendet werden. Prüfe das gesetzte Topic.")
 
 async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Setzt das Mood-Topic (in Foren Pflicht)."""
-    chat = update.effective_chat
+    """Setzt das Mood-Topic für diesen Chat.
+    Nutzung:
+      - In Foren: Command IM gewünschten Thema ausführen (oder auf eine Nachricht in diesem Thema antworten).
+      - Optional: /setmoodtopic <topic_id>  (setzt explizit auf diese Thread-ID)
+      - In normalen Gruppen: setzt 'kein Topic' (globale Nutzung).
+    """
     msg = update.effective_message
+    chat = update.effective_chat
     user = update.effective_user
 
-    logger.info(f"setmoodtopic aufgerufen von User {user.id} in Chat {chat.id}")
+    # Nur in Gruppen/Supergruppen
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return await msg.reply_text("Dieser Befehl funktioniert nur in Gruppen.")
 
-    if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("❌ Dieser Befehl ist nur in Gruppen nutzbar.")
-
-    # Admin-Check
+    # Admin-Check (nur Admins dürfen setzen)
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
         admin_ids = {a.user.id for a in admins}
-        logger.info(f"Admin-IDs: {admin_ids}, User-ID: {user.id}")
         if user.id not in admin_ids:
-            return await msg.reply_text("❌ Nur Administratoren können das Mood-Topic festlegen.")
-    except Exception as e:
-        logger.error("Admin-Check fehlgeschlagen: %s", e)
-        return await msg.reply_text("⚠️ Fehler bei der Überprüfung der Administratorrechte.")
+            return await msg.reply_text("Nur Admins können das Mood-Topic setzen.")
+    except Exception:
+        # Fallback: wenn die Abfrage scheitert, lieber abbrechen als falsch setzen
+        return await msg.reply_text("Konnte Adminrechte nicht prüfen. Bitte erneut versuchen.")
 
     # Topic-ID ermitteln
-    topic_id = msg.message_thread_id
-    if topic_id is None and msg.reply_to_message:
-        topic_id = msg.reply_to_message.message_thread_id
-        
-    logger.info(f"Ermittelte Topic-ID: {topic_id}")
+    topic_id = None
 
-    # Foren-Check
-    try:
-        chat_info = await context.bot.get_chat(chat.id)
-        is_forum = bool(getattr(chat_info, "is_forum", False))
-        logger.info(f"Chat ist Forum: {is_forum}")
-    except Exception:
-        is_forum = False
+    # 1) explizites Argument erlaubt: /setmoodtopic 12345
+    if context.args:
+        m = re.match(r"^\d+$", context.args[0].strip())
+        if m:
+            topic_id = int(context.args[0].strip())
 
-    if is_forum and topic_id is None:
-        return await msg.reply_text(
-            "⚠️ Bitte führe /setmoodtopic direkt in dem gewünschten Forum-Thema aus "
-            "oder antworte auf eine Nachricht darin."
+    # 2) Falls Forum: aus aktuellem Thread oder Reply übernehmen
+    if topic_id is None and getattr(chat, "is_forum", False):
+        topic_id = msg.message_thread_id or (
+            msg.reply_to_message.message_thread_id if msg.reply_to_message else None
         )
+        if topic_id is None:
+            return await msg.reply_text(
+                "Dies ist eine Foren-Gruppe. Bitte führe /setmoodtopic **im gewünschten Thema** aus "
+                "oder antworte mit dem Befehl auf eine Nachricht in diesem Thema.\n\n"
+                "Alternativ: /setmoodtopic <topic_id>",
+            )
 
+    # 3) In Nicht-Foren-Gruppen ist 'kein Topic' zulässig (globale Nutzung)
+    # -> topic_id bleibt None
+
+    # Speichern
     try:
-        logger.info(f"Speichere Mood-Topic: Chat {chat.id}, Topic {topic_id}")
         await _call_db(set_mood_topic, chat.id, int(topic_id) if topic_id is not None else None)
-        await msg.reply_text(
-            f"✅ Mood-Topic gesetzt auf ID {topic_id}." if topic_id is not None
-            else "✅ Mood-Topic zurückgesetzt (kein Thread erforderlich)."
-        )
-        logger.info(f"Mood-Topic erfolgreich gespeichert für Chat {chat.id}")
-    except Exception as e:
-        logger.error(f"Fehler beim Speichern des Mood-Topics: {e}")
-        return await msg.reply_text("⚠️ Fehler beim Speichern des Mood-Topics in der Datenbank.")
+    except Exception:
+        logger.exception("Fehler beim Speichern des Mood-Topic")
+        return await msg.reply_text("⚠️ Konnte Mood-Topic nicht speichern.")
+
+    # Feedback
+    if topic_id is None:
+        return await msg.reply_text("✅ Mood-Topic entfernt (globale Nutzung in dieser Gruppe).")
+    return await msg.reply_text(f"✅ Mood-Topic gesetzt auf Thread-ID {topic_id}.")
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reagiert auf Klicks der Mood-Buttons."""
@@ -147,5 +155,5 @@ async def debug_setmoodtopic(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def register_mood(app):
     # Commands in Gruppe 0 (höhere Priorität)
     app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=0)
-    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=0)  # Echte Funktion verwenden
-    app.add_handler(CallbackQueryHandler(mood_callback, pattern="^mood_"), group=0)
+    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=0)
+    app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_"), group=0)
