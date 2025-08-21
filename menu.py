@@ -185,6 +185,8 @@ async def _render_spam_root(query, cid, lang=None):
         'strict': '🔴 Streng (6 Emojis, 30/min, 4 Msgs/10s)'
     }
     prot_on, *_ = get_link_settings(cid)
+    wl = pol.get('link_whitelist') or []
+    bl = pol.get('domain_blacklist') or []
     text = (
         "🧹 <b>Spamfilter (Default / Topic 0)</b>\n\n"
         f"📊 <b>Level:</b> {level_info.get(level, level)}\n\n"
@@ -196,8 +198,8 @@ async def _render_spam_root(query, cid, lang=None):
         "• 🎯 Topic-spezifische Regeln\n\n"
         f"📈 Aktuell: {pol.get('emoji_max_per_msg', 0)} Emojis, "
         f"{pol.get('max_msgs_per_10s', 0)} Msgs/10s\n"
-        f"✅ Whitelist: {len(pol.get('link_whitelist', []))} Domains\n"
-        f"❌ Blacklist: {len(pol.get('domain_blacklist', []))} Domains"
+        f"✅ Whitelist: {len(wl)} Domains\n"
+        f"❌ Blacklist: {len(bl)} Domains"
     )
     kb = [
         [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
@@ -651,7 +653,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pol = get_spam_policy_topic(cid, 0) or {}
         level = pol.get('level', 'off')
         prot_on, *_ = get_link_settings(cid)
-
+        wl = pol.get('link_whitelist') or []
+        bl = pol.get('domain_blacklist') or []
+        wl_txt = ", ".join(wl) if wl else "–"
+        bl_txt = ", ".join(bl) if bl else "–"
         level_info = {
             'off': '❌ Deaktiviert',
             'light': '🟡 Leicht (20 Emojis, 10 Msgs/10s)',
@@ -670,8 +675,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 🎯 Topic-spezifische Regeln\n\n"
             f"📈 Aktuell: {pol.get('emoji_max_per_msg', 0)} Emojis, "
             f"{pol.get('max_msgs_per_10s', 0)} Msgs/10s\n"
-            f"✅ Whitelist: {len(pol.get('link_whitelist', []))} Domains\n"
-            f"❌ Blacklist: {len(pol.get('domain_blacklist', []))} Domains"
+            f"✅ Whitelist: {len(wl)} Domains\n"
+            f"❌ Blacklist: {len(bl)} Domains"
         )
         kb = [
             [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
