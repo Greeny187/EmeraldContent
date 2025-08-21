@@ -149,43 +149,35 @@ async def spam_enforcer(update, context):
     text = msg.text or msg.caption or ""
     topic_id = getattr(msg, "message_thread_id", None)
 
-    # Globale Link-Settings einlesen (dein bestehender Mechanismus)
-    link_settings = get_link_settings(chat_id)  # (prot_on, warn_on, warn_text, except_on)
-    policy = effective_spam_policy(chat_id, topic_id, link_settings)
-
     # Ausnahme: Admin / anonymer Admin / Topic-Owner
     admins = await context.bot.get_chat_administrators(chat_id)
     is_admin = any(a.user.id == user.id and a.status in ("administrator", "creator") for a in admins) if user else False
     is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat_id)
-    is_topic_owner = link_settings[3] and has_topic(chat_id, user.id) if user else False  # exceptions_on
+    policy = get_effective_link_policy(chat_id, topic_id)
     privileged = is_admin or is_anon_admin or is_topic_owner
-    policy = get_effective_link_policy(chat_id, msg.message_thread_id or 0)
-    text = (msg.text or msg.caption or "")
-    urls = _URL_RE.findall(text)
-
+    is_topic_owner = has_topic(chat_id, user.id) if user else False
+    domains_in_msg = _extract_domains(text)
     violation = False
     reason = None
 
-    if urls:
+    if domains_in_msg:
         # 1) Blacklist (Topic)
-        for u in urls:
-            host = u.split('/')[2].lower() if '://' in u else u.lower()
-            if any(host.endswith('.'+d) or host == d for d in (policy["blacklist"] or [])):
-                violation = True; reason = "domain_blacklist"
-                break
+        for host in domains_in_msg:
+            if any(host.endswith('.'+d) or host == d for d in (policy.get("blacklist") or [])):
+                 violation = True; reason = "domain_blacklist"
+                 break
 
         # 2) Nur-Admin-Links (global), Whitelist erlaubt
-        if not violation and policy["admins_only"] and not is_admin:
-            def allowed(u):
-                h = u.split('/')[2].lower() if '://' in u else u.lower()
-                return any(h.endswith('.'+d) or h == d for d in (policy["whitelist"] or []))
-            if not any(allowed(u) for u in urls):
+        if not violation and policy.get("admins_only") and not is_admin:
+            def allowed(host):
+                return any(host.endswith('.'+d) or host == d for d in (policy.get("whitelist") or []))
+            if not any(allowed(h) for h in domains_in_msg):
                 violation = True; reason = "admins_only"
 
     if violation:
         deleted = await _safe_delete(msg)
         # Aktion
-        act = policy["action"]
+        act = policy.get("action") or "delete"
         did = "delete" if deleted else "none"
         if act == "mute" and not is_admin:
             try:
@@ -200,17 +192,22 @@ async def spam_enforcer(update, context):
                 logger.warning(f"mute failed: {e}")
 
         # Hinweis nur einmal pro Nutzer/5s
-        if _once(context, ("link_warn", chat_id, msg.from_user.id), ttl=5.0):
+        if _once(context, ("link_warn", chat_id, (msg.from_user.id if msg.from_user else 0)), ttl=5.0):
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=msg.message_thread_id,
-                    text=policy["warning_text"]
+                    text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
                 )
             except Exception:
                 pass
 
-        # optional: logging deiner Wahl …
+        # Logging mit reason
+        try:
+            log_spam_event(chat_id, user.id if user else None, reason or "link_violation", did,
+                           {"domains": domains_in_msg})
+        except Exception:
+            pass
         return
     
     # (A) Tageslimit pro Topic & User
@@ -270,7 +267,6 @@ async def spam_enforcer(update, context):
 
     
     # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
-    domains_in_msg = _extract_domains(text)
     match = get_matching_router_rule(chat_id, text, domains_in_msg)
     if match and topic_id != match["target_topic_id"]:
         try:
@@ -294,28 +290,27 @@ async def spam_enforcer(update, context):
         except Exception as e:
             logger.warning(f"Router copy failed: {e}")
 
-    # 2) Link-Blocking (Domain-Whitelist/Blacklist + globaler Linkschutz)
+    # 2) Link-Blocking (nur Policy-basiert)
     if domains_in_msg and not privileged:
-        wl = set(d.lower() for d in (policy.get("link_whitelist") or []))
-        bl = set(d.lower() for d in (policy.get("domain_blacklist") or []))
+        wl = set(d.lower() for d in (policy.get("whitelist") or []))
+        bl = set(d.lower() for d in (policy.get("blacklist") or []))
         if any(d in bl for d in domains_in_msg):
-            # Blacklist schlägt immer zu
             try:
                 await msg.delete()
                 log_spam_event(chat_id, user.id if user else None, "link_blacklist", "delete",
                                {"domains": domains_in_msg})
-            except Exception: pass
+            except Exception:
+                pass
             return
-        prot_on = (link_settings[0] is True) or (policy.get("level") in ("light","medium","strict"))
-        if prot_on and not any((d in wl) for d in domains_in_msg):
-            try:
-                if link_settings[1]:  # warn_on
-                    await context.bot.send_message(chat_id, link_settings[2])  # warn_text
-                await msg.delete()
-                log_spam_event(chat_id, user.id if user else None, "link_protection", "delete",
-                               {"domains": domains_in_msg})
-            except Exception: pass
-            return
+        if policy.get("admins_only") and not is_admin:
+            if not any((d in wl) for d in domains_in_msg):
+                try:
+                    await msg.delete()
+                    log_spam_event(chat_id, user.id if user else None, "link_admins_only", "delete",
+                                   {"domains": domains_in_msg})
+                except Exception:
+                    pass
+                return
 
     # 3) Emoji- und Flood-Limits (je nach Level/Override)
     if not privileged:

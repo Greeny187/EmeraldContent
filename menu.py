@@ -90,8 +90,8 @@ def build_group_menu(cid):
          InlineKeyboardButton(tr('🔐 Captcha', lang), callback_data=f"{cid}_captcha")],
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
-        [InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night")],
-        [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam"),
+        [InlineKeyboardButton(tr('🧹 Spamfilter', lang), callback_data=f"{cid}_spam")],
+        [InlineKeyboardButton(tr('🌙 Nachtmodus', lang), callback_data=f"{cid}_night"),
          InlineKeyboardButton(tr('🧭 Topic-Router', lang), callback_data=f"{cid}_router")],
         [InlineKeyboardButton(tr('📰 RSS', lang), callback_data=f"{cid}_rss"),
          InlineKeyboardButton(f"🤖 KI {ai_status}", callback_data=f"{cid}_ai")],
@@ -112,26 +112,10 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
     markup = build_group_menu(cid)
 
     if query:
-        try:
-            # Prüfen ob Message Text hat
-            current_text = getattr(query.message, 'text', None) or getattr(query.message, 'caption', None)
-            if current_text and current_text != title:
-                await query.edit_message_text(title, reply_markup=markup)
-            else:
-                # Fallback: neue Nachricht senden
-                await query.message.reply_text(title, reply_markup=markup)
-                try:
-                    await query.message.delete()
-                except:
-                    pass
-        except BadRequest as e:
-            if "no text in the message to edit" in str(e).lower():
-                await query.message.reply_text(title, reply_markup=markup)
-            else:
-                raise
-    else:
-        target = dest_chat_id if dest_chat_id is not None else cid
-        await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
+        await _edit_or_send(query, title, markup)
+        return
+    target = dest_chat_id if dest_chat_id is not None else cid
+    await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
 
 async def _call_db_safe(fn, *args, **kwargs):
     """Sichere Ausführung von sync/async DB-Funktionen mit Logging"""
@@ -588,16 +572,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Linksperre Submenü
     elif func == 'linkprot' and sub is None:
-        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
-        kb = [
-            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}", callback_data=f"{cid}_linkprot_toggle")],
-            [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warnhinweis senden', lang)}", callback_data=f"{cid}_linkprot_warn_toggle")],
-            [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Topic-Owner)', lang)}", callback_data=f"{cid}_linkprot_exc_toggle")],
-            [InlineKeyboardButton(tr('Warntext ändern', lang), callback_data=f"{cid}_linkprot_edit")],
-            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
-        ]
-        text = tr('🔗 Linkschutz – Einstellungen', lang)
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        # Linkschutz ist in Spamfilter integriert – render direkt das Spam-Menü neu:
+            update.callback_query.data = f"{cid}_spam"
+            return await menu_callback(update, context)
 
     elif func == 'linkprot':
         # Aktionen + direktes Neu-Rendern des Submenüs (ohne rekursive data-Manipulation)
@@ -638,14 +615,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = tr('🔗 Linkschutz – Einstellungen', lang)
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-    elif func == 'spam' and sub.startswith('link_admins_'):
-        tid = int(sub.split('_')[-1])
-        ls = get_link_settings(cid) or {}
-        new_val = not bool(ls.get("admins_only") or ls.get("only_admin_links") or False)
-        set_link_settings(cid, admins_only=new_val)  # bestehende Funktion, erweitert um Field
-        await query.answer("Gespeichert.")
-        return await show_group_menu(query=query, cid=cid, context=context)
-
     elif func == 'spam' and sub.startswith('link_warn_'):
         tid = int(sub.split('_')[-1])
         context.user_data['awaiting_link_warn'] = True
@@ -654,14 +623,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Bitte neuen Warntext senden:", reply_markup=ForceReply(selective=True))
         await query.answer()
         return
-    
-    elif func == 'spam' and sub == 'link_admins_global':
-        prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
-        set_link_settings(cid, protection=not prot_on)
-        await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-        # Spam-Startseite neu rendern
-        update.callback_query.data = f"{cid}_spam"
-        return await menu_callback(update, context)
     
     # KI-Submenü hinzufügen
     elif func == 'ai' and sub is None:
