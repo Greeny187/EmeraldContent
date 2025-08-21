@@ -182,12 +182,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(translated)
             await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
-            return await show_group_menu(query=query, cid=cid, context=context)
+            return
         else:
             notes = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
             text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes}"
-            await query.message.reply_text(text, parse_mode="HTML")
-            return await show_group_menu(query=query, cid=cid, context=context)
+            await query.message.reply_text(PATCH_NOTES, parse_mode="HTML")
+            return
 
     # --- Bearbeiten-Flow aktivieren (last_edit korrigiert) ---
     elif func == "welcome" and sub == "edit":
@@ -241,6 +241,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
         ]
         text = tr('📰 RSS verwalten', lang)
+        topic = get_rss_topic(cid)  # int oder 0
+        topic_line = f"Aktuelles RSS-Topic: {topic}" if topic else "Kein RSS-Topic gesetzt."
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     # Captcha Submenü  
@@ -459,15 +461,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif func == 'router' and sub:
         if sub == 'add_kw':
             context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid)
-            return await query.message.reply_text("Format: <topic_id>; wort1, wort2, ...",
-                                                reply_markup=ForceReply(selective=True))
-        set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_kw", {"chat_id": cid})
-        
+            set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_kw", {"chat_id": cid})
+            return await query.message.reply_text(
+                "Format: <topic_id>; wort1, wort2, .",
+                reply_markup=ForceReply(selective=True))
+
         if sub == 'add_dom':
             context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid)
-            return await query.message.reply_text("Format: <topic_id>; domain1.tld, domain2.tld",
-                                                reply_markup=ForceReply(selective=True))
-        set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_dom", {"chat_id": cid})
+            set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_dom", {"chat_id": cid})
+            return await query.message.reply_text(
+                "Format: <topic_id>; domain1.tld, domain2.tld",
+                reply_markup=ForceReply(selective=True))
         
         if sub == 'del':
             context.user_data.update(awaiting_router_delete=True, router_group_id=cid)
@@ -957,6 +961,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif func == 'aimod' and sub == 'toggle':
                 pol = effective_ai_mod_policy(cid, 0)
                 set_ai_mod_settings(cid, 0, enabled=not pol['enabled'])
+                query.data = f"{cid}_aimod"
                 return await menu_callback(update, context)
 
             elif func == 'aimod' and sub == 'shadow':
@@ -1230,23 +1235,23 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         toggle_topic_router_rule(cid, rid, on)
         clear_pending_input(msg.chat.id, update.effective_user.id, 'router_toggle')
         return await msg.reply_text("🔁 Regel umgeschaltet.")
-    # 8) FAQ add
-    if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in pend):
+    
+    # FAQ hinzufügen: "Trigger ; Antwort"
+    if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in (pend or {})):
         cid = context.user_data.pop('faq_group_id', (pend.get('faq_add') or {}).get('chat_id'))
-        if "⟶" not in text and "->" not in text:
-            return await msg.reply_text("Bitte im Format <Trigger> ⟶ <Antwort> senden.")
+        parts = [p.strip() for p in (text or "").split(";", 1)]
+        if len(parts) != 2:
+            return await msg.reply_text("Format: Stichwort ; Antwort")
+        await _call_db_safe(upsert_faq, cid, parts[0], parts[1])
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_add')
-        splitter = "⟶" if "⟶" in text else "->"
-        trig, ans = [p.strip() for p in text.split(splitter, 1)]
-        upsert_faq(cid, trig, ans)
         return await msg.reply_text("✅ FAQ gespeichert.")
 
-    # 9) FAQ delete
-    if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in pend):
+    # FAQ löschen: nur "Trigger"
+    if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in (pend or {})):
         cid = context.user_data.pop('faq_group_id', (pend.get('faq_del') or {}).get('chat_id'))
-        delete_faq(cid, text.strip())
-        return await msg.reply_text("🗑 FAQ gelöscht (falls vorhanden).")
+        await _call_db_safe(delete_faq, cid, text.strip())
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_del')
+        return await msg.reply_text("✅ FAQ gelöscht.")
         
     if context.user_data.pop('awaiting_topic_limit', False):
         cid = context.user_data.pop('spam_group_id')

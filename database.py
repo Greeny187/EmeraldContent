@@ -902,16 +902,21 @@ def get_topic_owners(cur, chat_id: int) -> List[int]:
     return [row[0] for row in cur.fetchall()]
 
 @_with_cursor
-def get_link_settings(cur, chat_id: int) -> Tuple[bool, bool, str, bool]:
+def get_link_settings(cur, chat_id:int):
     cur.execute("""
-        SELECT link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled
-        FROM group_settings WHERE chat_id=%s;
+        SELECT link_protection_enabled, warning_enabled, warning_text, exceptions_enabled
+          FROM group_settings WHERE chat_id=%s;
     """, (chat_id,))
     row = cur.fetchone()
-    # falls chat_id noch nicht existiert, Default-Werte zurückgeben
-    return row if row else (False, False,
-                             '⚠️ Nur Admins dürfen Links posten.',
-                             True)
+    if not row:
+        return None
+    return {
+        "only_admin_links": bool(row[0]),
+        "admins_only": bool(row[0]),  # alias
+        "warning_enabled": bool(row[1]),
+        "warning_text": row[2],
+        "exceptions_enabled": bool(row[3]),
+    }
 
 @_with_cursor
 def set_link_settings(cur, chat_id: int,

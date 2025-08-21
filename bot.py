@@ -16,6 +16,7 @@ from jobs import register_jobs
 from request_config import create_request_with_increased_pool
 from ads import init_ads_schema, register_ads, register_ads_jobs
 from devmenu import register_dev_handlers
+from statistic import register_statistics_handlers
 
 # Env-Variablen prüfen
 API_ID    = os.getenv("TG_API_ID")
@@ -95,6 +96,7 @@ def main():
     
     # Handler-Reihenfolge korrigieren:
     register_handlers(app)  # group=0 (Commands)
+    register_statistics_handlers(app)  # group=0 (Statistics-Commands)
     register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
     register_menu(app)      # group=1 (Menu-Replies, keine Commands)
     register_rss(app)       # group=3 (RSS-spezifisch)

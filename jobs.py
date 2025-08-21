@@ -282,7 +282,7 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
         # Prüfen, ob der Status sich gerade geändert hat
         # KORREKTUR: Direkter Zugriff auf das chat_data-Dictionary für die jeweilige ID.
         nm_key = f"nm_status_{chat_id}"  # Eindeutiger Schlüssel pro Chat
-        last_status = context.bot_data.get(nm_key, not is_active)
+        last_status = context.bot_data.get(nm_key, is_active)
 
         if is_active and not last_status:
             # Nachtmodus wurde gerade AKTIVIERT => "bis hh:mm (TZ)"
