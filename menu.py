@@ -306,12 +306,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_ai_settings(cid, faq=not ai_faq)
         await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
         return await menu_callback(update, context)
-
-    elif func == 'faq' and sub == 'add':
-        context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
-        return await query.message.reply_text(
-            "Format:\n<Trigger> ⟶ <Antwort>",
-            reply_markup=ForceReply(selective=True))
         
     elif func == 'faq' and sub == 'add':
         context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
@@ -610,10 +604,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == "edit":
             context.user_data['awaiting_link_warn'] = True
             context.user_data['link_warn_group'] = cid
-            return await query.message.reply_text(tr("Sende jetzt deinen neuen Warn-Text:", lang),
-                                                  reply_markup=ForceReply(selective=True))
             set_pending_input(query.message.chat.id, update.effective_user.id, "link_warn",
-                      {"chat_id": cid})
+                                {"chat_id": cid})
+            return await query.message.reply_text(
+                tr("Sende jetzt deinen neuen Warn-Text:", lang),
+                reply_markup=ForceReply(selective=True)
+            )
 
         elif sub in ("toggle", "warn_toggle", "exc_toggle"):
             prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
@@ -683,7 +679,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} FAQ-Fallback", callback_data=f"{cid}_ai_faq_toggle")],
             [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} RSS-Zusammenfassung", callback_data=f"{cid}_ai_rss_toggle")],
-            [InlineKeyboardButton("🛡️ Moderation", callback_data=f"{cid}_aimod")]
+            [InlineKeyboardButton("🛡️ Moderation", callback_data=f"{cid}_aimod")],
             [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
