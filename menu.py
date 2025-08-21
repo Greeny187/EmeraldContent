@@ -1361,5 +1361,5 @@ def register_menu(app):
         & ~filters.COMMAND  # <- WICHTIG: Commands ausschließen
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
-    ), group=5)
+    ), group=1)
 
