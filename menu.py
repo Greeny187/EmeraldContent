@@ -9,7 +9,7 @@ from database import (
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed, get_ai_settings, set_ai_settings,
     is_daily_stats_enabled, set_daily_stats, get_mood_question, get_mood_topic, list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language, list_forum_topics, count_forum_topics, get_night_mode, set_night_mode,
-    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
+    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input, get_rss_feed_options, 
     effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings, effective_ai_mod_policy, top_strike_users, get_strike_points
 )
 from zoneinfo import ZoneInfo
@@ -241,8 +241,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
         ]
         text = tr('📰 RSS verwalten', lang)
-        topic = get_rss_topic(cid)  # int oder 0
-        topic_line = f"Aktuelles RSS-Topic: {topic}" if topic else "Kein RSS-Topic gesetzt."
+        topic_id = get_rss_topic(cid)  # bereits importiert/benutzt
+        topic_line = f"Aktuelles RSS-Topic: {topic_id}" if topic_id else "Kein RSS-Topic gesetzt."
+        text = "📰 <b>RSS-Feeds</b>\n" + topic_line + "\n\n..."
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     # Captcha Submenü  
@@ -778,6 +779,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             elif sub == 'list':
                 feeds = db_list_rss_feeds(cid)
+                opts = get_rss_feed_options(cid, url) or {}
+                img_on = bool(opts.get("post_images", False))
                 if not feeds:
                     text = 'Keine RSS-Feeds.'
                 else:
@@ -789,9 +792,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         url  = item[0]
                         tid  = item[1] if len(item) > 1 else "?"
                         text_lines.append(f"- {url} (Topic {tid})")
-                        rows.append([InlineKeyboardButton(f"🖼 Toggle: {url}",
-                                     callback_data=f"{cid}_rss_img_toggle|{url}")])
-                    rows.append([InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")])
+                        row = [InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"
+                            ),
+                            InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}"),]
+                        kb.append(row)
                     return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows))
             elif sub == 'stop':
                 remove_rss_feed(cid)
@@ -811,22 +815,18 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if func == 'rss' and sub and sub.startswith('img_toggle'):
             pass
         if data.startswith(f"{cid}_rss_img_toggle|"):
-            url = data.split("|",1)[1]
-            # Toggle post_images für diesen Feed
+            url = data.split("|", 1)[1]
             try:
-                from database import set_rss_feed_options
-                # Es gibt kein read‑API -> togglen im Blindflug: erst True probieren, dann False
-                # Besser: erweitere DB-API, hier quick&dirty:
-                # Versuche beides nacheinander; in fetch wird der tatsächliche Wert berücksichtigt.
-                set_rss_feed_options(cid, url, post_images=True)
-                set_rss_feed_options(cid, url, post_images=False)
-                set_rss_feed_options(cid, url, post_images=True)
+                from database import get_rss_feed_options, set_rss_feed_options
+                cur = get_rss_feed_options(cid, url) or {}
+                new_val = not bool(cur.get("post_images", False))
+                set_rss_feed_options(cid, url, post_images=new_val)
                 log_feature_interaction(cid, update.effective_user.id, "menu:rss",
-                                        {"action":"post_images_toggle","url":url})
-                await query.answer("🖼 Bild-Posting umgeschaltet.", show_alert=True)
-            except Exception:
-                await query.answer("⚠️ Konnte post_images nicht togglen.", show_alert=True)
-            # Zurück zur Liste
+                                        {"action": "post_images_toggle", "url": url, "value": new_val})
+                await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
+            except Exception as e:
+                await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
+            # zurück zur Liste (oder direkt RSS-Start)
             query.data = f"{cid}_rss_list"
             return await menu_callback(update, context)
 
@@ -856,25 +856,32 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 set_spam_policy_topic(cid, topic_id, max_msgs_per_10s=max(0, cur))
                 update.callback_query.data = f"{cid}_spam_t_{topic_id}"
                 return await menu_callback(update, context)
-            if parts[0] in ('wl','bl') and parts[1]=='edit':
+            if parts[0] in ('wl','bl') and parts[1] == 'edit':
                 topic_id = int(parts[2])
-                if parts[0] == 'wl':
-                    context.user_data.update(awaiting_spam_whitelist=True, spam_group_id=cid, spam_topic_id=topic_id)
-                    return await query.message.reply_text("Sende Whitelist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
-                    set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
-                          {"chat_id": cid, "topic_id": topic_id, "which": "whitelist"})
-                else:
-                    context.user_data.update(awaiting_spam_blacklist=True, spam_group_id=cid, spam_topic_id=topic_id)
-                    return await query.message.reply_text("Sende Blacklist-Domains, Komma-getrennt:", reply_markup=ForceReply(selective=True))
-                    set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
-                          {"chat_id": cid, "topic_id": topic_id, "which": "blacklist"})
+                which = 'whitelist' if parts[0] == 'wl' else 'blacklist'
+                context.user_data.update(
+                    awaiting_spam_whitelist = (which == 'whitelist'),
+                    awaiting_spam_blacklist = (which == 'blacklist'),
+                    spam_group_id = cid,
+                    spam_topic_id = topic_id
+                )
+                set_pending_input(
+                    query.message.chat.id,
+                    update.effective_user.id,
+                    "spam_edit",
+                    {"chat_id": cid, "topic_id": topic_id, "which": which}
+                )
+                prompt = "Sende die Whitelist-Domains, Komma-getrennt:" if which == 'whitelist' \
+                        else "Sende die Blacklist-Domains, Komma-getrennt:"
+                return await query.message.reply_text(prompt, reply_markup=ForceReply(selective=True))
 
         elif func == 'spam' and sub and sub.startswith('limt_edit_'):
             topic_id = int(sub.split('_')[-1])
             context.user_data.update(awaiting_topic_limit=True, spam_group_id=cid, spam_topic_id=topic_id)
-            return await query.message.reply_text("Bitte Limit/Tag/User als Zahl senden (0 = aus):", reply_markup=ForceReply(selective=True))
             set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
                           {"chat_id": cid, "topic_id": topic_id, "which": "limit"})
+            return await query.message.reply_text("Bitte Limit/Tag/User als Zahl senden (0 = aus):", reply_markup=ForceReply(selective=True))
+            
 
         elif func == 'spam' and sub and sub.startswith('qmode_'):
             topic_id = int(sub.split('_')[-1])
@@ -905,14 +912,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             topic_id = int(sub.split('_')[-1])
             if 'pick_kw_' in sub:
                 context.user_data.update(awaiting_router_add_keywords=True, router_group_id=cid, router_target_tid=topic_id)
-                return await query.message.reply_text("Sende Keywords (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
                 set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_kw",
                           {"chat_id": cid, "target_tid": topic_id})
+                return await query.message.reply_text("Sende Keywords (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+                
             else:
                 context.user_data.update(awaiting_router_add_domains=True, router_group_id=cid, router_target_tid=topic_id)
-                return await query.message.reply_text("Sende Domains (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
                 set_pending_input(query.message.chat.id, update.effective_user.id, "router_add_dom",
                           {"chat_id": cid, "target_tid": topic_id})
+                return await query.message.reply_text("Sende Domains (Komma-getrennt) für die Regel:", reply_markup=ForceReply(selective=True))
+                
 
         # === Sprachcode setzen ===
         elif func == 'setlang' and sub:
@@ -1179,44 +1188,6 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             return await msg.reply_text(f"⚠️ Fehler beim Speichern der Mood-Frage: {e}")
             clear_pending_input(msg.chat.id, update.effective_user.id, 'mood_q')
             
-    # Weitere Handler mit AWAIT...
-    if context.user_data.pop('awaiting_spam_whitelist', False) or ((pend.get('spam_edit') or {}).get('which') == 'whitelist'):
-        cid = context.user_data.pop('spam_group_id', (pend.get('spam_edit') or {}).get('chat_id'))
-        tid = context.user_data.pop('spam_topic_id', (pend.get('spam_edit') or {}).get('topic_id', 0))
-        wl = [d.strip().lower() for d in text.split(",") if d.strip()]
-        await _call_db_safe(set_spam_policy_topic, cid, tid, link_whitelist=wl)
-        clear_pending_input(msg.chat.id, update.effective_user.id, 'spam_edit')
-        return await msg.reply_text(f"✅ Whitelist gespeichert (Topic {tid}).")
-
-    if context.user_data.pop('awaiting_spam_blacklist', False)  or ((pend.get('spam_edit') or {}).get('which') == 'blacklist'):
-        cid = context.user_data.pop('spam_group_id', (pend.get('spam_edit') or {}).get('chat_id'))
-        tid = context.user_data.pop('spam_topic_id', (pend.get('spam_edit') or {}).get('topic_id', 0))
-        bl = [d.strip().lower() for d in text.split(",") if d.strip()]
-        await _call_db_safe(set_spam_policy_topic, cid, tid, domain_blacklist=bl)
-        clear_pending_input(msg.chat.id, update.effective_user.id, 'spam_edit')
-        return await msg.reply_text(f"✅ Blacklist gespeichert (Topic {tid}).")
-
-    # 4) Router: add keywords (mit Ziel-Topic)
-    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in pend):
-        cid = context.user_data.pop('router_group_id', (pend.get('router_add_kw') or {}).get('chat_id'))
-        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_kw') or {}).get('target_tid'))
-        kws = [w.strip() for w in text.split(",") if w.strip()]
-        if not tid or not kws:
-            return await msg.reply_text("Bitte Keywords angeben.")
-        rid = add_topic_router_rule(cid, tid, keywords=kws)
-        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_kw')
-        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Keywords) angelegt.")
-
-    # 5) Router: add domains (mit Ziel-Topic)
-    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in pend):
-        cid = context.user_data.pop('router_group_id', (pend.get('router_add_dom') or {}).get('chat_id'))
-        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_dom') or {}).get('target_tid'))
-        doms = [d.strip().lower() for d in text.split(",") if d.strip()]
-        if not tid or not doms:
-            return await msg.reply_text("Bitte Domains angeben.")
-        rid = add_topic_router_rule(cid, tid, domains=doms)
-        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_dom')
-        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Domains) angelegt.")
     # 6) Router: delete
     if context.user_data.pop('awaiting_router_delete', False) or ('router_delete' in pend):
         cid = context.user_data.pop('router_group_id', (pend.get('router_delete') or {}).get('chat_id'))

@@ -1564,6 +1564,22 @@ def set_rss_feed_options(cur, chat_id:int, url:str, *, post_images:bool|None=Non
     cur.execute(sql, params + [chat_id, url])
 
 @_with_cursor
+def get_rss_feed_options(cur, chat_id:int, url:str):
+    """
+    Liefert aktuelle Optionen für einen Feed.
+    Rückgabe: {"post_images": bool, "enabled": bool} oder None falls nicht gefunden.
+    """
+    cur.execute("""
+        SELECT post_images, enabled
+          FROM rss_feeds
+         WHERE chat_id=%s AND url=%s;
+    """, (chat_id, url))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {"post_images": bool(row[0]), "enabled": bool(row[1])}
+
+@_with_cursor
 def update_rss_http_cache(cur, chat_id:int, url:str, etag:str|None, last_modified:str|None):
     cur.execute("""
         UPDATE rss_feeds SET last_etag=%s, last_modified=%s
@@ -1578,6 +1594,8 @@ def get_rss_feeds_full(cur):
         ORDER BY chat_id, url;
     """)
     return cur.fetchall()
+
+# --- KI ---
 
 @_with_cursor
 def get_ai_settings(cur, chat_id:int) -> tuple[bool,bool]:
