@@ -1116,9 +1116,9 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     # --- DB-Fallback: offener Edit-Flow?
     if 'last_edit' not in context.user_data:
-        pend = get_pending_input(msg.chat.id, update.effective_user.id, "edit")
-        if pend and isinstance(pend, dict) and pend.get("what") and pend.get("target_chat_id"):
-            context.user_data['last_edit'] = (int(pend["target_chat_id"]), pend["what"])
+        e_pend = get_pending_input(msg.chat.id, update.effective_user.id, "edit")
+        if e_pend and isinstance(e_pend, dict) and e_pend.get("what") and e_pend.get("target_chat_id"):
+            context.user_data['last_edit'] = (int(e_pend["target_chat_id"]), e_pend["what"])
             clear_pending_input(msg.chat.id, update.effective_user.id, "edit")
 
     # 'last_edit' Handler
@@ -1189,7 +1189,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             clear_pending_input(msg.chat.id, update.effective_user.id, 'mood_q')
             
     # 6) Router: delete
-    if context.user_data.pop('awaiting_router_delete', False) or ('router_delete' in pend):
+    if context.user_data.pop('awaiting_router_delete', False) or ('router_delete' in (pend or {})):
         cid = context.user_data.pop('router_group_id', (pend.get('router_delete') or {}).get('chat_id'))
         if not text.isdigit():
             return await msg.reply_text("Bitte eine numerische Regel-ID senden.")
@@ -1265,7 +1265,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         clear_pending_input(cid, update.effective_user.id, "router_add_kw")
         return await msg.reply_text(f"✅ {len(kws)} Keyword(s) hinzugefügt.")
 
-    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in pend):
+    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in (pend or {})):
         cid = context.user_data.pop('router_group_id', pend.get('router_add_dom',{}).get('chat_id'))
         doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
         for d in doms: add_topic_router_rule(cid, domain=d)
