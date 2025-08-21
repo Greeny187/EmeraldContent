@@ -24,7 +24,7 @@ from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai
 from user_manual import help_handler
 from menu import show_group_menu
 from statistic import log_spam_event, log_night_event
-from access import get_visible_groups
+from access import get_visible_groups, resolve_privileged_flags
 from translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
@@ -150,18 +150,15 @@ async def spam_enforcer(update, context):
     topic_id = getattr(msg, "message_thread_id", None)
 
     # Ausnahme: Admin / anonymer Admin / Topic-Owner
-    admins = await context.bot.get_chat_administrators(chat_id)
-    is_admin = any(a.user.id == user.id and a.status in ("administrator", "creator") for a in admins) if user else False
-    is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat_id)
-    is_topic_owner = False
-    try:
-        if user:
-            is_topic_owner = has_topic(chat_id, user.id)
-    except Exception:
-        is_topic_owner = False
+
+    is_owner, is_admin, is_anon_admin, is_topic_owner, chat_id, user_id = \
+        await resolve_privileged_flags(msg, context)
+
+    privileged = is_owner or is_admin or is_anon_admin or is_topic_owner
+    if privileged:
+        return  # Admins/Owner/Anonyme überspringen
 
     policy = get_effective_link_policy(chat_id, topic_id)
-    privileged = bool(is_admin or is_anon_admin or is_topic_owner)
     domains_in_msg = _extract_domains(text)
     violation = False
     reason = None
