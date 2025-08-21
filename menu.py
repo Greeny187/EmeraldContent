@@ -152,6 +152,147 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
     target = dest_chat_id if dest_chat_id is not None else cid
     await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
 
+async def _render_rss_list(query, cid, lang=None):
+    lang = lang or (get_group_language(cid) or "de")
+    feeds = db_list_rss_feeds(cid) or []
+    if not feeds:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')]])
+        return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=kb)
+
+    rows = []
+    text_lines = ["Aktive Feeds:"]
+    for item in feeds:
+        url = item[0]
+        tid = item[1] if len(item) > 1 else "?"
+        opts = get_rss_feed_options(cid, url) or {}
+        img_on = bool(opts.get("post_images", False))
+        text_lines.append(f"- {url} (Topic {tid})")
+        rows.append([
+            InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"),
+            InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}")
+        ])
+    rows.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')])
+    return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows))
+
+async def _render_spam_root(query, cid, lang=None):
+    lang = lang or (get_group_language(cid) or "de")
+    pol = get_spam_policy_topic(cid, 0) or {}
+    level = pol.get('level', 'off')
+    level_info = {
+        'off': '❌ Deaktiviert',
+        'light': '🟡 Leicht (20 Emojis, 10 Msgs/10s)',
+        'medium': '🟠 Mittel (10 Emojis, 60/min, 6 Msgs/10s)',
+        'strict': '🔴 Streng (6 Emojis, 30/min, 4 Msgs/10s)'
+    }
+    prot_on, *_ = get_link_settings(cid)
+    text = (
+        "🧹 <b>Spamfilter (Default / Topic 0)</b>\n\n"
+        f"📊 <b>Level:</b> {level_info.get(level, level)}\n\n"
+        "⚙️ <b>Funktionen:</b>\n"
+        "• 📊 Emoji-Limits pro Nachricht/Minute\n"
+        "• ⏱ Flood-Protection (Nachrichten/10s)\n"
+        "• 🔗 Domain Whitelist/Blacklist\n"
+        "• 📝 Tageslimits pro Topic & User\n"
+        "• 🎯 Topic-spezifische Regeln\n\n"
+        f"📈 Aktuell: {pol.get('emoji_max_per_msg', 0)} Emojis, "
+        f"{pol.get('max_msgs_per_10s', 0)} Msgs/10s\n"
+        f"✅ Whitelist: {len(pol.get('link_whitelist', []))} Domains\n"
+        f"❌ Blacklist: {len(pol.get('domain_blacklist', []))} Domains"
+    )
+    kb = [
+        [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
+        [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit"),
+         InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit")],
+        [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} 🔗 Nur Admin-Links (Gruppe)",
+                              callback_data=f"{cid}_spam_link_admins_global")],
+        [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
+        [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_spam_topic(query, cid, topic_id):
+    pol = get_spam_policy_topic(cid, topic_id) or {}
+    level = pol.get('level', 'off')
+    emsg = pol.get('emoji_max_per_msg', 0) or 0
+    rate = pol.get('max_msgs_per_10s', 0) or 0
+    wl = ", ".join(pol.get('link_whitelist') or []) or "–"
+    bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
+    limit = pol.get('per_user_daily_limit', 0) or 0
+    qmode = (pol.get('quota_notify') or 'smart')
+    text = (
+        f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
+        f"Level: <b>{level}</b>\n"
+        f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
+        f"Limit/Tag/User: <b>{limit}</b>\n"
+        f"Rest-Info: <b>{qmode}</b>\n"
+        f"Whitelist: {wl}\nBlacklist: {bl}"
+    )
+    kb = [
+        [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
+        [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_-_{topic_id}"),
+         InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
+        [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
+         InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
+        [InlineKeyboardButton("🔗 Nur Admin-Links: TOGGLE", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
+         InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
+        [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
+         InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
+        [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
+        [InlineKeyboardButton("Benachrichtigung ⏭", callback_data=f"{cid}_spam_qmode_{topic_id}")],
+        [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_spam_tsel")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_aimod_root(query, cid):
+    pol = effective_ai_mod_policy(cid, 0)
+    text = (
+        "🛡️ <b>KI-Moderation (global)</b>\n\n"
+        f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
+        f"Aktionsfolge: <b>{pol['action_primary']}</b> → Eskalation nach {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
+        f"Mute-Dauer: <b>{pol['mute_minutes']} min</b>\n"
+        f"Ratenlimit: <b>{pol['max_calls_per_min']}/min</b> • Cooldown: <b>{pol['cooldown_s']}s</b>\n\n"
+        f"Schwellen (0..1): tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} "
+        f"harass={pol['harass_thresh']} self={pol['selfharm_thresh']} viol={pol['violence_thresh']} link={pol['link_risk_thresh']}\n"
+    )
+    kb = [
+        [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
+         InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
+        [InlineKeyboardButton("⚖️ Strikes", callback_data=f"{cid}_aimod_strikes"),
+         InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act")],
+        [InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal"),
+         InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes")],
+        [InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate"),
+         InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
+        [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
+         InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
+        [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
+        [InlineKeyboardButton("📄 Rohwerte (global)", callback_data=f"{cid}_aimod_raw")],
+        [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_aimod_topic(query, cid, tid):
+    pol = effective_ai_mod_policy(cid, tid)
+    kb = [
+        [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_tgl_{tid}"),
+         InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shd_{tid}")],
+        [InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act_{tid}"),
+         InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_esc_{tid}")],
+        [InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr_{tid}")],
+        [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_wr_{tid}"),
+         InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_ap_{tid}")],
+        [InlineKeyboardButton("📄 Rohwerte (Topic)", callback_data=f"{cid}_aimod_raw_{tid}")],
+        [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_aimod_topics")]
+    ]
+    txt = (
+        f"🛡️ <b>Topic {tid} – KI-Moderation</b>\n"
+        f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
+        f"Aktionsfolge: <b>{pol['action_primary']}</b> → {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
+        f"Schwellen: tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} ..."
+    )
+    return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
 # =========================
 # Haupt-Callback-Controller
 # =========================
@@ -210,6 +351,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2) Sub-Menüs (Einstiege)
     # =========================
 
+    
     if func in ('welcome', 'rules', 'farewell') and sub is None:
         kb = [
             [InlineKeyboardButton(tr('Bearbeiten', lang), callback_data=f"{cid}_{func}_edit"),
@@ -468,14 +610,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # stoppt alle Feeds der Gruppe
             remove_rss_feed(cid)
             await query.answer('✅ RSS gestoppt', show_alert=True)
-            return await show_group_menu(query=query, cid=cid, context=context)
+            return await _render_rss_list(query, cid, lang)
 
         if sub == 'ai_toggle':
             ai_faq, ai_rss = get_ai_settings(cid)
             set_ai_settings(cid, rss=not ai_rss)
             log_feature_interaction(cid, update.effective_user.id, "menu:rss", {"action": "ai_toggle", "from": ai_rss, "to": (not ai_rss)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            return await menu_callback(update, context)
+            return await _render_rss_list(query, cid, lang)
 
         # Bild-Posting pro URL togglen
         if data.startswith(f"{cid}_rss_img_toggle|"):
@@ -490,7 +632,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
             query.data = f"{cid}_rss_list"
-            return await menu_callback(update, context)
+            return await _render_rss_list(query, cid, lang)
 
         if data.startswith(f"{cid}_rss_del|"):
             url = data.split("|", 1)[1]
@@ -502,7 +644,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 await query.answer("⚠️ Entfernen fehlgeschlagen (prüfe DB-Funktion).", show_alert=True)
             query.data = f"{cid}_rss_list"
-            return await menu_callback(update, context)
+            return await _render_rss_list(query, cid, lang)
 
     # --- Spam ---
     if func == 'spam' and sub is None:
@@ -550,7 +692,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             nxt = order[(order.index(pol.get('level', 'off')) + 1) % len(order)]
             set_spam_policy_topic(cid, 0, level=nxt)
             await query.answer(f"Level: {nxt}", show_alert=True)
-            return await menu_callback(update, context)
+            return await _render_spam_root(query, cid)
 
         if sub == 'tsel':
             return await query.edit_message_text(
@@ -610,7 +752,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur, warn_text, *_ = get_link_settings(cid)
             await _call_db_safe(set_link_settings, cid, only_admin_links=not cur, warning_text=warn_text)
             await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
-            return await menu_callback(update, context)
+            return await _render_spam_root(query, cid)
 
         if sub.startswith('link_admins_'):
             tid = int(sub.split('_')[-1])
@@ -619,7 +761,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_spam_policy_topic(cid, tid, only_admin_links=not cur)
             await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not cur else 'AUS'}", show_alert=True)
             update.callback_query.data = f"{cid}_spam_t_{tid}"
-            return await menu_callback(update, context)
+            return await _render_spam_topic(query, cid, topic_id)
 
         if sub.startswith('link_warn_'):
             tid = int(sub.split('_')[-1])
@@ -637,7 +779,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_spam_policy_topic(cid, topic_id, level=nxt)
             await query.answer(f"Level: {nxt}", show_alert=True)
             update.callback_query.data = f"{cid}_spam_t_{topic_id}"
-            return await menu_callback(update, context)
+            return await _render_spam_topic(query, cid, topic_id)
 
         if sub.startswith(('emj_', 'rate_', 'wl_edit_', 'bl_edit_', 'limt_edit_', 'qmode_')):
             parts = sub.split('_')
@@ -647,7 +789,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur = (pol.get('emoji_max_per_msg') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, emoji_max_per_msg=max(0, cur))
                 update.callback_query.data = f"{cid}_spam_t_{topic_id}"
-                return await menu_callback(update, context)
+                return await _render_spam_topic(query, cid, topic_id)
 
             if parts[0] == 'rate':
                 op, topic_id = parts[1], int(parts[2])
@@ -655,7 +797,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur = (pol.get('max_msgs_per_10s') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, max_msgs_per_10s=max(0, cur))
                 update.callback_query.data = f"{cid}_spam_t_{topic_id}"
-                return await menu_callback(update, context)
+                return await _render_spam_topic(query, cid, topic_id)
 
             if parts[0] in ('wl', 'bl') and parts[1] == 'edit':
                 topic_id = int(parts[2])
@@ -691,7 +833,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 set_spam_policy_topic(cid, topic_id, quota_notify=nxt)
                 await query.answer(f"Rest-Info: {nxt}", show_alert=True)
                 update.callback_query.data = f"{cid}_spam_t_{topic_id}"
-                return await menu_callback(update, context)
+                return await _render_spam_topic(query, cid, topic_id)
 
     # --- Topic-Router ---
     if func == 'router' and sub is None:
@@ -744,23 +886,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pol = effective_ai_mod_policy(cid, 0)
             set_ai_mod_settings(cid, 0, enabled=not pol['enabled'])
             query.data = f"{cid}_aimod"
-            return await menu_callback(update, context)
+            return await _render_aimod_root(query, cid)
         if sub == 'shadow':
             pol = effective_ai_mod_policy(cid, 0)
             set_ai_mod_settings(cid, 0, shadow_mode=not pol['shadow_mode'])
-            return await menu_callback(update, context)
+            return await _render_aimod_root(query, cid)
         if sub == 'act':
             order = ['delete', 'warn', 'mute', 'ban']
             cur = effective_ai_mod_policy(cid, 0)['action_primary']
             nxt = order[(order.index(cur) + 1) % len(order)]
             set_ai_mod_settings(cid, 0, action_primary=nxt)
-            return await menu_callback(update, context)
+            return await _render_aimod_root(query, cid)
         if sub == 'escal':
             order = ['mute', 'ban']
             cur = effective_ai_mod_policy(cid, 0)['escalate_action']
             nxt = order[(order.index(cur) + 1) % len(order)]
             set_ai_mod_settings(cid, 0, escalate_action=nxt)
-            return await menu_callback(update, context)
+            return await _render_aimod_root(query, cid)
         if sub == 'thr':
             context.user_data.update(awaiting_aimod_thresholds=True, aimod_chat_id=cid, aimod_topic_id=0)
             return await query.message.reply_text(
@@ -861,7 +1003,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await query.message.reply_text("Appeal-URL senden (leer = entfernen):", reply_markup=ForceReply(selective=True))
             # zurück in Topic-Ansicht
             query.data = f"{cid}_aimod_topic_{tid}"
-            return await menu_callback(update, context)
+            return await _render_aimod_topic(query, cid, tid)
 
     if func == 'aimod' and sub == 'raw':
         raw = get_ai_mod_settings(cid, 0) or {}   # <-- Import wird hier genutzt
@@ -954,6 +1096,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # Menü neu zeichnen in neuer Sprache
         return await show_group_menu(query=query, cid=cid, context=context)
+    
+    # --- Hilfe (Handbuch) / Patchnotes: sauber getrennt, CID-gebunden ---
+    m_help = re.match(r'^(-?\d+)_help$', data)
+    m_notes = re.match(r'^(-?\d+)_patchnotes$', data)
+
+    if m_help:
+        cid = int(m_help.group(1))
+        lang = get_group_language(cid) or "de"
+        translated = translate_hybrid(HELP_TEXT, target_lang=lang)
+        path = f'/tmp/user_manual_{lang}.md'
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(translated)
+            await query.message.reply_document(document=open(path, 'rb'),
+                                            filename=f'Handbuch_{lang}.md')
+        finally:
+            try:
+                import os; os.remove(path)
+            except Exception:
+                pass
+        return
+
+    if m_notes:
+        cid = int(m_notes.group(1))
+        lang = get_group_language(cid) or "de"
+        notes_text = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
+        text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes_text}"
+        await query.message.reply_text(text, parse_mode="HTML")
+        return
     
     # Fallback: Hauptmenü der aktuell gewählten Gruppe
     cid = context.user_data.get('selected_chat_id', cid)
