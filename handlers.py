@@ -153,9 +153,15 @@ async def spam_enforcer(update, context):
     admins = await context.bot.get_chat_administrators(chat_id)
     is_admin = any(a.user.id == user.id and a.status in ("administrator", "creator") for a in admins) if user else False
     is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat_id)
+    is_topic_owner = False
+    try:
+        if user:
+            is_topic_owner = has_topic(chat_id, user.id)
+    except Exception:
+        is_topic_owner = False
+
     policy = get_effective_link_policy(chat_id, topic_id)
-    privileged = is_admin or is_anon_admin or is_topic_owner
-    is_topic_owner = has_topic(chat_id, user.id) if user else False
+    privileged = bool(is_admin or is_anon_admin or is_topic_owner)
     domains_in_msg = _extract_domains(text)
     violation = False
     reason = None

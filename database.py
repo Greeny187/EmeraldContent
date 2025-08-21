@@ -904,7 +904,7 @@ def get_topic_owners(cur, chat_id: int) -> List[int]:
 @_with_cursor
 def get_link_settings(cur, chat_id:int):
     cur.execute("""
-        SELECT link_protection_enabled, link_warning_enabled, link_warning_text, link_warning_enabled
+        SELECT link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled
           FROM group_settings WHERE chat_id=%s;
     """, (chat_id,))
     row = cur.fetchone()
