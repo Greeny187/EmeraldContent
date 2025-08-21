@@ -732,23 +732,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_mood_question'):
         return await mood_question_handler(update, context)
 
-    # Linksperre-Check
-    prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
-    if prot_on and message.text and re.search(r'https?://|\bwww\.', message.text.lower()):
-        admins = await context.bot.get_chat_administrators(chat_id)
-        is_admin = any(a.user.id == user.id and a.status in ("administrator","creator") for a in admins)
-        is_anon_admin = bool(getattr(message, 'sender_chat', None) and message.sender_chat.id == chat_id)
-        is_topic_owner = except_on and has_topic(chat_id, user.id)
-        if not (is_admin or is_anon_admin or is_topic_owner):
-            try:
-                if warn_on:
-                    await context.bot.send_message(chat_id, warn_text)
-                await message.delete()
-            except Exception as e:
-                logger.error(f"Löschen fehlgeschlagen: {e}")
-            return
-
-
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Nur aktiv, wenn zuvor im Menü „Bearbeiten“ gedrückt wurde
     if "last_edit" not in context.user_data:

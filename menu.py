@@ -570,51 +570,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-    # Linksperre Submenü
-    elif func == 'linkprot' and sub is None:
-        # Linkschutz ist in Spamfilter integriert – render direkt das Spam-Menü neu:
-            update.callback_query.data = f"{cid}_spam"
-            return await menu_callback(update, context)
-
-    elif func == 'linkprot':
-        # Aktionen + direktes Neu-Rendern des Submenüs (ohne rekursive data-Manipulation)
-        if sub == "edit":
-            context.user_data['awaiting_link_warn'] = True
-            context.user_data['link_warn_group'] = cid
-            set_pending_input(query.message.chat.id, update.effective_user.id, "link_warn",
-                                {"chat_id": cid})
-            return await query.message.reply_text(
-                tr("Sende jetzt deinen neuen Warn-Text:", lang),
-                reply_markup=ForceReply(selective=True)
-            )
-
-        elif sub in ("toggle", "warn_toggle", "exc_toggle"):
-            prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
-            if sub == "toggle":
-                set_link_settings(cid, protection=not prot_on)
-                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
-                                        {"action":"toggle","from":prot_on,"to":(not prot_on)})
-            elif sub == "warn_toggle":
-                set_link_settings(cid, warning_on=not warn_on)
-                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
-                                        {"action":"warn_toggle","from":warn_on,"to":(not warn_on)})
-            elif sub == "exc_toggle":
-                set_link_settings(cid, exceptions_on=not except_on)
-                log_feature_interaction(cid, update.effective_user.id, "menu:linksperre",
-                                        {"action":"exc_toggle","from":except_on,"to":(not except_on)})
-            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            # aktualisierte Werte laden und Submenü neu anzeigen
-            prot_on, warn_on, warn_text, except_on = get_link_settings(cid)
-            kb = [
-                [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} {tr('Linkschutz aktiv', lang)}", callback_data=f"{cid}_linkprot_toggle")],
-                [InlineKeyboardButton(f"{'✅' if warn_on else '☐'} {tr('Warnhinweis senden', lang)}", callback_data=f"{cid}_linkprot_warn_toggle")],
-                [InlineKeyboardButton(f"{'✅' if except_on else '☐'} {tr('Ausnahmen (Topic-Owner)', lang)}", callback_data=f"{cid}_linkprot_exc_toggle")],
-                [InlineKeyboardButton(tr('Warntext ändern', lang), callback_data=f"{cid}_linkprot_edit")],
-                [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
-            ]
-            text = tr('🔗 Linkschutz – Einstellungen', lang)
-            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
-
     elif func == 'spam' and sub.startswith('link_warn_'):
         tid = int(sub.split('_')[-1])
         context.user_data['awaiting_link_warn'] = True
@@ -670,7 +625,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
             [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
         ]
-        return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
     
     elif func == 'aimod' and sub == 'strikes':
         pol = effective_ai_mod_policy(cid, 0)
