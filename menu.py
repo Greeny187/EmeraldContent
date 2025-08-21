@@ -161,41 +161,44 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = (query.data or "").strip()
 
-    # 0) Globale Sonderfälle (ohne {cid}_...)
+    # A) GRUPPENAUSWAHL (muss vor Regex passieren)
     if data == "group_select":
-        from database import get_registered_groups  # nur falls benötigt
         groups = await get_visible_groups(update.effective_user.id)
         if not groups:
             return await query.edit_message_text("⚠️ Keine Gruppen verfügbar.")
         kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
         return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
-    # Handbuch/Patchnotes **vor** dem Regex-Fallback behandeln
-    if data in ("help", "patchnotes"):
-        # aktuelle (zuletzt genutzte) Gruppe ermitteln
-        cid = context.user_data.get("selected_chat_id") or query.message.chat.id
-        lang = get_group_language(cid) or "de"
-        if data == "help":
-            translated = translate_hybrid(HELP_TEXT, target_lang=lang)
-            path = f'user_manual_{lang}.md'
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(translated)
-            await query.message.reply_document(document=open(path, 'rb'), filename=f'Handbuch_{lang}.md')
-            return
+    if data.startswith("group_"):
+        id_str = data.split("_", 1)[1].strip()
+        if id_str.lstrip("-").isdigit():
+            cid = int(id_str)
+            # >>> WICHTIG: Auswahl persistieren
+            context.user_data["selected_chat_id"] = cid
+            # Optional: kleine Quittung vermeiden -> direkt Menü zeichnen
+            return await show_group_menu(query=query, cid=cid, context=context)
         else:
-            notes_text = PATCH_NOTES if lang == 'de' else translate_hybrid(PATCH_NOTES, target_lang=lang)
-            text = f"📝 <b>Patchnotes v{__version__}</b>\n\n{notes_text}"
-            await query.message.reply_text(text, parse_mode="HTML")
-            return
+            return await query.answer("Ungültige Gruppen-ID.", show_alert=True)
 
-    # 1) Einheitliches Pattern: {cid}_{func}[_sub]
+    # B) Danach Regex matchen
     m = re.match(r'^(-?\d+)_([a-zA-Z0-9]+)(?:_(.+))?$', data)
+    
+    # 1) Einheitliches Pattern: {cid}_{func}[_sub]
     if not m:
-        # Fallback: zurück ins aktuelle Gruppenmenü
-        cid = context.user_data.get("selected_chat_id")
-        if not cid:
-            return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
-        return await show_group_menu(query=query, cid=cid, context=context)
+        # Versuche zuerst die gemerkte Auswahl
+        cid_saved = context.user_data.get("selected_chat_id")
+        if cid_saved:
+            return await show_group_menu(query=query, cid=cid_saved, context=context)
+
+        # Als Notnagel: Wenn die Nachricht in einer Gruppe gedrückt wurde,
+        # nutze deren Chat-ID (verhindert "Keine Gruppe ausgewählt" in Gruppen)
+        msg_chat_id = query.message.chat.id
+        if str(msg_chat_id).startswith("-100"):  # Supergroup/Channel IDs
+            context.user_data["selected_chat_id"] = msg_chat_id
+            return await show_group_menu(query=query, cid=msg_chat_id, context=context)
+
+        # Sonst klare Fehlermeldung
+        return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
 
     cid  = int(m.group(1))
     func = m.group(2)
