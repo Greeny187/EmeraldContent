@@ -416,6 +416,34 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
+    # FAQ – Aktionen
+    if func == 'faq' and sub:
+        if sub == 'ai_toggle':
+            ai_faq, _ = get_ai_settings(cid)
+            set_ai_settings(cid, faq=not ai_faq)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+
+            # Menü erneut rendern (kein Rücksprung in denselben Zweig!)
+            faqs = list_faqs(cid) or []
+            lines = [f"• <code>{t}</code> → {a[:30]}..." for t, a in faqs[:10]]
+            ai_faq2, _ = get_ai_settings(cid)
+            help_text = (
+                "❓ <b>FAQ-System</b>\n\n"
+                "📝 <b>Hinzufügen:</b> <code>Trigger ⟶ Antwort</code>\n"
+                "Beispiel: <code>hilfe ⟶ Für Unterstützung schreibe @admin</code>\n\n"
+                "🔍 <b>Auslösung:</b> Wenn Nutzer 'hilfe' schreibt oder fragt\n\n"
+                "🤖 <b>KI-Fallback:</b> Bei unbekannten Fragen automatische Antworten\n\n"
+                "<b>Aktuelle FAQs:</b>\n" + ("\n".join(lines) if lines else "Noch keine Einträge.")
+            )
+            kb = [
+                [InlineKeyboardButton("➕ FAQ hinzufügen", callback_data=f"{cid}_faq_add"),
+                InlineKeyboardButton("🗑 FAQ löschen", callback_data=f"{cid}_faq_del")],
+                [InlineKeyboardButton(f"{'✅' if ai_faq2 else '☐'} KI-Fallback", callback_data=f"{cid}_faq_ai_toggle")],
+                [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_faq_help")],
+                [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+            ]
+            return await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    
     if func == 'language' and sub is None:
         cur = get_lang(cid) or 'de'
         kb = [[InlineKeyboardButton(f"{'✅ ' if c == cur else ''}{n}", callback_data=f"{cid}_setlang_{c}")]
@@ -489,33 +517,50 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-    if func == 'aimod' and sub is None:
-        pol = effective_ai_mod_policy(cid, 0)
-        text = (
-            "🛡️ <b>KI-Moderation (global)</b>\n\n"
-            f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
-            f"Aktionsfolge: <b>{pol['action_primary']}</b> → Eskalation nach {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
-            f"Mute-Dauer: <b>{pol['mute_minutes']} min</b>\n"
-            f"Ratenlimit: <b>{pol['max_calls_per_min']}/min</b> • Cooldown: <b>{pol['cooldown_s']}s</b>\n\n"
-            f"Schwellen (0..1): tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} "
-            f"harass={pol['harass_thresh']} self={pol['selfharm_thresh']} viol={pol['violence_thresh']} link={pol['link_risk_thresh']}\n"
-        )
-        kb = [
-            [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
-             InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
-            [InlineKeyboardButton("⚖️ Strikes", callback_data=f"{cid}_aimod_strikes"),
-             InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act")],
-            [InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal"),
-             InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes")],
-            [InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate"),
-             InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
-            [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
-             InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
-            [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
-            [InlineKeyboardButton("📄 Rohwerte (global)", callback_data=f"{cid}_aimod_raw")],  # <-- NEU
-            [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
-        ]
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    # KI – Aktionen
+    if func == 'ai' and sub:
+        if sub == 'faq_toggle':
+            ai_faq, ai_rss = get_ai_settings(cid)
+            set_ai_settings(cid, faq=not ai_faq)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            # zurück ins KI-Hauptmenü (anderes data, keine Schleife)
+            query.data = f"{cid}_ai"
+            return await menu_callback(update, context)
+
+        if sub == 'rss_toggle':
+            ai_faq, ai_rss = get_ai_settings(cid)
+            set_ai_settings(cid, rss=not ai_rss)
+            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            query.data = f"{cid}_ai"
+            return await menu_callback(update, context)
+        
+        if func == 'aimod' and sub is None:
+            pol = effective_ai_mod_policy(cid, 0)
+            text = (
+                "🛡️ <b>KI-Moderation (global)</b>\n\n"
+                f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
+                f"Aktionsfolge: <b>{pol['action_primary']}</b> → Eskalation nach {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
+                f"Mute-Dauer: <b>{pol['mute_minutes']} min</b>\n"
+                f"Ratenlimit: <b>{pol['max_calls_per_min']}/min</b> • Cooldown: <b>{pol['cooldown_s']}s</b>\n\n"
+                f"Schwellen (0..1): tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} "
+                f"harass={pol['harass_thresh']} self={pol['selfharm_thresh']} viol={pol['violence_thresh']} link={pol['link_risk_thresh']}\n"
+            )
+            kb = [
+                [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
+                InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
+                [InlineKeyboardButton("⚖️ Strikes", callback_data=f"{cid}_aimod_strikes"),
+                InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act")],
+                [InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal"),
+                InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes")],
+                [InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate"),
+                InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
+                [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
+                InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
+                [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
+                [InlineKeyboardButton("📄 Rohwerte (global)", callback_data=f"{cid}_aimod_raw")],  # <-- NEU
+                [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
+            ]
+            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
     # =========================
     # 3) Aktionen / Unterpunkte
@@ -619,6 +664,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_ai_settings(cid, rss=not ai_rss)
             log_feature_interaction(cid, update.effective_user.id, "menu:rss", {"action": "ai_toggle", "from": ai_rss, "to": (not ai_rss)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            query.data = f"{cid}_rss"
             return await _render_rss_list(query, cid, lang)
 
         # Bild-Posting pro URL togglen
@@ -1063,13 +1109,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             topic_id = get_mood_topic(cid)
             if not topic_id:
                 await query.answer(tr('❗ Kein Mood-Topic gesetzt. Sende /setmoodtopic im gewünschten Thema.', lang), show_alert=True)
+                # WICHTIG: zurück auf das Untermenü schalten, sonst Endlosschleife
+                query.data = f"{cid}_mood"
                 return await menu_callback(update, context)
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("👍", callback_data="mood_like"),
-                                        InlineKeyboardButton("👎", callback_data="mood_dislike"),
-                                        InlineKeyboardButton("🤔", callback_data="mood_think")]])
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👍", callback_data="mood_like"),
+                InlineKeyboardButton("👎", callback_data="mood_dislike"),
+                InlineKeyboardButton("🤔", callback_data="mood_think")]
+            ])
             await context.bot.send_message(chat_id=cid, text=q, reply_markup=kb, message_thread_id=topic_id)
             await query.answer(tr('✅ Mood-Frage gesendet.', lang), show_alert=True)
+
+            # WICHTIG: hier ebenfalls zurück ins Mood-Menü (anderes data!)
+            query.data = f"{cid}_mood"
             return await menu_callback(update, context)
+        
         if sub == 'topic_help':
             help_txt = (
                 "🧵 <b>Topic setzen</b>\n\n"
