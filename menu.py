@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 # DB/Service-Importe (bereinigt)
 # -----------------------------
 from database import (
-    get_link_settings, set_link_settings,
+    get_link_settings, set_link_settings, _call_db_safe
     get_welcome, set_welcome, delete_welcome,
     get_rules, set_rules, delete_rules,
     get_captcha_settings, set_captcha_settings,
@@ -76,16 +76,6 @@ async def _edit_or_send(query, title, markup):
                 await query.edit_message_reply_markup(markup)
             except Exception:
                 pass
-
-async def _call_db_safe(fn, *args, **kwargs):
-    """Sichere Ausführung von sync/async DB-Funktionen mit Logging."""
-    try:
-        if inspect.iscoroutinefunction(fn):
-            return await fn(*args, **kwargs)
-        return await asyncio.to_thread(fn, *args, **kwargs)
-    except Exception as e:
-        logger.error(f"DB-Aufruf fehlgeschlagen: {fn.__name__}: {e}", exc_info=True)
-        raise
 
 def _topics_keyboard(cid: int, page: int, cb_prefix: str):
     """

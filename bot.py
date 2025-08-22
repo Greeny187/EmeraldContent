@@ -15,6 +15,7 @@ from mood import register_mood
 from jobs import register_jobs
 from request_config import create_request_with_increased_pool
 from ads import init_ads_schema, register_ads, register_ads_jobs
+from devmenu import register_dev_handlers
 from statistic import register_statistics_handlers
 
 # Env-Variablen prüfen
@@ -99,7 +100,7 @@ def main():
     register_handlers(app)  # group=0 (Commands)
     register_menu(app)      # group=1 (Menu-Replies, keine Commands)
     register_rss(app)       # group=3 (RSS-spezifisch)
-    register_ads(app)       # <- Hinzufügen
+    register_dev_handlers(app)  # group=4 (Entwickler-Commands)
     # Jobs registrieren
     register_jobs(app)
     register_ads_jobs(app)  # <- Hinzufügen
