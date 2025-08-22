@@ -1318,25 +1318,58 @@ def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:
 def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
     cur.execute("DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
 
-def effective_spam_policy(chat_id:int, topic_id:int|None, link_settings:tuple) -> dict:
+def _extract_link_flags(link_settings):
     """
-    link_settings = (link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled)
-    Wir leiten daraus das Basis-Level ab und mergen Topic-Overrides.
+    Normalisiert link_settings auf:
+      (link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled)
+    Erlaubt dict, tuple/list (beliebige Länge).
     """
-    prot_on, warn_on, warn_text, except_on = link_settings
+    DEFAULT_TEXT = '⚠️ Nur Admins dürfen Links posten.'
+
+    ls = link_settings
+    # dict-Variante (beliebige Key-Namen zulassen – inkl. Aliase)
+    if isinstance(ls, dict):
+        prot_on = bool(
+            ls.get("link_protection_enabled")
+            or ls.get("admins_only")
+            or ls.get("only_admin_links")
+            or ls.get("protection")
+        )
+        warn_on = bool(ls.get("link_warning_enabled") or ls.get("warning_on"))
+        warn_text = ls.get("link_warning_text") or ls.get("warning_text") or DEFAULT_TEXT
+        except_on = bool(ls.get("link_exceptions_enabled") or ls.get("exceptions_on"))
+        return prot_on, warn_on, warn_text, except_on
+
+    # tuple/list-Variante (auf 4 Elemente trimmen/padden)
+    if isinstance(ls, (tuple, list)):
+        a = list(ls) + [False, False, DEFAULT_TEXT, True]
+        return bool(a[0]), bool(a[1]), a[2], bool(a[3])
+
+    # Fallback
+    return False, False, DEFAULT_TEXT, True
+
+def effective_spam_policy(chat_id:int, topic_id:int|None, link_settings) -> dict:
+    """
+    link_settings kann tuple/list oder dict sein.
+    """
+    prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
+
     base = _default_policy()
     base["level"] = "strict" if prot_on else "off"
-    # Preset reinmischen:
+
+    # Preset anhand Level
     base.update(_LEVEL_PRESETS.get(base["level"], {}))
-    # Topic-Override mergen
+
+    # Topic-Overrides mergen
     if topic_id:
         ov = get_spam_policy_topic(chat_id, topic_id)
         if ov:
             for k, v in ov.items():
                 if v is not None:
                     base[k] = v
-            # Level-Preset des Overrides auch anwenden:
+            # ggf. erneut Preset ziehen, falls das Override den Level geändert hat
             base.update(_LEVEL_PRESETS.get(base["level"], {}))
+
     return base
 
 # --- Topic Router ---

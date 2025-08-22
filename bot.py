@@ -95,7 +95,7 @@ def main():
     app.add_handler(MessageHandler(filters.ALL, log_update), group=-2)
     
     # Handler-Reihenfolge korrigieren:
-    register_statistics_handlers(app) 
+    register_statistics_handlers(app)
     register_handlers(app)  # group=0 (Commands)
     register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
     register_menu(app)      # group=1 (Menu-Replies, keine Commands)
