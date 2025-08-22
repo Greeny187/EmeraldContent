@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 # DB/Service-Importe (bereinigt)
 # -----------------------------
 from database import (
-    get_link_settings, set_link_settings, _call_db_safe
+    get_link_settings, set_link_settings, _call_db_safe,
     get_welcome, set_welcome, delete_welcome,
     get_rules, set_rules, delete_rules,
     get_captcha_settings, set_captcha_settings,
