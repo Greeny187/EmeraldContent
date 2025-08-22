@@ -88,6 +88,18 @@ def _with_cursor(func):
                     pass
     return wrapped
 
+async def _call_db_safe(fn, *args, **kwargs):
+    """
+    Führt eine (synchrone) DB-Funktion sicher aus, loggt Exceptions
+    und lässt sie nach oben steigen, damit der Aufrufer reagieren kann.
+    Absichtlich 'async', damit bestehende Aufrufe mit 'await' unverändert bleiben.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        logger.exception("DB-Fehler in %s", getattr(fn, "__name__", str(fn)))
+        raise
+
 # --- Schema Initialization & Migrations ---
 @_with_cursor
 def init_db(cur):
@@ -920,11 +932,19 @@ def get_link_settings(cur, chat_id:int):
 
 @_with_cursor
 def set_link_settings(cur, chat_id: int,
-                        protection: Optional[bool] = None,
-                        warning_on: Optional[bool] = None,
-                        warning_text: Optional[str] = None,
-                        exceptions_on: Optional[bool] = None):
-    # Baue dynamisches UPDATE
+                      protection: Optional[bool] = None,
+                      warning_on: Optional[bool] = None,
+                      warning_text: Optional[str] = None,
+                      exceptions_on: Optional[bool] = None,
+                      # 🔽 NEU: Aliase für alte Aufrufer
+                      only_admin_links: Optional[bool] = None,
+                      admins_only: Optional[bool] = None):
+    # Aliase auf 'protection' abbilden (letzter gewinnt)
+    if only_admin_links is not None:
+        protection = bool(only_admin_links)
+    if admins_only is not None:
+        protection = bool(admins_only)
+
     parts, params = [], []
     if protection is not None:
         parts.append("link_protection_enabled = %s");   params.append(protection)
@@ -934,6 +954,7 @@ def set_link_settings(cur, chat_id: int,
         parts.append("link_warning_text = %s");         params.append(warning_text)
     if exceptions_on is not None:
         parts.append("link_exceptions_enabled = %s");   params.append(exceptions_on)
+
     if not parts:
         return
     sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET "
@@ -1809,20 +1830,30 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
     """, (chat_id, feed_url, link))
 
 def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
-    """
-    Vereinheitlicht Link- und Spam-Infos:
-    - admins_only, warning_text  aus link_settings (falls vorhanden)
-    - whitelist/blacklist, action_primary aus spam_policy_topic (Topic-spezifisch)
-    """
     ls = get_link_settings(chat_id) or {}
     sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
+
+    # 🔽 NEU: Tuple → dict abbilden
+    if isinstance(ls, tuple):
+        # (link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled)
+        try:
+            prot, warn_on, warn_txt, exc_on = ls
+        except Exception:
+            prot, warn_on, warn_txt, exc_on = False, False, "🚫 Nur Admins dürfen Links posten.", True
+        ls = {
+            "only_admin_links": bool(prot),
+            "admins_only": bool(prot),      # Alias
+            "warning_on": bool(warn_on),
+            "warning_text": warn_txt or "🚫 Nur Admins dürfen Links posten.",
+            "exceptions_enabled": bool(exc_on),
+        }
 
     admins_only = bool(ls.get("admins_only") or ls.get("only_admin_links") or False)
     warn_text   = (ls.get("warning_text") or "🚫 Nur Admins dürfen Links posten.")
 
     wl = list(sp.get("link_whitelist") or [])
     bl = list(sp.get("domain_blacklist") or [])
-    action = (sp.get("action_primary") or "delete").lower()  # 'delete' | 'mute' | 'warn'
+    action = (sp.get("action_primary") or "delete").lower()
 
     return {
         "admins_only": admins_only,

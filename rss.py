@@ -6,7 +6,7 @@ from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filter
 from database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic, get_rss_topic, 
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, 
-get_pending_input, clear_pending_input
+get_pending_input, clear_pending_input, _call_db_safe
 )
 from utils import ai_summarize
 
@@ -220,70 +220,40 @@ async def fetch_rss_feed(context: CallbackContext):
 
     logger.debug(f"fetch_rss_feed took {(time.time()-start):.3f}s")
 
-async def rss_url_reply(update, context):
-    """
-    Callback für Menü-Flow: wenn awaiting_rss_url gesetzt ist, wird hier die URL abgeholt.
-    Nur gültig, wenn es eine Antwort (Reply) auf unsere Aufforderung ist.
-    """
-    # STRIKTER: Wir akzeptieren nur echte Replies auf unsere ForceReply-Botnachricht.
-    # Zusätzlich: DB-Fallback, falls user_data verloren ging.
-    msg = update.message
-    if not msg:
-        return
-    replied_to = msg.reply_to_message
-    if not replied_to.from_user or replied_to.from_user.id != context.bot.id:
-        return
-    if not getattr(replied_to.reply_markup, 'force_reply', False):
-        return
+async def rss_url_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    ud = context.user_data or {}
+    text = (msg.text or "").strip()
 
-    target_chat_id = context.user_data.get("rss_group_id")
-    if not context.user_data.get("awaiting_rss_url", False) or not target_chat_id:
-        pend = get_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
-        if not pend:
-            return
-        target_chat_id = int(pend.get("target_chat_id") or 0)
-        if target_chat_id:
-            # Aufräumen, damit das Pending nicht „kleben“ bleibt
-            clear_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
-        # setze einmalig Flags, damit der Rest des Codes identisch bleiben kann
-        context.user_data["awaiting_rss_url"] = True
-        context.user_data["rss_group_id"] = target_chat_id
-
-    # Normale Route: echte Reply auf ForceReply
+    # Reply-Objekt kann fehlen – defensiv prüfen
     replied_to = msg.reply_to_message
-    is_proper_reply = (
+    is_reply_to_bot = bool(
         replied_to and replied_to.from_user and replied_to.from_user.id == context.bot.id
-        and getattr(replied_to.reply_markup, 'force_reply', False)
     )
-    # DB-Fallback (z.B. nach Neustart): pending inputs vorhanden?
-    db_pending = get_pending_input(msg.chat.id, update.effective_user.id, "rss_url")
-    if not is_proper_reply and not db_pending:
-        return  # weder richtige Reply noch Pending vorhanden
-    
-    url = (msg.text or "").strip()
-    chat_id = context.user_data.get("rss_group_id") or (db_pending and db_pending.get("chat_id"))
-    
-    # Safety-Checks
-    if not chat_id:
-        return
-    topic_id = get_rss_topic(chat_id)
-    if not topic_id:
-        # Flags räumen, falls Topic verschwunden
-        context.user_data.pop("awaiting_rss_url", None)
-        context.user_data.pop("rss_group_id", None)
-        return await msg.reply_text(
-            "❗ Kein RSS-Topic gesetzt. Bitte zuerst /settopicrss im gewünschten Thread ausführen."
-        )
 
-    # Kollision mit anderen Flows vermeiden
-    context.user_data.pop("awaiting_mood_question", None)
-    context.user_data.pop("last_edit", None)
+    # Pending abrufen (falls kein echtes Reply vorhanden)
+    pend = get_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
+    pend_chat = pend.get('chat_id') if isinstance(pend, dict) else None
+    cid = ud.pop('rss_group_id', pend_chat)
 
-    add_rss_feed(chat_id, url, topic_id)
-    context.user_data.pop("awaiting_rss_url", None)
-    context.user_data.pop("rss_group_id", None)
-    clear_pending_input(chat_id, update.effective_user.id, "rss_url")
-    await msg.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
+    if not cid:
+        return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Bitte starte den Vorgang im Menü: RSS → Feed hinzufügen.")
+
+    # Wenn es kein legitimes Reply ist, akzeptieren wir trotzdem – weil Pending gesetzt wurde
+    if not is_reply_to_bot and not ud.get('awaiting_rss_url'):
+        # letzten Endes trotzdem weiter machen ist möglich – 
+        # aber lieber eine klare Anleitung geben:
+        return await msg.reply_text("Bitte antworte direkt auf die Bot-Aufforderung mit der URL oder starte den Vorgang im Menü neu.")
+
+    # Jetzt speichern
+    try:
+        await _call_db_safe(add_rss_feed, cid, text)  # oder deine bestehende Upsert-Funktion
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
+        ud.pop('awaiting_rss_url', None)
+        return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
+    except Exception:
+        logger.exception("RSS-URL speichern fehlgeschlagen")
+        return await msg.reply_text("❌ Konnte den RSS-Feed nicht speichern.")
 
 def register_rss(app):
     # RSS-Befehle

@@ -152,6 +152,67 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
     target = dest_chat_id if dest_chat_id is not None else cid
     await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
 
+async def _render_faq_menu(cid, query, context):
+    lang = get_group_language(cid) or 'de'
+    faqs = list_faqs(cid) or []
+    ai_faq, _ = get_ai_settings(cid)
+    lines = [f"• <code>{t}</code> → {a[:30]}..." for t, a in faqs[:10]]
+    text = (
+        "❓ <b>FAQ-System</b>\n\n"
+        "📝 <b>Hinzufügen:</b> <code>Trigger ; Antwort</code>\n"
+        "Beispiel: <code>hilfe ; Für Unterstützung schreibe @admin</code>\n\n"
+        "🔍 <b>Auslösung:</b> Wenn Nutzer 'hilfe' schreibt oder fragt\n\n"
+        "🤖 <b>KI-Fallback:</b> Bei unbekannten Fragen automatische Antworten\n\n"
+        "<b>Aktuelle FAQs:</b>\n" + ("\n".join(lines) if lines else "Noch keine Einträge.")
+    )
+    kb = [
+        [InlineKeyboardButton("➕ FAQ hinzufügen", callback_data=f"{cid}_faq_add"),
+         InlineKeyboardButton("🗑 FAQ löschen", callback_data=f"{cid}_faq_del")],
+        [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} KI-Fallback", callback_data=f"{cid}_faq_ai_toggle")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_mood_menu(cid, query, context):
+    lang = get_group_language(cid) or "de"
+    q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', lang)
+    topic_id = get_mood_topic(cid)
+    topic_txt = str(topic_id) if topic_id else tr('kein Topic gesetzt', lang)
+    text = (
+        "🧠 <b>Mood</b>\n"
+        f"• Topic: <code>{topic_txt}</code>\n"
+        f"• Frage: {q}\n\n"
+        "Aktion wählen:"
+    )
+    kb = [
+        [InlineKeyboardButton(tr('Jetzt senden', lang), callback_data=f"{cid}_mood_send")],
+        [InlineKeyboardButton(tr('Frage ändern', lang), callback_data=f"{cid}_mood_edit_q")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_ai_menu(cid, query, context):
+    lang = get_group_language(cid) or 'de'
+    ai_faq, ai_rss = get_ai_settings(cid)
+    text = "🤖 <b>KI-Einstellungen</b>"
+    kb = [
+        [InlineKeyboardButton(f"{'✅' if ai_faq else '☐'} KI-FAQ", callback_data=f"{cid}_ai_faq_toggle"),
+         InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-RSS", callback_data=f"{cid}_ai_rss_toggle")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+
+async def _render_aimod_menu(cid, query, context):
+    lang = get_group_language(cid) or 'de'
+    pol = effective_ai_mod_policy(cid, 0)  # deine bestehende Policy-Funktion
+    text = "🛡️ <b>KI-Moderation</b>\nStelle Schwellwerte & Aktionen ein."
+    kb = [
+        [InlineKeyboardButton(f"{'✅' if pol.get('enabled') else '☐'} Aktiv", callback_data=f"{cid}_aimod_toggle")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
 async def _render_rss_list(query, cid, lang=None):
     lang = lang or (get_group_language(cid) or "de")
     feeds = db_list_rss_feeds(cid) or []
@@ -418,32 +479,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # FAQ – Aktionen
     if func == 'faq' and sub:
+        # KI-Fallback Toggle
         if sub == 'ai_toggle':
             ai_faq, _ = get_ai_settings(cid)
             set_ai_settings(cid, faq=not ai_faq)
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+            return await _render_faq_menu(cid, query, context)
 
-            # Menü erneut rendern (kein Rücksprung in denselben Zweig!)
-            faqs = list_faqs(cid) or []
-            lines = [f"• <code>{t}</code> → {a[:30]}..." for t, a in faqs[:10]]
-            ai_faq2, _ = get_ai_settings(cid)
-            help_text = (
-                "❓ <b>FAQ-System</b>\n\n"
-                "📝 <b>Hinzufügen:</b> <code>Trigger ⟶ Antwort</code>\n"
-                "Beispiel: <code>hilfe ⟶ Für Unterstützung schreibe @admin</code>\n\n"
-                "🔍 <b>Auslösung:</b> Wenn Nutzer 'hilfe' schreibt oder fragt\n\n"
-                "🤖 <b>KI-Fallback:</b> Bei unbekannten Fragen automatische Antworten\n\n"
-                "<b>Aktuelle FAQs:</b>\n" + ("\n".join(lines) if lines else "Noch keine Einträge.")
-            )
-            kb = [
-                [InlineKeyboardButton("➕ FAQ hinzufügen", callback_data=f"{cid}_faq_add"),
-                InlineKeyboardButton("🗑 FAQ löschen", callback_data=f"{cid}_faq_del")],
-                [InlineKeyboardButton(f"{'✅' if ai_faq2 else '☐'} KI-Fallback", callback_data=f"{cid}_faq_ai_toggle")],
-                [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_faq_help")],
-                [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
-            ]
-            return await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
-    
+        # Hinzufügen
+        if sub == 'add':
+            context.user_data.update(awaiting_faq_add=True, faq_group_id=cid)
+            set_pending_input(query.message.chat.id, update.effective_user.id, "faq_add", {"chat_id": cid})
+            return await query.message.reply_text("Format: Trigger ; Antwort", reply_markup=ForceReply(selective=True))
+
+        # Löschen
+        if sub == 'del':
+            context.user_data.update(awaiting_faq_del=True, faq_group_id=cid)
+            set_pending_input(query.message.chat.id, update.effective_user.id, "faq_del", {"chat_id": cid})
+            return await query.message.reply_text("Bitte nur den Trigger senden (genau wie eingetragen).", reply_markup=ForceReply(selective=True))        
+        
     if func == 'language' and sub is None:
         cur = get_lang(cid) or 'de'
         kb = [[InlineKeyboardButton(f"{'✅ ' if c == cur else ''}{n}", callback_data=f"{cid}_setlang_{c}")]
@@ -519,20 +573,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # KI – Aktionen
     if func == 'ai' and sub:
-        if sub == 'faq_toggle':
-            ai_faq, ai_rss = get_ai_settings(cid)
-            set_ai_settings(cid, faq=not ai_faq)
-            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            # zurück ins KI-Hauptmenü (anderes data, keine Schleife)
-            query.data = f"{cid}_ai"
-            return await menu_callback(update, context)
+        # KI – Aktionen
+        if func == 'ai' and sub:
+            if sub == 'faq_toggle':
+                ai_faq, ai_rss = get_ai_settings(cid)
+                set_ai_settings(cid, faq=not ai_faq)
+                await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+                return await _render_ai_menu(cid, query, context)
 
-        if sub == 'rss_toggle':
-            ai_faq, ai_rss = get_ai_settings(cid)
-            set_ai_settings(cid, rss=not ai_rss)
-            await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            query.data = f"{cid}_ai"
-            return await menu_callback(update, context)
+            if sub == 'rss_toggle':
+                ai_faq, ai_rss = get_ai_settings(cid)
+                set_ai_settings(cid, rss=not ai_rss)
+                await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+                return await _render_ai_menu(cid, query, context)
         
         if func == 'aimod' and sub is None:
             pol = effective_ai_mod_policy(cid, 0)
@@ -560,8 +613,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📄 Rohwerte (global)", callback_data=f"{cid}_aimod_raw")],  # <-- NEU
                 [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
             ]
-            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+            return await _render_aimod_menu(cid, query, context)
 
+        # KI-Moderation – Aktionen
+        if func == 'aimod' and sub:
+            if sub == 'toggle':
+                pol = effective_ai_mod_policy(cid, 0)
+                set_ai_mod_settings(cid, 0, enabled=not pol.get('enabled', False))
+                await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
+                return await _render_aimod_menu(cid, query, context)    
+            
     # =========================
     # 3) Aktionen / Unterpunkte
     # =========================
@@ -664,7 +725,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_ai_settings(cid, rss=not ai_rss)
             log_feature_interaction(cid, update.effective_user.id, "menu:rss", {"action": "ai_toggle", "from": ai_rss, "to": (not ai_rss)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            query.data = f"{cid}_rss"
             return await _render_rss_list(query, cid, lang)
 
         # Bild-Posting pro URL togglen
@@ -679,7 +739,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
-            query.data = f"{cid}_rss_list"
             return await _render_rss_list(query, cid, lang)
 
         if data.startswith(f"{cid}_rss_del|"):
@@ -691,7 +750,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("🗑 Feed entfernt.", show_alert=True)
             except Exception:
                 await query.answer("⚠️ Entfernen fehlgeschlagen (prüfe DB-Funktion).", show_alert=True)
-            query.data = f"{cid}_rss_list"
             return await _render_rss_list(query, cid, lang)
 
     # --- Spam ---
@@ -801,7 +859,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == 'link_admins_global':
             # Toggle globale Link-Admin-Only
             cur, warn_text, *_ = get_link_settings(cid)
-            await _call_db_safe(set_link_settings, cid, only_admin_links=not cur, warning_text=warn_text)
+            await _call_db_safe(set_link_settings, cid, protection=not cur, warning_text=warn_text)
             await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
             return await _render_spam_root(query, cid)
 
@@ -810,9 +868,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pol = get_spam_policy_topic(cid, tid) or {}
             cur = bool(pol.get('only_admin_links', False))
             set_spam_policy_topic(cid, tid, only_admin_links=not cur)
-            await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not cur else 'AUS'}", show_alert=True)
-            update.callback_query.data = f"{cid}_spam_t_{tid}"
-            return await _render_spam_topic(query, cid, topic_id)
+            set_spam_policy_topic(cid, tid, only_admin_links=not cur)
+            await query.answer(f"...", show_alert=True)
+            return await _render_spam_topic(query, cid, tid)
 
         if sub.startswith('link_warn_'):
             tid = int(sub.split('_')[-1])
@@ -829,7 +887,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             nxt = order[(order.index(pol.get('level', 'off')) + 1) % len(order)]
             set_spam_policy_topic(cid, topic_id, level=nxt)
             await query.answer(f"Level: {nxt}", show_alert=True)
-            update.callback_query.data = f"{cid}_spam_t_{topic_id}"
             return await _render_spam_topic(query, cid, topic_id)
 
         if sub.startswith(('emj_', 'rate_', 'wl_edit_', 'bl_edit_', 'limt_edit_', 'qmode_')):
@@ -839,7 +896,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pol = get_spam_policy_topic(cid, topic_id) or {}
                 cur = (pol.get('emoji_max_per_msg') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, emoji_max_per_msg=max(0, cur))
-                update.callback_query.data = f"{cid}_spam_t_{topic_id}"
                 return await _render_spam_topic(query, cid, topic_id)
 
             if parts[0] == 'rate':
@@ -847,7 +903,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pol = get_spam_policy_topic(cid, topic_id) or {}
                 cur = (pol.get('max_msgs_per_10s') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, max_msgs_per_10s=max(0, cur))
-                update.callback_query.data = f"{cid}_spam_t_{topic_id}"
                 return await _render_spam_topic(query, cid, topic_id)
 
             if parts[0] in ('wl', 'bl') and parts[1] == 'edit':
@@ -883,7 +938,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 nxt = order[(order.index(cur) + 1) % len(order)]
                 set_spam_policy_topic(cid, topic_id, quota_notify=nxt)
                 await query.answer(f"Rest-Info: {nxt}", show_alert=True)
-                update.callback_query.data = f"{cid}_spam_t_{topic_id}"
                 return await _render_spam_topic(query, cid, topic_id)
 
     # --- Topic-Router ---
@@ -936,7 +990,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == 'toggle':
             pol = effective_ai_mod_policy(cid, 0)
             set_ai_mod_settings(cid, 0, enabled=not pol['enabled'])
-            query.data = f"{cid}_aimod"
             return await _render_aimod_root(query, cid)
         if sub == 'shadow':
             pol = effective_ai_mod_policy(cid, 0)
@@ -1053,7 +1106,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.update(awaiting_aimod_appeal=True, aimod_chat_id=cid, aimod_topic_id=tid)
                 return await query.message.reply_text("Appeal-URL senden (leer = entfernen):", reply_markup=ForceReply(selective=True))
             # zurück in Topic-Ansicht
-            query.data = f"{cid}_aimod_topic_{tid}"
             return await _render_aimod_topic(query, cid, tid)
 
     if func == 'aimod' and sub == 'raw':
@@ -1105,14 +1157,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"{cid}_mood")]])
             )
         if sub == 'send':
-            q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
             topic_id = get_mood_topic(cid)
             if not topic_id:
                 await query.answer(tr('❗ Kein Mood-Topic gesetzt. Sende /setmoodtopic im gewünschten Thema.', lang), show_alert=True)
-                # WICHTIG: zurück auf das Untermenü schalten, sonst Endlosschleife
-                query.data = f"{cid}_mood"
-                return await menu_callback(update, context)
+                return await _render_mood_menu(cid, query, context)
 
+            q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', lang)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("👍", callback_data="mood_like"),
                 InlineKeyboardButton("👎", callback_data="mood_dislike"),
@@ -1120,10 +1170,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await context.bot.send_message(chat_id=cid, text=q, reply_markup=kb, message_thread_id=topic_id)
             await query.answer(tr('✅ Mood-Frage gesendet.', lang), show_alert=True)
-
-            # WICHTIG: hier ebenfalls zurück ins Mood-Menü (anderes data!)
-            query.data = f"{cid}_mood"
-            return await menu_callback(update, context)
+            return await _render_mood_menu(cid, query, context)
         
         if sub == 'topic_help':
             help_txt = (
@@ -1298,22 +1345,37 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         clear_pending_input(msg.chat.id, update.effective_user.id, 'router_toggle')
         return await msg.reply_text("🔁 Regel umgeschaltet.")
 
-    # FAQ add: akzeptiere ";", "->", "→", "⟶"
+    # FAQ hinzufügen
     if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in pend):
-        cid = context.user_data.pop('faq_group_id', (pend.get('faq_add') or {}).get('chat_id'))
-        parts = re.split(r'\s*(?:;|->|→|⟶)\s*', (text or ""), maxsplit=1)
+        cid = context.user_data.pop('faq_group_id', pend.get('faq_add', {}).get('chat_id'))
+        parts = [p.strip() for p in (text or "").split(";", 1)]
         if len(parts) != 2:
-            return await msg.reply_text("Format: Stichwort ⟶ Antwort")
+            return await msg.reply_text("Format: Trigger ; Antwort")
         await _call_db_safe(upsert_faq, cid, parts[0], parts[1])
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_add')
-        return await msg.reply_text("✅ FAQ gespeichert.")
+        await msg.reply_text("✅ FAQ gespeichert.")
+        # optional: FAQ-Menü erneut rendern
+        try:
+            query = update.callback_query or None
+            if query: 
+                return await _render_faq_menu(cid, query, context)
+        except Exception:
+            pass
+        return
 
-    # FAQ delete
+    # FAQ löschen
     if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in pend):
-        cid = context.user_data.pop('faq_group_id', (pend.get('faq_del') or {}).get('chat_id'))
+        cid = context.user_data.pop('faq_group_id', pend.get('faq_del', {}).get('chat_id'))
         await _call_db_safe(delete_faq, cid, text.strip())
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_del')
-        return await msg.reply_text("✅ FAQ gelöscht.")
+        await msg.reply_text("✅ FAQ gelöscht.")
+        try:
+            query = update.callback_query or None
+            if query:
+                return await _render_faq_menu(cid, query, context)
+        except Exception:
+            pass
+        return
 
     # Spam: Topic-Limit
     if context.user_data.pop('awaiting_topic_limit', False):
