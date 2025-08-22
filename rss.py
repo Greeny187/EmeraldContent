@@ -222,32 +222,24 @@ async def fetch_rss_feed(context: CallbackContext):
 
 async def rss_url_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    ud = context.user_data or {}
+    ud  = context.user_data or {}
     text = (msg.text or "").strip()
 
-    # Reply-Objekt kann fehlen – defensiv prüfen
-    replied_to = msg.reply_to_message
-    is_reply_to_bot = bool(
-        replied_to and replied_to.from_user and replied_to.from_user.id == context.bot.id
-    )
-
-    # Pending abrufen (falls kein echtes Reply vorhanden)
+    # Nur reagieren, wenn Pending existiert
     pend = get_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
-    pend_chat = pend.get('chat_id') if isinstance(pend, dict) else None
-    cid = ud.pop('rss_group_id', pend_chat)
-
+    cid  = (ud.get('rss_group_id') or (pend.get('chat_id') if isinstance(pend, dict) else None))
     if not cid:
-        return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Bitte starte den Vorgang im Menü: RSS → Feed hinzufügen.")
+        # Kein RSS-Flow aktiv → einfach NICHT antworten, damit der menu_free_text_handler dran ist
+        return
 
-    # Wenn es kein legitimes Reply ist, akzeptieren wir trotzdem – weil Pending gesetzt wurde
-    if not is_reply_to_bot and not ud.get('awaiting_rss_url'):
-        # letzten Endes trotzdem weiter machen ist möglich – 
-        # aber lieber eine klare Anleitung geben:
-        return await msg.reply_text("Bitte antworte direkt auf die Bot-Aufforderung mit der URL oder starte den Vorgang im Menü neu.")
+    # (Optional) prüfen, ob wirklich auf Bot-Prompt geantwortet wurde:
+    rep = msg.reply_to_message
+    if not (rep and rep.from_user and rep.from_user.id == context.bot.id):
+        # Wir könnten eine freundliche Anleitung senden – besser: still zurückkehren
+        pass
 
-    # Jetzt speichern
     try:
-        await _call_db_safe(add_rss_feed, cid, text)  # oder deine bestehende Upsert-Funktion
+        await _call_db_safe(add_rss_feed, cid, text)
         clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
         ud.pop('awaiting_rss_url', None)
         return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
@@ -263,8 +255,8 @@ def register_rss(app):
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
     
     # SPEZIFISCHERER Handler: Nur Replies und nur wenn RSS-Flag gesetzt
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)  # ggf. auf 1 setzen
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, rss_url_reply), group=4)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=4)  # ggf. auf 1 setzen
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)

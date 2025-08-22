@@ -213,27 +213,18 @@ async def _render_aimod_menu(cid, query, context):
     ]
     return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-async def _render_rss_list(query, cid, lang=None):
-    lang = lang or (get_group_language(cid) or "de")
-    feeds = db_list_rss_feeds(cid) or []
-    if not feeds:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')]])
-        return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=kb)
-
-    rows = []
-    text_lines = ["Aktive Feeds:"]
-    for item in feeds:
-        url = item[0]
-        tid = item[1] if len(item) > 1 else "?"
-        opts = get_rss_feed_options(cid, url) or {}
-        img_on = bool(opts.get("post_images", False))
-        text_lines.append(f"- {url} (Topic {tid})")
-        rows.append([
-            InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"),
-            InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}")
-        ])
-    rows.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')])
-    return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows))
+async def _render_rss_root(query, cid, lang):
+    ai_faq, ai_rss = get_ai_settings(cid)
+    text = "📰 <b>RSS</b>\nVerwalte Feeds, Topic und KI-Optionen."
+    kb = [
+        [InlineKeyboardButton("➕ Feed hinzufügen", callback_data=f"{cid}_rss_add"),
+         InlineKeyboardButton("📃 Feeds anzeigen", callback_data=f"{cid}_rss_list")],
+        [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung",
+                              callback_data=f"{cid}_rss_ai_toggle")],
+        [InlineKeyboardButton("🧵 Topic setzen", callback_data=f"{cid}_rss_topic_set")],
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+    ]
+    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
 async def _render_spam_root(query, cid, lang=None):
     lang = lang or (get_group_language(cid) or "de")
@@ -272,7 +263,17 @@ async def _render_spam_root(query, cid, lang=None):
         [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
         [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
     ]
-    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    try:
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # einfach kurz bestätigen, ohne zu crashen
+            try:
+                await query.answer(tr('Keine Änderung.', lang), show_alert=False)
+            except Exception:
+                pass
+            return
+        raise
 
 async def _render_spam_topic(query, cid, topic_id):
     pol = get_spam_policy_topic(cid, topic_id) or {}
@@ -718,14 +719,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # stoppt alle Feeds der Gruppe
             remove_rss_feed(cid)
             await query.answer('✅ RSS gestoppt', show_alert=True)
-            return await _render_rss_list(query, cid, lang)
+            return await _render_rss_root(query, cid, lang)
 
         if sub == 'ai_toggle':
             ai_faq, ai_rss = get_ai_settings(cid)
             set_ai_settings(cid, rss=not ai_rss)
             log_feature_interaction(cid, update.effective_user.id, "menu:rss", {"action": "ai_toggle", "from": ai_rss, "to": (not ai_rss)})
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
-            return await _render_rss_list(query, cid, lang)
+            return await _render_rss_root(query, cid, lang)
 
         # Bild-Posting pro URL togglen
         if data.startswith(f"{cid}_rss_img_toggle|"):
@@ -739,7 +740,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
-            return await _render_rss_list(query, cid, lang)
+            return await _render_rss_root(query, cid, lang)
 
         if data.startswith(f"{cid}_rss_del|"):
             url = data.split("|", 1)[1]
@@ -750,7 +751,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("🗑 Feed entfernt.", show_alert=True)
             except Exception:
                 await query.answer("⚠️ Entfernen fehlgeschlagen (prüfe DB-Funktion).", show_alert=True)
-            return await _render_rss_list(query, cid, lang)
+            return await _render_rss_root(query, cid, lang)
 
     # --- Spam ---
     if func == 'spam' and sub is None:
@@ -990,23 +991,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == 'toggle':
             pol = effective_ai_mod_policy(cid, 0)
             set_ai_mod_settings(cid, 0, enabled=not pol['enabled'])
-            return await _render_aimod_root(query, cid)
+            return await _render_aimod_menu(cid, query, context)
         if sub == 'shadow':
             pol = effective_ai_mod_policy(cid, 0)
             set_ai_mod_settings(cid, 0, shadow_mode=not pol['shadow_mode'])
-            return await _render_aimod_root(query, cid)
+            return await _render_aimod_menu(cid, query, context)
         if sub == 'act':
             order = ['delete', 'warn', 'mute', 'ban']
             cur = effective_ai_mod_policy(cid, 0)['action_primary']
             nxt = order[(order.index(cur) + 1) % len(order)]
             set_ai_mod_settings(cid, 0, action_primary=nxt)
-            return await _render_aimod_root(query, cid)
+            return await _render_aimod_menu(cid, query, context)
         if sub == 'escal':
             order = ['mute', 'ban']
             cur = effective_ai_mod_policy(cid, 0)['escalate_action']
             nxt = order[(order.index(cur) + 1) % len(order)]
             set_ai_mod_settings(cid, 0, escalate_action=nxt)
-            return await _render_aimod_root(query, cid)
+            return await _render_aimod_menu(cid, query, context)
         if sub == 'thr':
             context.user_data.update(awaiting_aimod_thresholds=True, aimod_chat_id=cid, aimod_topic_id=0)
             return await query.message.reply_text(
