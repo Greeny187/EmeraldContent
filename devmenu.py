@@ -2,7 +2,6 @@ import os
 import re
 import datetime
 import sys
-import subprocess
 import psutil
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -11,6 +10,20 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, Mes
 from patchnotes import __version__
 from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor 
 from ads import list_active_campaigns, get_subscription_info, set_pro_until
+
+try:
+    import psutil  # schon importiert, hier nur zur Absicherung
+except Exception as e:
+    psutil = None
+    logging.warning("psutil nicht verfügbar: %s", e)
+
+try:
+    from ads import list_active_campaigns, get_subscription_info, set_pro_until
+except Exception as e:
+    logging.warning("ads-Modul nicht verfügbar: %s", e)
+    def list_active_campaigns(): return []
+    def get_subscription_info(_): return {"active": False, "valid_until": None}
+    def set_pro_until(_chat_id, _until): raise RuntimeError("ads-API nicht verfügbar")
 
 # Logger konfigurieren
 logging.basicConfig(
@@ -29,8 +42,19 @@ def get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
 async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     dev_ids = _dev_ids_from_env(user_id)
+
+    if not dev_ids:
+        # Sichtbare Hilfe, wenn IDs fehlen
+        return await update.effective_message.reply_text(
+            "❌ Dev-Zugang nicht konfiguriert.\n"
+            "Setze ENV `DEVELOPER_CHAT_ID` oder `DEVELOPER_CHAT_IDS` auf deine Telegram User-ID."
+        )
+
     if user_id not in dev_ids:
-        return await update.message.reply_text(f"❌ Nur für Entwickler verfügbar.\nDeine User-ID: {user_id}")
+        return await update.effective_message.reply_text(
+            f"❌ Nur für Entwickler. Deine User-ID: {user_id}\n"
+            f"Erlaubte IDs: {', '.join(map(str, sorted(dev_ids)))}"
+        )
 
     _set_dev_aggregate_scope(context)  # << immer Aggregat für Dev
     scope_label = get_scope_label(context)
@@ -414,16 +438,25 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def _dev_ids_from_env(user_id_hint: int | None = None) -> set[int]:
     """
-    Liest DEVELOPER_CHAT_ID und DEVELOPER_CHAT_IDS (komma/leerzeichen-getrennt).
-    Fallback: im ENVIRONMENT=development den aktuellen Nutzer zulassen.
+    Liest DEVELOPER_CHAT_ID, DEVELOPER_CHAT_IDS, DEV_IDS (komma/leerzeichen/semicolon).
+    Akzeptiert auch JSON-ähnliche Schreibweisen mit [] und Quotes.
+    Fallback: ENVIRONMENT in {dev, development, local} -> aktueller Nutzer.
     """
     ids = set()
-    for key in ("DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS"):
-        raw = os.getenv(key, "")
+    for key in ("DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS", "DEV_IDS"):
+        raw = os.getenv(key, "") or ""
+        raw = raw.strip().strip("[]")  # e.g. "[123, 456]" -> "123, 456"
         for part in re.split(r"[,\s;]+", raw):
-            if part.strip().lstrip("-").isdigit():
-                ids.add(int(part.strip()))
-    if not ids and os.getenv("ENVIRONMENT", "").lower() == "development" and user_id_hint:
+            part = part.strip().strip('"').strip("'")
+            if not part or part.startswith("@"):
+                continue
+            if part.lstrip("-").isdigit():
+                try:
+                    ids.add(int(part))
+                except Exception:
+                    pass
+    # Fallback im lokalen/dev-Env
+    if not ids and os.getenv("ENVIRONMENT", "").lower() in {"dev", "development", "local"} and user_id_hint:
         ids.add(user_id_hint)
     return ids
 
