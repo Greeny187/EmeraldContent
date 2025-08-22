@@ -96,9 +96,9 @@ def main():
     
     # Handler-Reihenfolge korrigieren:
     register_statistics_handlers(app) 
-    register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
     register_handlers(app)  # group=0 (Commands)
     register_menu(app)      # group=1 (Menu-Replies, keine Commands)
+    register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
     register_rss(app)       # group=3 (RSS-spezifisch)
     register_dev_handlers(app)  # group=4 (Entwickler-Commands)
     # Jobs registrieren
