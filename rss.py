@@ -256,7 +256,7 @@ def register_rss(app):
     
     # SPEZIFISCHERER Handler: Nur Replies und nur wenn RSS-Flag gesetzt
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=1)  # ggf. auf 1 setzen
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)  # ggf. auf 1 setzen
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)
