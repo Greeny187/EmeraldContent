@@ -1314,7 +1314,7 @@ def register_statistics_handlers(app):
         cmd = update.effective_message.text.split()[0].lstrip('/')
         log_command(update.effective_chat.id, update.effective_user.id, cmd)
     app.add_handler(MessageHandler(filters.COMMAND & ~filters.Regex(r'^/stats'), command_logger), group=9)
-    app.add_handler(MessageHandler(filters.ALL, universal_logger), group=0)
+    app.add_handler(MessageHandler(filters.ALL, universal_logger), group=5)
     app.add_handler(ChatMemberHandler(on_chat_member_update, ChatMemberHandler.CHAT_MEMBER), group=0)
     app.add_handler(MessageHandler(filters.REPLY, reply_time_handler), group=0)
     app.add_handler(PollAnswerHandler(poll_response_handler), group=0)
