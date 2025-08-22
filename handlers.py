@@ -685,11 +685,13 @@ async def menu_command(update, context):
     if len(visible_groups) == 1:
         chat_id = visible_groups[0][0]
         context.user_data["selected_chat_id"] = chat_id
-        return await show_group_menu(query=None, cid=chat_id, context=context)  # <-- HIER: message= durch query=None ersetzen
+        return await show_group_menu(query=None, cid=chat_id, context=context, dest_chat_id=update.effective_chat.id)
 
     # Mehrere Gruppen → Auswahl anzeigen
     keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
     await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 
 async def forum_topic_registry_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
