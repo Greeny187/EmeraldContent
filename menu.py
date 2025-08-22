@@ -1346,36 +1346,38 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         clear_pending_input(msg.chat.id, update.effective_user.id, 'router_toggle')
         return await msg.reply_text("🔁 Regel umgeschaltet.")
 
-    # FAQ hinzufügen
-    if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in pend):
-        cid = context.user_data.pop('faq_group_id', pend.get('faq_add', {}).get('chat_id'))
-        parts = [p.strip() for p in (text or "").split(";", 1)]
-        if len(parts) != 2:
+    # --- FAQ hinzufügen ---------------------------------------------------------
+    if context.user_data.pop('awaiting_faq_add', False) or ('faq_add' in (pend or {})):
+        cid = context.user_data.pop('faq_group_id', (pend or {}).get('faq_add', {}).get('chat_id'))
+        parts = [p.strip() for p in text.split(";", 1)]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
             return await msg.reply_text("Format: Trigger ; Antwort")
-        await _call_db_safe(upsert_faq, cid, parts[0], parts[1])
+
+        try:
+            await _call_db_safe(upsert_faq, cid, parts[0], parts[1])
+        except Exception:
+            logger.exception("FAQ upsert failed")
+            return await msg.reply_text("❌ Konnte die FAQ nicht speichern.")
+
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_add')
         await msg.reply_text("✅ FAQ gespeichert.")
-        # optional: FAQ-Menü erneut rendern
-        try:
-            query = update.callback_query or None
-            if query: 
-                return await _render_faq_menu(cid, query, context)
-        except Exception:
-            pass
         return
 
-    # FAQ löschen
-    if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in pend):
-        cid = context.user_data.pop('faq_group_id', pend.get('faq_del', {}).get('chat_id'))
-        await _call_db_safe(delete_faq, cid, text.strip())
+    # --- FAQ löschen ------------------------------------------------------------
+    if context.user_data.pop('awaiting_faq_del', False) or ('faq_del' in (pend or {})):
+        cid = context.user_data.pop('faq_group_id', (pend or {}).get('faq_del', {}).get('chat_id'))
+        trigger = text.strip()
+        if not trigger:
+            return await msg.reply_text("Bitte nur den Trigger senden (genau wie eingetragen).")
+
+        try:
+            await _call_db_safe(delete_faq, cid, trigger)
+        except Exception:
+            logger.exception("FAQ delete failed")
+            return await msg.reply_text("❌ Konnte die FAQ nicht löschen.")
+
         clear_pending_input(msg.chat.id, update.effective_user.id, 'faq_del')
         await msg.reply_text("✅ FAQ gelöscht.")
-        try:
-            query = update.callback_query or None
-            if query:
-                return await _render_faq_menu(cid, query, context)
-        except Exception:
-            pass
         return
 
     # Spam: Topic-Limit

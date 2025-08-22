@@ -214,61 +214,61 @@ async def spam_enforcer(update, context):
             pass
         return
     
-    # (A) Tageslimit pro Topic & User
-    daily_lim = int(policy.get("per_user_daily_limit") or 0)
-    if topic_id and daily_lim > 0 and not privileged and user:
+    # --- Tageslimit (pro Topic & User) --- 
+    # separat die *Spam*-Policy laden (inkl. Topic-Overrides)
+    link_settings = get_link_settings(chat_id)
+    spam_pol = effective_spam_policy(chat_id, topic_id, link_settings)
+
+    daily_lim = int(spam_pol.get("per_user_daily_limit") or 0)
+    notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
+
+    if topic_id and daily_lim > 0 and user and not privileged:
         used = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
-        daily_lim = int(policy.get("per_user_daily_limit") or 0)
-        notify_mode = (policy.get("quota_notify") or "smart").lower()
+        remaining = daily_lim - used
 
-        if topic_id and daily_lim > 0 and user and not privileged:
-            # Zählung umfasst bereits DIESE Nachricht, weil message_logger vorher läuft:
-            used = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
-            remaining = daily_lim - used
-
-            if remaining < 0:
-                # 1) Nachricht entfernen
-                deleted = False
+        # optional: Rest anzeigen (off|smart|always)
+        if remaining >= 0:
+            if notify_mode == "always" or (notify_mode == "smart" and (used in (1,) or remaining in (10,5,2,1))):
                 try:
-                    await msg.delete()
-                    deleted = True
-                except Exception as e:
-                    logger.warning(f"Limit delete failed in {chat_id}/{topic_id}: {e}")
-
-                # 2) Primär-Aktion gemäß Policy
-                did_action = "delete" if deleted else "none"
-                primary = (policy.get("action_primary") or "delete").lower()
-                if primary in ("mute", "stumm"):
-                    try:
-                        until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-                        await context.bot.restrict_chat_member(
-                            chat_id, user.id, ChatPermissions(can_send_messages=False), until_date=until
-                        )
-                        did_action = (did_action + "/mute60m") if did_action != "none" else "mute60m"
-                    except Exception as e:
-                        logger.warning(f"Limit mute failed in {chat_id}: {e}")
-
-                # 3) Hinweis im Topic
-                try:
-                    extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
                     await context.bot.send_message(
                         chat_id=chat_id,
                         message_thread_id=topic_id,
-                        text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
+                        reply_to_message_id=msg.message_id,
+                        text=f"🧮 Rest heute: {remaining}/{daily_lim}"
                     )
                 except Exception:
                     pass
 
-                # 4) Logging (best-effort, Schema kann je nach Stand variieren)
+        if remaining < 0:
+            deleted = await _safe_delete(msg)
+            did_action = "delete" if deleted else "none"
+            primary = (spam_pol.get("action_primary") or "delete").lower()
+            if primary in ("mute","stumm"):
                 try:
-                    from statistic import log_spam_event
-                    log_spam_event(chat_id, user.id, "limit_day", did_action,
-                                {"limit": daily_lim, "used": used, "topic_id": topic_id})
-                except Exception:
-                    pass
+                    until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+                    await context.bot.restrict_chat_member(
+                        chat_id, user.id, ChatPermissions(can_send_messages=False), until_date=until
+                    )
+                    did_action = (did_action + "/mute60m") if did_action != "none" else "mute60m"
+                except Exception as e:
+                    logger.warning(f"Limit mute failed in {chat_id}: {e}")
 
-                return
+            try:
+                extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
+                await context.bot.send_message(
+                    chat_id=chat_id, message_thread_id=topic_id,
+                    text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
+                )
+            except Exception:
+                pass
 
+            try:
+                from statistic import log_spam_event
+                log_spam_event(chat_id, user.id, "limit_day", did_action,
+                            {"limit": daily_lim, "used": used, "topic_id": topic_id})
+            except Exception:
+                pass
+            return
     
     # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
     match = get_matching_router_rule(chat_id, text, domains_in_msg)

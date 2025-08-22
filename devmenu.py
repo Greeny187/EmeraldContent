@@ -2,17 +2,15 @@ import os
 import re
 import datetime
 import sys
-import psutil
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from patchnotes import __version__
 from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor 
-from ads import list_active_campaigns, get_subscription_info, set_pro_until
 
 try:
-    import psutil  # schon importiert, hier nur zur Absicherung
+    import psutil
 except Exception as e:
     psutil = None
     logging.warning("psutil nicht verfügbar: %s", e)
@@ -25,12 +23,28 @@ except Exception as e:
     def get_subscription_info(_): return {"active": False, "valid_until": None}
     def set_pro_until(_chat_id, _until): raise RuntimeError("ads-API nicht verfügbar")
 
-# Logger konfigurieren
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
 logger = logging.getLogger(__name__)
+
+def _dev_ids_from_env(user_id_hint: int | None = None) -> set[int]:
+    """
+    Liest DEVELOPER_CHAT_ID, DEVELOPER_CHAT_IDS, DEV_IDS (Komma/Leerzeichen/Semikolon),
+    akzeptiert auch "[-100123, 456]". Fallback: ENV in {dev, development, local}.
+    """
+    ids = set()
+    for key in ("DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS", "DEV_IDS"):
+        raw = (os.getenv(key, "") or "").strip().strip("[]")
+        for part in re.split(r"[,\s;]+", raw):
+            part = part.strip().strip('"').strip("'")
+            if not part or part.startswith("@"):
+                continue
+            if part.lstrip("-").isdigit():
+                try:
+                    ids.add(int(part))
+                except Exception:
+                    pass
+    if not ids and os.getenv("ENVIRONMENT", "").lower() in {"dev", "development", "local"} and user_id_hint:
+        ids.add(user_id_hint)
+    return ids
 
 def get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
     scope = context.user_data.get('scope', {'type': 'all'})
@@ -43,20 +57,21 @@ async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     dev_ids = _dev_ids_from_env(user_id)
 
+    # Hilfreiche Debug-Antworten statt "stumm"
+    msg = update.effective_message or update.message
     if not dev_ids:
-        # Sichtbare Hilfe, wenn IDs fehlen
-        return await update.effective_message.reply_text(
+        return await (msg.reply_text)(
             "❌ Dev-Zugang nicht konfiguriert.\n"
-            "Setze ENV `DEVELOPER_CHAT_ID` oder `DEVELOPER_CHAT_IDS` auf deine Telegram User-ID."
+            "Setze ENV `DEVELOPER_CHAT_ID` oder `DEVELOPER_CHAT_IDS` (deine Telegram User-ID)."
         )
-
     if user_id not in dev_ids:
-        return await update.effective_message.reply_text(
+        return await (msg.reply_text)(
             f"❌ Nur für Entwickler. Deine User-ID: {user_id}\n"
             f"Erlaubte IDs: {', '.join(map(str, sorted(dev_ids)))}"
         )
 
-    _set_dev_aggregate_scope(context)  # << immer Aggregat für Dev
+    # Aggregat-Scope immer setzen (damit nirgendwo 'Keine Gruppe' hochkommt)
+    _set_dev_aggregate_scope(context)
     scope_label = get_scope_label(context)
 
     kb = [
@@ -77,7 +92,7 @@ async def dev_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 Registrierte Gruppen: {len(get_registered_groups())}\n"
         f"🔎 Datenquelle: {scope_label}"
     )
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+    return await (msg.reply_text)(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -85,11 +100,11 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data
     user_id = update.effective_user.id
 
-    dev_ids = _dev_ids_from_env(user_id)  # vereinheitlicht
+    dev_ids = _dev_ids_from_env(user_id)
     if user_id not in dev_ids:
         return await query.answer("❌ Nur für Entwickler.", show_alert=True)
 
-    _set_dev_aggregate_scope(context)  # << Aggregat für Dev erzwingen
+    _set_dev_aggregate_scope(context)  # Aggregat für Dev erzwingen
 
     # --- Gruppenauswahl (paginierte Liste + Aggregat) ---
     if data.startswith("dev_group_select_"):
@@ -436,30 +451,6 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # Hilfsfunktionen für Entwicklermenü
 
-def _dev_ids_from_env(user_id_hint: int | None = None) -> set[int]:
-    """
-    Liest DEVELOPER_CHAT_ID, DEVELOPER_CHAT_IDS, DEV_IDS (komma/leerzeichen/semicolon).
-    Akzeptiert auch JSON-ähnliche Schreibweisen mit [] und Quotes.
-    Fallback: ENVIRONMENT in {dev, development, local} -> aktueller Nutzer.
-    """
-    ids = set()
-    for key in ("DEVELOPER_CHAT_ID", "DEVELOPER_CHAT_IDS", "DEV_IDS"):
-        raw = os.getenv(key, "") or ""
-        raw = raw.strip().strip("[]")  # e.g. "[123, 456]" -> "123, 456"
-        for part in re.split(r"[,\s;]+", raw):
-            part = part.strip().strip('"').strip("'")
-            if not part or part.startswith("@"):
-                continue
-            if part.lstrip("-").isdigit():
-                try:
-                    ids.add(int(part))
-                except Exception:
-                    pass
-    # Fallback im lokalen/dev-Env
-    if not ids and os.getenv("ENVIRONMENT", "").lower() in {"dev", "development", "local"} and user_id_hint:
-        ids.add(user_id_hint)
-    return ids
-
 def _set_dev_aggregate_scope(context: ContextTypes.DEFAULT_TYPE):
     """
     Erzwingt für den Dev ein 'Aggregat' als gewählte Gruppe und schreibt
@@ -473,10 +464,6 @@ def _set_dev_aggregate_scope(context: ContextTypes.DEFAULT_TYPE):
         store['selected_group'] = 'ALL'
         store['selected_group_title'] = 'Alle Gruppen'
         store['chat_id'] = None  # None signalisiert Aggregat
-
-def _get_scope_label(context: ContextTypes.DEFAULT_TYPE) -> str:
-    s = context.user_data.get('scope', {'type': 'all'})
-    return "Alle Gruppen" if s.get('type') != 'group' else s.get('title') or f"Gruppe {s.get('chat_id')}"
 
 @_with_cursor
 def _get_global_overview(cur, chat_id: int | None = None):
