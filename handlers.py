@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest
+from telegram.constants import ChatType
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic,
@@ -22,7 +23,7 @@ from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
 from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
 from user_manual import help_handler
-from menu import show_group_menu
+from menu import show_group_menu, menu_free_text_handler
 from statistic import log_spam_event, log_night_event
 from access import get_visible_groups, resolve_privileged_flags
 from translator import translate_hybrid
@@ -726,14 +727,27 @@ async def message_logger(update, context):
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
+    msg  = update.effective_message
     chat = update.effective_chat
-    user = update.effective_user
-    chat_id = chat.id
+    ud   = context.user_data or {}   # ← verhindert AttributeError bei None
 
-    # Mood-Frage Antwort
-    if context.user_data.get('awaiting_mood_question'):
+    # Nur in Privat-/Gruppen-Chats arbeiten, NIEMALS in Kanälen
+    if chat.type not in (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP):
+        return
+
+    # 1) Mood-Frage (expliziter Mini-Flow)
+    if ud.get('awaiting_mood_question'):
         return await mood_question_handler(update, context)
+
+    # 2) Fallback für ALLE Menü-Input-Flows:
+    #    Wenn irgendein Awaiting-Flag (oder last_edit) gesetzt ist,
+    #    gib die Nachricht an den zentralen menu_free_text_handler ab.
+    has_pending = any(k.startswith('awaiting_') for k in ud.keys()) or ('last_edit' in ud)
+    if has_pending:
+        return await menu_free_text_handler(update, context)
+
+    # 3) Sonst: nichts – alle anderen Aufgaben liegen in spezialisierten Handlern.
+    return
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Nur aktiv, wenn zuvor im Menü „Bearbeiten“ gedrückt wurde
@@ -1370,14 +1384,14 @@ def register_handlers(app):
         faq_autoresponder
     ), group=0)
     
-    # Spam-Filter (Gruppe 1) - NUR IN GRUPPEN
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, spam_enforcer), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, ai_moderation_enforcer), group=1)
-    # Text-Handler (Gruppe 2) - ALLE CHATS (falls nötig)
+    # Spam-Filter (Gruppe 2) - NUR IN GRUPPEN (nach Menü-Replies)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, spam_enforcer), group=2)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, ai_moderation_enforcer), group=2)
+    # Text-Handler (Gruppe 3) - nur Privat & Gruppen (nicht in Kanälen)
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, 
+        filters.TEXT & ~filters.COMMAND & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS),
         text_handler
-    ), group=2)
+    ), group=3)
     
     # Status Updates und Chat Member Handler - NUR IN GRUPPEN
     app.add_handler(MessageHandler(

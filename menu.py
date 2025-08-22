@@ -1385,4 +1385,4 @@ def register_menu(app):
         & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
-    ), group=1)
+    ), group=0)

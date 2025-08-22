@@ -158,18 +158,18 @@ async def dev_stats_nightly_job(context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Telethon-Stats für {chat_id} fehlgeschlagen: {e}")
             telethon_text = "📡 *Live-Statistiken (Telethon)*: _nicht verfügbar_\n"
 
-        members  = get_member_stats(chat_id, start)
+        mflow    = get_member_stats(chat_id, start)
         insights = get_message_insights(chat_id, start, end)
         engage   = get_engagement_metrics(chat_id, start, end)
         trends   = get_trend_analysis(chat_id, periods=4)
 
         messages_last_week = insights['total']
-        new_members = members['new']
+        new_members = mflow['new']
         replies = engage['reply_rate_pct'] * messages_last_week / 100
         # --- Score: Normalisierung & Decay ---
         base_score = (messages_last_week * 0.5) + (new_members * 2) + (replies * 1)
-        members = meta.get('members') or 1
-        norm = max(members, 1) / 1000.0
+        mem_count = meta.get('members') or 1
+        norm = max(mem_count, 1) / 1000.0
         normalized = base_score / norm
         # Decay: 90% Altwert + 10% Heute
         # Holt bisherigen Score aus group_settings (get_group_meta liefert ihn mit)
@@ -182,7 +182,7 @@ async def dev_stats_nightly_job(context: ContextTypes.DEFAULT_TYPE):
         db_text = (
             "💾 *Datenbank-Statistiken (letzte 7 Tage)*\n"
             f"🔖 Topics: {meta['topics']}  🤖 Bots: {meta['bots']}\n"
-            f"👥 Neue Member: {members['new']}  👋 Left: {members['left']}  💤 Inaktiv: {members['inactive']}\n"
+            f"👥 Neue Member: {mflow['new']}  👋 Left: {mflow['left']}  💤 Inaktiv: {mflow['inactive']}\n"
             f"💬 Nachrichten gesamt: {insights['total']}\n"
             f"   • Fotos: {insights['photo']}  Videos: {insights['video']}  Sticker: {insights['sticker']}\n"
             f"   • Voice: {insights['voice']}  Location: {insights['location']}  Polls: {insights['polls']}\n"
@@ -196,7 +196,7 @@ async def dev_stats_nightly_job(context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"*Gruppe:* {meta['title']} (`{chat_id}`)\n"
             f"📝 Beschreibung: {meta['description']}\n"
-            f"👥 Mitglieder: {meta['members']}  👮 Admins: {meta['admins']}\n"
+            f"👥 Mitglieder: {mem_count}  👮 Admins: {meta['admins']}\n"
             f"📂 Topics: {meta['topics']}\n\n"
             f"{telethon_text}\n"
             f"{db_text}"
