@@ -254,9 +254,5 @@ def register_rss(app):
     app.add_handler(CommandHandler("stoprss",  stop_rss_feed))
     app.add_handler(CommandHandler("settopicrss", set_rss_topic_cmd, filters=filters.ChatType.GROUPS))
     
-    # SPEZIFISCHERER Handler: Nur Replies und nur wenn RSS-Flag gesetzt
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rss_url_reply), group=3)  # ggf. auf 1 setzen
-    
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)

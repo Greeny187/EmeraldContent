@@ -33,7 +33,7 @@ from database import (
     list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language,
     list_forum_topics, count_forum_topics,
-    get_night_mode, set_night_mode,
+    get_night_mode, set_night_mode, add_rss_feed,
     set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
     get_rss_feed_options, set_spam_policy_topic, get_spam_policy_topic,
     effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings,
@@ -1238,6 +1238,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
+    ud    = context.user_data or {}
 
     # Pendings laden (defensiv)
     try:
@@ -1480,6 +1481,19 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         set_ai_mod_settings(cid, 0, **{key: val})
         return await update.effective_message.reply_text("✅ Gespeichert.")
 
+    # 4.1 RSS-URL
+    if ud.pop('awaiting_rss_url', False) or ('rss_url' in pend):
+        cid = ud.pop('rss_group_id', pend.get('rss_url', {}).get('chat_id'))
+        if not cid:
+            return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Bitte Menü → RSS → Feed hinzufügen.")
+        try:
+            await _call_db_safe(add_rss_feed, cid, text)
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
+            return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
+        except Exception:
+            logger.exception("rss add failed")
+            return await msg.reply_text("❌ Konnte RSS-Feed nicht speichern.")
+
 # ============
 # Registrierung
 # ============
@@ -1490,9 +1504,7 @@ def register_menu(app):
 
     # Reply-Handler (Gruppe 1) – nur Replies, keine Commands
     app.add_handler(MessageHandler(
-        filters.REPLY
-        & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
-        & ~filters.COMMAND
+        filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
     ), group=0)

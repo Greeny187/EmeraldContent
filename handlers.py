@@ -729,26 +729,32 @@ async def message_logger(update, context):
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg  = update.effective_message
-    chat = update.effective_chat
-    ud   = context.user_data or {}   # ← verhindert AttributeError bei None
+    """
+    Schlanker Fallback:
+    - Niemals in Kanälen laufen
+    - Mood-Frage beantworten
+    - Bei irgendeinem offenen Menü-Flow (awaiting_*) an menu_free_text_handler delegieren
+    - Sonst: nichts tun
+    """
+    msg   = update.effective_message
+    chat  = update.effective_chat
+    ud    = context.user_data or {}
 
-    # Nur in Privat-/Gruppen-Chats arbeiten, NIEMALS in Kanälen
+    # Nur Privat/Gruppe/Supergruppe – Kanäle explizit ausschließen
     if chat.type not in (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP):
         return
 
-    # 1) Mood-Frage (expliziter Mini-Flow)
-    if ud.get('awaiting_mood_question'):
+    # 1) Expliziter Mini-Flow: Mood-Frage
+    if ud.get("awaiting_mood_question"):
         return await mood_question_handler(update, context)
 
-    # 2) Fallback für ALLE Menü-Input-Flows:
+    # 2) Zentrale Menü-Reply-Fallbacks
     #    Wenn irgendein Awaiting-Flag (oder last_edit) gesetzt ist,
     #    gib die Nachricht an den zentralen menu_free_text_handler ab.
-    has_pending = any(k.startswith('awaiting_') for k in ud.keys()) or ('last_edit' in ud)
-    if has_pending:
+    if any(k.startswith("awaiting_") for k in ud.keys()) or ("last_edit" in ud):
         return await menu_free_text_handler(update, context)
 
-    # 3) Sonst: nichts – alle anderen Aufgaben liegen in spezialisierten Handlern.
+    # 3) Sonst: nichts – andere Aufgaben haben eigene Handler
     return
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1381,19 +1387,18 @@ def register_handlers(app):
         filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
         message_logger
     ), group=0)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
-        faq_autoresponder
-    ), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+                                   faq_autoresponder), group=0)
     
     # Spam-Filter (Gruppe 2) - NUR IN GRUPPEN (nach Menü-Replies)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, spam_enforcer), group=2)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, ai_moderation_enforcer), group=2)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+                                   spam_enforcer), group=2)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+                                   ai_moderation_enforcer), group=2)
     # Text-Handler (Gruppe 3) - nur Privat & Gruppen (nicht in Kanälen)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS),
-        text_handler
-    ), group=3)
+        text_handler), group=3)
     
     # Status Updates und Chat Member Handler - NUR IN GRUPPEN
     app.add_handler(MessageHandler(
@@ -1406,10 +1411,7 @@ def register_handlers(app):
     
     # Captcha Handler - NUR IN GRUPPEN
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
-    app.add_handler(MessageHandler(
-        filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, 
-        math_captcha_handler
-    ))
-    
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))
+
     # Help Handler
     app.add_handler(help_handler)
