@@ -124,8 +124,8 @@ def build_group_menu(cid: int):
          InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
         [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
          InlineKeyboardButton(tr('🗑️ Bereinigen', lang), callback_data=f"{cid}_clean_delete")],
-        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data="help"),
-         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data="patchnotes")]
+        [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
+         InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -212,6 +212,29 @@ async def _render_rss_root(query, cid, lang):
         [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
     ]
     return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def _render_rss_list(query, cid, lang):
+    feeds = db_list_rss_feeds(cid) or []
+    if not feeds:
+        kb = [[InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')]]
+        return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=InlineKeyboardMarkup(kb))
+
+    rows = []
+    text_lines = ["📰 <b>Aktive Feeds</b>:"]
+    for item in feeds:
+        url = item[0]
+        tid = item[1] if len(item) > 1 else "?"
+        opts = get_rss_feed_options(cid, url) or {}
+        img_on = bool(opts.get("post_images", False))
+        text_lines.append(f"• {url} (Topic {tid})")
+        rows.append([
+            InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"),
+            InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}")
+        ])
+    rows.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'{cid}_rss')])
+    return await query.edit_message_text(
+        "\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML"
+    )
 
 async def _render_spam_root(query, cid, lang=None):
     lang = lang or (get_group_language(cid) or "de")
@@ -414,18 +437,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     if func == 'rss' and sub is None:
-        ai_faq, ai_rss = get_ai_settings(cid)
-        topic_id = get_rss_topic(cid)
-        topic_line = f"Aktuelles RSS-Topic: {topic_id}" if topic_id else "Kein RSS-Topic gesetzt."
-        text = "📰 <b>RSS-Feeds</b>\n" + topic_line
-        kb = [
-            [InlineKeyboardButton(tr('Auflisten', lang), callback_data=f"{cid}_rss_list"),
-             InlineKeyboardButton(tr('Feed hinzufügen', lang), callback_data=f"{cid}_rss_setrss")],
-            [InlineKeyboardButton(tr('Stoppen', lang), callback_data=f"{cid}_rss_stop")],
-            [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung", callback_data=f"{cid}_rss_ai_toggle")],
-            [InlineKeyboardButton(tr('⬅ Hauptmenü', lang), callback_data=f"group_{cid}")]
-        ]
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+        return await _render_rss_root(query, cid, lang)
 
     if func == 'captcha' and sub is None:
         en, ctype, behavior = get_captcha_settings(cid)
@@ -575,34 +587,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
                 return await _render_ai_menu(cid, query, context)
         
-        if func == 'aimod' and sub is None:
-            pol = effective_ai_mod_policy(cid, 0)
-            text = (
-                "🛡️ <b>KI-Moderation (global)</b>\n\n"
-                f"Status: <b>{'AN' if pol['enabled'] else 'AUS'}</b> • Shadow: <b>{'AN' if pol['shadow_mode'] else 'AUS'}</b>\n"
-                f"Aktionsfolge: <b>{pol['action_primary']}</b> → Eskalation nach {pol['escalate_after']} → <b>{pol['escalate_action']}</b>\n"
-                f"Mute-Dauer: <b>{pol['mute_minutes']} min</b>\n"
-                f"Ratenlimit: <b>{pol['max_calls_per_min']}/min</b> • Cooldown: <b>{pol['cooldown_s']}s</b>\n\n"
-                f"Schwellen (0..1): tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} "
-                f"harass={pol['harass_thresh']} self={pol['selfharm_thresh']} viol={pol['violence_thresh']} link={pol['link_risk_thresh']}\n"
-            )
-            kb = [
-                [InlineKeyboardButton("Ein/Aus", callback_data=f"{cid}_aimod_toggle"),
-                InlineKeyboardButton("Shadow", callback_data=f"{cid}_aimod_shadow")],
-                [InlineKeyboardButton("⚖️ Strikes", callback_data=f"{cid}_aimod_strikes"),
-                InlineKeyboardButton("Aktion ⏭", callback_data=f"{cid}_aimod_act")],
-                [InlineKeyboardButton("Eskalation ⏭", callback_data=f"{cid}_aimod_escal"),
-                InlineKeyboardButton("Mute ⌛", callback_data=f"{cid}_aimod_mute_minutes")],
-                [InlineKeyboardButton("Rate/Cooldown", callback_data=f"{cid}_aimod_rate"),
-                InlineKeyboardButton("Schwellen", callback_data=f"{cid}_aimod_thr")],
-                [InlineKeyboardButton("Warntext", callback_data=f"{cid}_aimod_warn"),
-                InlineKeyboardButton("Appeal-URL", callback_data=f"{cid}_aimod_appeal")],
-                [InlineKeyboardButton("Topic-Overrides", callback_data=f"{cid}_aimod_topics")],
-                [InlineKeyboardButton("📄 Rohwerte (global)", callback_data=f"{cid}_aimod_raw")],  # <-- NEU
-                [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_ai")]
-            ]
-            return await _render_aimod_menu(cid, query, context)
-
         # KI-Moderation – Aktionen
         if func == 'aimod' and sub:
             if sub == 'toggle':
@@ -680,28 +664,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_pending_input(query.message.chat.id, update.effective_user.id, "rss_url", {"chat_id": cid})
             await query.message.reply_text('📰 Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
             await query.answer("Sende nun die RSS-URL als Antwort.")
-            return
+            return await _render_rss_root(query, cid, lang)
 
         if sub == 'list':
-            feeds = db_list_rss_feeds(cid) or []
-            if not feeds:
-                return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')]]))
-            rows = []
-            text_lines = ["Aktive Feeds:"]
-            for item in feeds:
-                # erwartetes Format: (url, topic_id, …)
-                url = item[0]
-                tid = item[1] if len(item) > 1 else "?"
-                opts = get_rss_feed_options(cid, url) or {}
-                img_on = bool(opts.get("post_images", False))
-                text_lines.append(f"- {url} (Topic {tid})")
-                rows.append([
-                    InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"),
-                    InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}")
-                ])
-            rows.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'group_{cid}')])
-            return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows))
-
+            return await _render_rss_list(query, cid, lang)
+        
         if sub == 'stop':
             # stoppt alle Feeds der Gruppe
             remove_rss_feed(cid)
@@ -727,7 +694,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
-            return await _render_rss_root(query, cid, lang)
+            return await _render_rss_list(query, cid, lang)
 
         if data.startswith(f"{cid}_rss_del|"):
             url = data.split("|", 1)[1]
@@ -738,7 +705,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("🗑 Feed entfernt.", show_alert=True)
             except Exception:
                 await query.answer("⚠️ Entfernen fehlgeschlagen (prüfe DB-Funktion).", show_alert=True)
-            return await _render_rss_root(query, cid, lang)
+            return await _render_rss_list(query, cid, lang)
 
     # --- Spam ---
     if func == 'spam' and sub is None:
@@ -855,7 +822,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tid = int(sub.split('_')[-1])
             pol = get_spam_policy_topic(cid, tid) or {}
             cur = bool(pol.get('only_admin_links', False))
-            set_spam_policy_topic(cid, tid, only_admin_links=not cur)
             set_spam_policy_topic(cid, tid, only_admin_links=not cur)
             await query.answer(f"...", show_alert=True)
             return await _render_spam_topic(query, cid, tid)
@@ -1381,6 +1347,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await _call_db_safe(set_spam_policy_topic, cid, tid, per_user_daily_limit=val)
             clear_pending_input(msg.chat.id, update.effective_user.id, 'topic_limit')
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'spam_edit')  # ← ergänzen
             return await msg.reply_text(f"✅ Tageslimit für Topic {tid} gesetzt auf {val}.")
         except Exception:
             logger.exception("topic limit save failed")

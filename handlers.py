@@ -216,34 +216,29 @@ async def spam_enforcer(update, context):
     
     # --- Tageslimit (pro Topic & User) --- 
     # separat die *Spam*-Policy laden (inkl. Topic-Overrides)
-    link_settings = get_link_settings(chat_id)
-    spam_pol = effective_spam_policy(chat_id, topic_id, link_settings)
+    link_flags = get_link_settings(chat_id)  # 4-Tuple aus DB
+    spam_pol   = effective_spam_policy(chat_id, topic_id, link_flags)
 
-    daily_lim = int(spam_pol.get("per_user_daily_limit") or 0)
+    daily_lim   = int(spam_pol.get("per_user_daily_limit") or 0)
     notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
 
     if topic_id and daily_lim > 0 and user and not privileged:
-        used = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
-        remaining = daily_lim - used
+        # Zähle Nachrichten bis JETZT (vor dieser Nachricht)
+        used_before = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
 
-        # optional: Rest anzeigen (off|smart|always)
-        if remaining >= 0:
-            if notify_mode == "always" or (notify_mode == "smart" and (used in (1,) or remaining in (10,5,2,1))):
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        message_thread_id=topic_id,
-                        reply_to_message_id=msg.message_id,
-                        text=f"🧮 Rest heute: {remaining}/{daily_lim}"
-                    )
-                except Exception:
-                    pass
+        # Überschreitet diese Nachricht das Limit?
+        if used_before >= daily_lim:
+            # -> Diese Nachricht darf NICHT bleiben
+            deleted = False
+            try:
+                await msg.delete()
+                deleted = True
+            except Exception as e:
+                logger.warning(f"Limit delete failed in {chat_id}/{topic_id}: {e}")
 
-        if remaining < 0:
-            deleted = await _safe_delete(msg)
             did_action = "delete" if deleted else "none"
             primary = (spam_pol.get("action_primary") or "delete").lower()
-            if primary in ("mute","stumm"):
+            if primary in ("mute", "stumm"):
                 try:
                     until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
                     await context.bot.restrict_chat_member(
@@ -253,6 +248,7 @@ async def spam_enforcer(update, context):
                 except Exception as e:
                     logger.warning(f"Limit mute failed in {chat_id}: {e}")
 
+            # Optionaler Hinweis (wie bisher)
             try:
                 extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
                 await context.bot.send_message(
@@ -262,13 +258,30 @@ async def spam_enforcer(update, context):
             except Exception:
                 pass
 
+            # Logging (best effort)
             try:
                 from statistic import log_spam_event
-                log_spam_event(chat_id, user.id, "limit_day", did_action,
-                            {"limit": daily_lim, "used": used, "topic_id": topic_id})
+                log_spam_event(
+                    chat_id, user.id, "limit_day", did_action,
+                    {"limit": daily_lim, "used_before": used_before, "topic_id": topic_id}
+                )
             except Exception:
                 pass
-            return
+
+            return  # WICHTIG: nichts Weiteres mehr prüfen
+
+        # Noch innerhalb des Limits: Rest nach dieser Nachricht anzeigen
+        remaining_after = daily_lim - (used_before + 1)
+        if notify_mode == "always" or (notify_mode == "smart" and (used_before in (0,) or remaining_after in (10, 5, 2, 1, 0))):
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=topic_id,
+                    reply_to_message_id=msg.message_id,
+                    text=f"🧮 Rest heute: {max(remaining_after,0)}/{daily_lim}"
+                )
+            except Exception:
+                pass
     
     # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
     match = get_matching_router_rule(chat_id, text, domains_in_msg)
