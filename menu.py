@@ -12,9 +12,6 @@ from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextT
 from telegram.error import BadRequest
 import re
 import logging
-import datetime
-import asyncio
-import inspect
 from zoneinfo import ZoneInfo
 
 # -----------------------------
@@ -1239,17 +1236,15 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
     doc_id = msg.document.file_id if msg.document else None
     media_id = photo_id or doc_id
     ud    = context.user_data or {}
+    text = (msg.text or "").strip()
+    # hole ALLE Pending-Keys (nicht nur einen)
+    pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
 
-    # Pendings laden (defensiv)
-    try:
-        pend = get_pending_inputs(msg.chat.id, update.effective_user.id) or {}
-        if not isinstance(pend, dict):
-            pend = {}
-        if 'rss_url' in pend:
-            return  # RSS-Handler übernimmt
-    except Exception as e:
-        logger.warning(f"pending_inputs read failed: {e}")
-        pend = {}
+    logger.info("menu_free_text: user=%s pend_keys=%s flags=%s text=%r",
+            update.effective_user.id,
+            list((pend or {}).keys()),
+            [k for k in (ud or {}).keys() if k.startswith('awaiting_')],
+            (text[:80] if text else text))
 
     # --- DB-Fallback: offener Edit-Flow? (Einzelabruf) ---
     if 'last_edit' not in context.user_data:
@@ -1371,16 +1366,25 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         await msg.reply_text("✅ FAQ gelöscht.")
         return
 
-    # Spam: Topic-Limit
-    if context.user_data.pop('awaiting_topic_limit', False):
-        cid = context.user_data.pop('spam_group_id')
-        tid = context.user_data.pop('spam_topic_id')
+    # Topic-Limit (max Nachrichten/Tag)
+    if ud.pop('awaiting_topic_limit', False) or ('topic_limit' in pend):
+        cid = ud.pop('spam_group_id',  (pend.get('topic_limit') or {}).get('chat_id'))
+        tid = ud.pop('spam_topic_id',  (pend.get('topic_limit') or {}).get('topic_id'))
+        if not (cid and tid):
+            return await msg.reply_text("⚠️ Kein Ziel erkannt. Menü: Spam → Topic → Limit/Tag.")
+
         try:
-            limit = int((update.effective_message.text or "").strip())
-        except:
-            return await update.effective_message.reply_text("Bitte eine Zahl senden.")
-        set_spam_policy_topic(cid, tid, per_user_daily_limit=max(0, limit))
-        return await update.effective_message.reply_text(f"✅ Limit gesetzt: {limit}/Tag/User (Topic {tid}).")
+            val = int(text)
+        except ValueError:
+            return await msg.reply_text("Bitte Limit als Zahl senden (0 = aus).")
+
+        try:
+            await _call_db_safe(set_spam_policy_topic, cid, tid, per_user_daily_limit=val)
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'topic_limit')
+            return await msg.reply_text(f"✅ Tageslimit für Topic {tid} gesetzt auf {val}.")
+        except Exception:
+            logger.exception("topic limit save failed")
+            return await msg.reply_text("❌ Konnte Limit nicht speichern.")
 
     # Spam: Whitelist
     if context.user_data.pop('awaiting_spam_whitelist', False) or (pend.get('spam_edit', {}).get('which') == 'whitelist'):
@@ -1483,11 +1487,17 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # 4.1 RSS-URL
     if ud.pop('awaiting_rss_url', False) or ('rss_url' in pend):
-        cid = ud.pop('rss_group_id', pend.get('rss_url', {}).get('chat_id'))
+        cid = ud.pop('rss_group_id', (pend.get('rss_url') or {}).get('chat_id'))
         if not cid:
-            return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Bitte Menü → RSS → Feed hinzufügen.")
+            return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Menü: RSS → Feed hinzufügen.")
+
+        url = text
+        # sehr einfache Plausibilitätsprüfung
+        if not re.match(r'^https?://', url):
+            return await msg.reply_text("Bitte eine gültige URL mit http(s) senden.")
+
         try:
-            await _call_db_safe(add_rss_feed, cid, text)
+            await _call_db_safe(add_rss_feed, cid, url)
             clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
             return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
         except Exception:
