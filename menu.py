@@ -677,7 +677,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('awaiting_mood_question', None)
             context.user_data.pop('last_edit', None)
             context.user_data.update(awaiting_rss_url=True, rss_group_id=cid)
-            set_pending_input(query.message.chat.id, update.effective_user.id, "rss_url", {"target_chat_id": cid})
+            set_pending_input(query.message.chat.id, update.effective_user.id, "rss_url", {"chat_id": cid})
             await query.message.reply_text('📰 Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
             await query.answer("Sende nun die RSS-URL als Antwort.")
             return
@@ -1486,20 +1486,35 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         return await update.effective_message.reply_text("✅ Gespeichert.")
 
     # 4.1 RSS-URL
-    if ud.pop('awaiting_rss_url', False) or ('rss_url' in pend):
-        cid = ud.pop('rss_group_id', (pend.get('rss_url') or {}).get('chat_id'))
+    if context.user_data.pop('awaiting_rss_url', False) or ('rss_url' in (pend or {})):
+        payload = (pend.get('rss_url') or {}) if isinstance(pend, dict) else {}
+        # hol die Ziel-Gruppe robust aus user_data ODER Pending (chat_id bevorzugt, fallback target_chat_id)
+        cid = context.user_data.pop('rss_group_id', None)
+        if not cid:
+            cid = payload.get('chat_id') or payload.get('target_chat_id')
+
         if not cid:
             return await msg.reply_text("⚠️ Kein Ziel-Chat erkannt. Menü: RSS → Feed hinzufügen.")
 
-        url = text
-        # sehr einfache Plausibilitätsprüfung
+        url = text.strip()
         if not re.match(r'^https?://', url):
             return await msg.reply_text("Bitte eine gültige URL mit http(s) senden.")
 
+        # topic_id aus den Gruppeneinstellungen holen
         try:
-            await _call_db_safe(add_rss_feed, cid, url)
+            topic_id = get_rss_topic(int(cid))
+        except Exception:
+            topic_id = 0
+
+        if not topic_id:
+            # Aufräumen & Hinweis
             clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
-            return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
+            return await msg.reply_text("❗ Kein RSS-Topic gesetzt. Bitte zuerst /settopicrss im gewünschten Thread ausführen.")
+
+        try:
+            await _call_db_safe(add_rss_feed, int(cid), url, int(topic_id))  # <- 3 Argumente!
+            clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
+            return await msg.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
         except Exception:
             logger.exception("rss add failed")
             return await msg.reply_text("❌ Konnte RSS-Feed nicht speichern.")
