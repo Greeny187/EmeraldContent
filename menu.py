@@ -204,12 +204,12 @@ async def _render_rss_root(query, cid, lang):
     ai_faq, ai_rss = get_ai_settings(cid)
     text = "📰 <b>RSS</b>\nVerwalte Feeds, Topic und KI-Optionen."
     kb = [
-        [InlineKeyboardButton("➕ Feed hinzufügen", callback_data=f"{cid}_rss_add"),
+        [InlineKeyboardButton("➕ Feed hinzufügen", callback_data=f"{cid}_rss_setrss"),
          InlineKeyboardButton("📃 Feeds anzeigen", callback_data=f"{cid}_rss_list")],
         [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung",
                               callback_data=f"{cid}_rss_ai_toggle")],
         [InlineKeyboardButton("🧵 Topic setzen", callback_data=f"{cid}_rss_topic_set")],
-        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
+        [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_rss")]
     ]
     return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
@@ -667,7 +667,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _render_rss_root(query, cid, lang)
 
         if sub == 'list':
-            return await _render_rss_list(query, cid, lang)
+            feeds = db_list_rss_feeds(cid) or []
+            if not feeds:
+                kb = [[InlineKeyboardButton('↩️ Zurück', callback_data=f'{cid}_rss')]]
+                return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+            rows = []
+            text_lines = ["📰 <b>Aktive Feeds</b>:"]
+            for item in feeds:
+                url = item[0]
+                tid = item[1] if len(item) > 1 else "?"
+                opts = get_rss_feed_options(cid, url) or {}
+                img_on = bool(opts.get("post_images", False))
+                text_lines.append(f"• {url} (Topic {tid})")
+                rows.append([
+                    InlineKeyboardButton(f"🖼 Bilder: {'AN' if img_on else 'AUS'}", callback_data=f"{cid}_rss_img_toggle|{url}"),
+                    InlineKeyboardButton("🗑 Entfernen", callback_data=f"{cid}_rss_del|{url}")
+                ])
+            rows.append([InlineKeyboardButton('↩️ Zurück', callback_data=f'{cid}_rss')])
+            return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")
         
         if sub == 'stop':
             # stoppt alle Feeds der Gruppe
@@ -682,6 +700,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(tr('Einstellung gespeichert.', lang), show_alert=True)
             return await _render_rss_root(query, cid, lang)
 
+        if sub == 'topic_set':
+            await query.answer('Öffne den gewünschten Foren-Thread und sende dort /settopicrss.', show_alert=True)
+            return await _render_rss_root(query, cid, lang)
+        
         # Bild-Posting pro URL togglen
         if data.startswith(f"{cid}_rss_img_toggle|"):
             url = data.split("|", 1)[1]
