@@ -24,7 +24,7 @@ from database import (
     get_captcha_settings, set_captcha_settings,
     get_farewell, set_farewell, delete_farewell,
     get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    get_ai_settings, set_ai_settings,
+    get_ai_settings, set_ai_settings, add_topic_router_rule,
     is_daily_stats_enabled, set_daily_stats,
     get_mood_question, set_mood_question, get_mood_topic,
     list_faqs, upsert_faq, delete_faq,
@@ -206,13 +206,19 @@ async def _render_rss_root(query, cid, lang):
     kb = [
         [InlineKeyboardButton("➕ Feed hinzufügen", callback_data=f"{cid}_rss_setrss"),
          InlineKeyboardButton("📃 Feeds anzeigen", callback_data=f"{cid}_rss_list")],
-        [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung",
-                              callback_data=f"{cid}_rss_ai_toggle")],
+        [InlineKeyboardButton(f"{'✅' if ai_rss else '☐'} KI-Zusammenfassung", callback_data=f"{cid}_rss_ai_toggle")],
         [InlineKeyboardButton("🧵 Topic setzen", callback_data=f"{cid}_rss_topic_set")],
-        [InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_rss")]
+        [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
     ]
-    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
-
+    try:
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            try: await query.answer("Keine Änderung.", show_alert=False)
+            except Exception: pass
+            return
+        raise
+    
 async def _render_rss_list(query, cid, lang):
     feeds = db_list_rss_feeds(cid) or []
     if not feeds:
@@ -664,14 +670,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_pending_input(query.message.chat.id, update.effective_user.id, "rss_url", {"chat_id": cid})
             await query.message.reply_text('📰 Bitte sende die RSS-URL:', reply_markup=ForceReply(selective=True))
             await query.answer("Sende nun die RSS-URL als Antwort.")
-            return await _render_rss_root(query, cid, lang)
+            return  
 
         if sub == 'list':
             feeds = db_list_rss_feeds(cid) or []
             if not feeds:
                 kb = [[InlineKeyboardButton('↩️ Zurück', callback_data=f'{cid}_rss')]]
                 return await query.edit_message_text('Keine RSS-Feeds.', reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
-
             rows = []
             text_lines = ["📰 <b>Aktive Feeds</b>:"]
             for item in feeds:
@@ -716,7 +721,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
-            return await _render_rss_list(query, cid, lang)
+            return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")  # ✅
 
         if data.startswith(f"{cid}_rss_del|"):
             url = data.split("|", 1)[1]
@@ -1400,25 +1405,25 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         return await msg.reply_text(f"✅ Blacklist aktualisiert ({len(cur['domain_blacklist'])} Domains).")
 
     # Router: Keywords / Domains (ohne Topic-Angabe → einfache Regeln)
-    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in pend):
-        cid = context.user_data.pop('router_group_id', pend.get('router_add_kw', {}).get('chat_id'))
+    if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in (pend or {})):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_add_kw') or {}).get('chat_id'))
+        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_kw') or {}).get('target_tid'))
         kws = [w.strip().lower() for w in re.split(r"[,\s]+", text) if w.strip()]
-        from database import add_topic_router_rule
-        target_tid = context.user_data.pop('router_target_tid', pend.get('router_add_kw', {}).get('target_tid'))
-        for kw in kws:
-            add_topic_router_rule(cid, keyword=kw, topic_id=target_tid)
-        clear_pending_input(msg.chat.id, update.effective_user.id, "router_add_kw")
-        return await msg.reply_text(f"✅ {len(kws)} Keyword(s) hinzugefügt.")
+        if not tid or not kws:
+            return await msg.reply_text("Bitte Keywords angeben.")
+        rid = add_topic_router_rule(cid, tid, keywords=kws)  # ✅ korrekt: (chat_id, target_topic_id, keywords=[...])
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_kw')
+        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Keywords) angelegt.")
 
-    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in pend):
-        cid = context.user_data.pop('router_group_id', pend.get('router_add_dom', {}).get('chat_id'))
+    if context.user_data.pop('awaiting_router_add_domains', False) or ('router_add_dom' in (pend or {})):
+        cid = context.user_data.pop('router_group_id', (pend.get('router_add_dom') or {}).get('chat_id'))
+        tid = context.user_data.pop('router_target_tid', (pend.get('router_add_dom') or {}).get('target_tid'))
         doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
-        from database import add_topic_router_rule
-        target_tid = context.user_data.pop('router_target_tid', pend.get('router_add_dom', {}).get('target_tid'))
-        for d in doms:
-            add_topic_router_rule(cid, domain=d, topic_id=target_tid)
-        clear_pending_input(msg.chat.id, update.effective_user.id, "router_add_dom")
-        return await msg.reply_text(f"✅ {len(doms)} Domain(s) hinzugefügt.")
+        if not tid or not doms:
+            return await msg.reply_text("Bitte Domains angeben.")
+        rid = add_topic_router_rule(cid, tid, domains=doms)  # ✅ korrekt
+        clear_pending_input(msg.chat.id, update.effective_user.id, 'router_add_dom')
+        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tid} (Domains) angelegt.")
 
     # KI: Thresholds
     if context.user_data.pop('awaiting_aimod_thresholds', False):
