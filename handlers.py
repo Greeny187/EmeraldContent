@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
@@ -138,6 +138,28 @@ async def _safe_delete(msg):
             return False
         raise
 
+async def _hard_delete_message(context, chat_id: int, msg) -> bool:
+    """
+    Löscht eine Nachricht robust:
+    1) msg.delete()
+    2) bot.delete_message(chat_id, message_id)
+    Gibt True zurück, wenn gelöscht; sonst False (loggt Ursache).
+    """
+    try:
+        await msg.delete()
+        return True
+    except (BadRequest, Forbidden) as e1:
+        logger.warning(f"msg.delete() failed in {chat_id}: {e1}")
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
+            return True
+        except (BadRequest, Forbidden) as e2:
+            logger.error(f"bot.delete_message() failed in {chat_id}: {e2}")
+            return False
+    except Exception as e:
+        logger.exception(f"Unexpected delete error in {chat_id}: {e}")
+        return False
+
 async def spam_enforcer(update, context):
     msg = update.effective_message
     if not msg: return
@@ -228,16 +250,12 @@ async def spam_enforcer(update, context):
 
         # Überschreitet diese Nachricht das Limit?
         if used_before >= daily_lim:
-            # -> Diese Nachricht darf NICHT bleiben
-            deleted = False
-            try:
-                await msg.delete()
-                deleted = True
-            except Exception as e:
-                logger.warning(f"Limit delete failed in {chat_id}/{topic_id}: {e}")
+            deleted = await _hard_delete_message(context, chat_id, msg)
 
             did_action = "delete" if deleted else "none"
             primary = (spam_pol.get("action_primary") or "delete").lower()
+
+            # Optional zusätzlich stumm schalten, wenn so konfiguriert
             if primary in ("mute", "stumm"):
                 try:
                     until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
@@ -248,7 +266,7 @@ async def spam_enforcer(update, context):
                 except Exception as e:
                     logger.warning(f"Limit mute failed in {chat_id}: {e}")
 
-            # Optionaler Hinweis (wie bisher)
+            # Hinweis ins Topic (du wolltest beides: löschen + warnen)
             try:
                 extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
                 await context.bot.send_message(
