@@ -28,7 +28,7 @@ from database import (
     get_mood_question, set_mood_question, get_mood_topic,
     list_faqs, upsert_faq, delete_faq,
     get_group_language, set_group_language,
-    list_forum_topics, count_forum_topics,
+    list_forum_topics, count_forum_topics, get_topic_owners,
     get_night_mode, set_night_mode, add_rss_feed,
     set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
     get_rss_feed_options, set_spam_policy_topic, get_spam_policy_topic,
@@ -291,21 +291,39 @@ async def _render_spam_root(query, cid, lang=None):
         raise
 
 async def _render_spam_topic(query, cid, topic_id):
-    pol = get_spam_policy_topic(cid, topic_id) or {}
+    pol   = get_spam_policy_topic(cid, topic_id) or {}
     level = pol.get('level', 'off')
-    emsg = pol.get('emoji_max_per_msg', 0) or 0
-    rate = pol.get('max_msgs_per_10s', 0) or 0
-    wl = ", ".join(pol.get('link_whitelist') or []) or "–"
-    bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
+    emsg  = pol.get('emoji_max_per_msg', 0) or 0
+    rate  = pol.get('max_msgs_per_10s', 0) or 0
     limit = pol.get('per_user_daily_limit', 0) or 0
     qmode = (pol.get('quota_notify') or 'smart')
+
+    wl_list = pol.get('link_whitelist') or []
+    bl_list = pol.get('domain_blacklist') or []
+    wl = ", ".join(wl_list) if wl_list else "–"
+    bl = ", ".join(bl_list) if bl_list else "–"
+
+    # Ausnahmen (Topic-Owner) sicher ermitteln
+    try:
+        owners = get_topic_owners(cid, topic_id) or []
+    except Exception:
+        owners = []
+
+    if owners:
+        owner_lines = [f"• <a href='tg://user?id={uid}'>User {uid}</a>" for uid in owners]
+        owners_text = "<b>Ausnahmen (Topic-Owner):</b>\n" + "\n".join(owner_lines)
+    else:
+        owners_text = "<b>Ausnahmen (Topic-Owner):</b> – keine –"
+
     text = (
         f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
         f"Level: <b>{level}</b>\n"
         f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
         f"Limit/Tag/User: <b>{limit}</b>\n"
         f"Rest-Info: <b>{qmode}</b>\n"
-        f"Whitelist: {wl}\nBlacklist: {bl}"
+        f"Whitelist: {wl}\n"
+        f"Blacklist: {bl}\n"
+        f"{owners_text}"
     )
     kb = [
         [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
@@ -544,35 +562,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if func == 'night' and sub:
         en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(cid)
 
-    if sub == 'toggle':
-        set_night_mode(cid, enabled=not en)
-        await query.answer(f"{'Aktiviert' if not en else 'Deaktiviert'}", show_alert=True)
-        return await menu_callback(update, context)  # oder _render_night_root, falls vorhanden
+        if sub == 'toggle':
+            set_night_mode(cid, enabled=not en)
+            await query.answer(f"{'Aktiviert' if not en else 'Deaktiviert'}", show_alert=True)
+            return await menu_callback(update, context)  # oder _render_night_root, falls vorhanden
 
-    if sub == 'hard_toggle':
-        set_night_mode(cid, hard_mode=not hard_mode)
-        await query.answer(f"Harter Modus: {'AN' if not hard_mode else 'AUS'}", show_alert=True)
-        return await menu_callback(update, context)
+        if sub == 'hard_toggle':
+            set_night_mode(cid, hard_mode=not hard_mode)
+            await query.answer(f"Harter Modus: {'AN' if not hard_mode else 'AUS'}", show_alert=True)
+            return await menu_callback(update, context)
 
-    if sub == 'del_toggle':
-        set_night_mode(cid, delete_non_admin=not del_non_admin)
-        await query.answer(f"Nicht-Admin löschen: {'AN' if not del_non_admin else 'AUS'}", show_alert=True)
-        return await menu_callback(update, context)
+        if sub == 'del_toggle':
+            set_night_mode(cid, delete_non_admin=not del_non_admin)
+            await query.answer(f"Nicht-Admin löschen: {'AN' if not del_non_admin else 'AUS'}", show_alert=True)
+            return await menu_callback(update, context)
 
-    if sub == 'warnonce_toggle':
-        set_night_mode(cid, warn_once=not warn_once)
-        await query.answer(f"Einmal warnen: {'AN' if not warn_once else 'AUS'}", show_alert=True)
-        return await menu_callback(update, context)
+        if sub == 'warnonce_toggle':
+            set_night_mode(cid, warn_once=not warn_once)
+            await query.answer(f"Einmal warnen: {'AN' if not warn_once else 'AUS'}", show_alert=True)
+            return await menu_callback(update, context)
 
-    if sub.startswith('quiet_'):
-        import datetime
-        from zoneinfo import ZoneInfo
-        now = datetime.datetime.now(ZoneInfo(tz or "Europe/Berlin"))
-        mins = {'15m': 15, '1h': 60, '8h': 8*60}[sub.split('_',1)[1]]
-        until = now + datetime.timedelta(minutes=mins)
-        set_night_mode(cid, override_until=until.astimezone(datetime.timezone.utc))
-        await query.answer(f"Sofortige Ruhe bis {until.strftime('%d.%m. %H:%M')}", show_alert=True)
-        return await menu_callback(update, context)
+        if sub.startswith('quiet_'):
+            import datetime
+            from zoneinfo import ZoneInfo
+            now = datetime.datetime.now(ZoneInfo(tz or "Europe/Berlin"))
+            mins = {'15m': 15, '1h': 60, '8h': 8*60}[sub.split('_',1)[1]]
+            until = now + datetime.timedelta(minutes=mins)
+            set_night_mode(cid, override_until=until.astimezone(datetime.timezone.utc))
+            await query.answer(f"Sofortige Ruhe bis {until.strftime('%d.%m. %H:%M')}", show_alert=True)
+            return await menu_callback(update, context)
 
     if func == 'mood' and sub is None:
         q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
