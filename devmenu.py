@@ -615,6 +615,6 @@ def get_ad_stats(cur):
     }
 
 def register_dev_handlers(app):
-    app.add_handler(CommandHandler("devmenu", dev_menu_command))
-    app.add_handler(CallbackQueryHandler(dev_callback_handler, pattern="^dev_"))
+    app.add_handler(CommandHandler("devmenu", dev_menu_command), group=0)
+    app.add_handler(CallbackQueryHandler(dev_callback_handler, pattern="^dev_", block=true), group=1)
     register_ads(app)
