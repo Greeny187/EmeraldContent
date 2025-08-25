@@ -12,7 +12,6 @@ from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextT
 from telegram.error import BadRequest
 import re
 import logging
-from zoneinfo import ZoneInfo
 
 # -----------------------------
 # DB/Service-Importe (bereinigt)
@@ -271,8 +270,8 @@ async def _render_spam_root(query, cid, lang=None):
     )
     kb = [
         [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
-        [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit"),
-         InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit")],
+        [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit_0"),
+         InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit_0")],
         [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} 🔗 Nur Admin-Links (Gruppe)",
                               callback_data=f"{cid}_spam_link_admins_global")],
         [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
@@ -542,6 +541,39 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
+    if func == 'night' and sub:
+        en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(cid)
+
+    if sub == 'toggle':
+        set_night_mode(cid, enabled=not en)
+        await query.answer(f"{'Aktiviert' if not en else 'Deaktiviert'}", show_alert=True)
+        return await menu_callback(update, context)  # oder _render_night_root, falls vorhanden
+
+    if sub == 'hard_toggle':
+        set_night_mode(cid, hard_mode=not hard_mode)
+        await query.answer(f"Harter Modus: {'AN' if not hard_mode else 'AUS'}", show_alert=True)
+        return await menu_callback(update, context)
+
+    if sub == 'del_toggle':
+        set_night_mode(cid, delete_non_admin=not del_non_admin)
+        await query.answer(f"Nicht-Admin löschen: {'AN' if not del_non_admin else 'AUS'}", show_alert=True)
+        return await menu_callback(update, context)
+
+    if sub == 'warnonce_toggle':
+        set_night_mode(cid, warn_once=not warn_once)
+        await query.answer(f"Einmal warnen: {'AN' if not warn_once else 'AUS'}", show_alert=True)
+        return await menu_callback(update, context)
+
+    if sub.startswith('quiet_'):
+        import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.datetime.now(ZoneInfo(tz or "Europe/Berlin"))
+        mins = {'15m': 15, '1h': 60, '8h': 8*60}[sub.split('_',1)[1]]
+        until = now + datetime.timedelta(minutes=mins)
+        set_night_mode(cid, override_until=until.astimezone(datetime.timezone.utc))
+        await query.answer(f"Sofortige Ruhe bis {until.strftime('%d.%m. %H:%M')}", show_alert=True)
+        return await menu_callback(update, context)
+
     if func == 'mood' and sub is None:
         q = get_mood_question(cid) or tr('Wie fühlst du dich heute?', get_group_language(cid) or 'de')
         topic_id = get_mood_topic(cid)
@@ -721,7 +753,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(f"🖼 Bilder: {'AN' if new_val else 'AUS'}", show_alert=True)
             except Exception as e:
                 await query.answer(f"⚠️ Konnte post_images nicht togglen: {e}", show_alert=True)
-            return await query.edit_message_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")  # ✅
+            return await _render_rss_list(query, cid, lang)
 
         if data.startswith(f"{cid}_rss_del|"):
             url = data.split("|", 1)[1]
@@ -844,13 +876,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _call_db_safe(set_link_settings, cid, protection=not cur, warning_text=warn_text)
             await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
             return await _render_spam_root(query, cid)
-
+        
+        if sub == 'help':
+            txt = ("🧹 <b>Spamfilter – Hilfe</b>\n\n"
+                "• Level: off/light/medium/strict\n"
+                "• Emoji- & Flood-Limits: pro Topic anpassbar\n"
+                "• Whitelist/Blacklist: Domains erlauben/verbieten\n"
+                "• Nur-Admin-Links: Links nur von Admins zulassen\n"
+                "• Tageslimit/Benachrichtigung: pro Topic/Benutzer\n")
+            return await query.edit_message_text(txt, parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_spam")]]))
+    
         if sub.startswith('link_admins_'):
             tid = int(sub.split('_')[-1])
             pol = get_spam_policy_topic(cid, tid) or {}
             cur = bool(pol.get('only_admin_links', False))
-            set_spam_policy_topic(cid, tid, only_admin_links=not cur)
-            await query.answer(f"...", show_alert=True)
+            set_spam_policy_topic(cid, tid, only_admin_links=not cur)   # ← doppelte Zeile entfernen
+            await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not cur else 'AUS'}", show_alert=True)
             return await _render_spam_topic(query, cid, tid)
 
         if sub.startswith('link_warn_'):
@@ -870,49 +912,49 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"Level: {nxt}", show_alert=True)
             return await _render_spam_topic(query, cid, topic_id)
 
+        # Einheitlich und sicher parsen:
         if sub.startswith(('emj_', 'rate_', 'wl_edit_', 'bl_edit_', 'limt_edit_', 'qmode_')):
             parts = sub.split('_')
-            if parts[0] == 'emj':
+            head = parts[0]
+
+            if head == 'emj':
                 op, topic_id = parts[1], int(parts[2])
                 pol = get_spam_policy_topic(cid, topic_id) or {}
                 cur = (pol.get('emoji_max_per_msg') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, emoji_max_per_msg=max(0, cur))
                 return await _render_spam_topic(query, cid, topic_id)
 
-            if parts[0] == 'rate':
+            if head == 'rate':
                 op, topic_id = parts[1], int(parts[2])
                 pol = get_spam_policy_topic(cid, topic_id) or {}
                 cur = (pol.get('max_msgs_per_10s') or 0) + (1 if op == '+' else -1)
                 set_spam_policy_topic(cid, topic_id, max_msgs_per_10s=max(0, cur))
                 return await _render_spam_topic(query, cid, topic_id)
 
-            if parts[0] in ('wl', 'bl') and parts[1] == 'edit':
+            if head in ('wl', 'bl') and len(parts) >= 3 and parts[1] == 'edit':
                 topic_id = int(parts[2])
-                which = 'whitelist' if parts[0] == 'wl' else 'blacklist'
+                which = 'whitelist' if head == 'wl' else 'blacklist'
                 context.user_data.update(
                     awaiting_spam_whitelist=(which == 'whitelist'),
                     awaiting_spam_blacklist=(which == 'blacklist'),
-                    spam_group_id=cid,
-                    spam_topic_id=topic_id
+                    spam_group_id=cid, spam_topic_id=topic_id
                 )
                 set_pending_input(
-                    query.message.chat.id,
-                    update.effective_user.id,
-                    "spam_edit",
+                    query.message.chat.id, update.effective_user.id, "spam_edit",
                     {"chat_id": cid, "topic_id": topic_id, "which": which}
                 )
                 prompt = "Sende die Whitelist-Domains, Komma-getrennt:" if which == 'whitelist' else "Sende die Blacklist-Domains, Komma-getrennt:"
                 return await query.message.reply_text(prompt, reply_markup=ForceReply(selective=True))
 
-            if parts[0] == 'limt' and parts[1] == 'edit':
+            if head == 'limt' and len(parts) >= 3 and parts[1] == 'edit':
                 topic_id = int(parts[2])
                 context.user_data.update(awaiting_topic_limit=True, spam_group_id=cid, spam_topic_id=topic_id)
                 set_pending_input(query.message.chat.id, update.effective_user.id, "spam_edit",
-                                  {"chat_id": cid, "topic_id": topic_id, "which": "limit"})
+                                {"chat_id": cid, "topic_id": topic_id, "which": "limit"})
                 return await query.message.reply_text("Bitte Limit/Tag/User als Zahl senden (0 = aus):", reply_markup=ForceReply(selective=True))
 
-            if parts[0] == 'qmode':
-                topic_id = int(parts[2])
+            if head == 'qmode' and len(parts) >= 2:
+                topic_id = int(parts[1])  # ← WICHTIG: qmode_{id} hat nur 2 Teile
                 pol = get_spam_policy_topic(cid, topic_id) or {'quota_notify': 'smart'}
                 order = ['off', 'smart', 'always']
                 cur = (pol.get('quota_notify') or 'smart').lower()
@@ -967,6 +1009,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await query.message.reply_text("Format: <regel_id> on|off", reply_markup=ForceReply(selective=True))
 
     # --- AI Moderation: globale Detailaktionen ---
+    
+    if func == 'aimod' and sub is None:
+        return await _render_aimod_root(query, cid)
+    
     if func == 'aimod' and sub:
         if sub == 'toggle':
             pol = effective_ai_mod_policy(cid, 0)
