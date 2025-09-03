@@ -939,6 +939,22 @@ async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     msg = update.effective_message
+    user = update.effective_user
+    
+    # Nur in Gruppen erlauben
+    if chat.type not in ("group", "supergroup"):
+        return await msg.reply_text("❌ Dieser Befehl funktioniert nur in Gruppen.")
+    
+    # Admin-Rechte prüfen
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+        admin_ids = [a.user.id for a in admins]
+        if user.id not in admin_ids:
+            return await msg.reply_text("❌ Nur Admins können Themenbesitzer zuweisen.")
+    except Exception as e:
+        logger.error(f"Admin-Check fehlgeschlagen: {e}")
+        return await msg.reply_text("❌ Konnte Admin-Rechte nicht überprüfen.")
+    
     topic_id = msg.message_thread_id
     topic_name = None
 
@@ -952,7 +968,7 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # DEBUG: eingehende Parameter loggen
     logger.debug(
         "🔍 set_topic called by %s in chat %s: args=%s, entities=%s, has_reply=%s",
-        msg.from_user.id,
+        user.id,
         chat.id,
         context.args,
         [ent.type for ent in (msg.entities or [])],
@@ -986,16 +1002,26 @@ async def set_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 4) Fallback: im Thread ohne Reply → Ausführenden User nehmen
     if not target and topic_id:
-        target = msg.from_user
+        target = user
 
     # 5) Wenn immer noch kein Ziel – Fehlermeldung
     if not target:
-        return await msg.reply_text("⚠️ Ich konnte keinen gültigen User finden. Bitte antworte auf seine Nachricht oder nutze eine Mention.")
+        return await msg.reply_text(
+            "⚠️ Ich konnte keinen gültigen User finden.\n\n"
+            "Verwende eine dieser Methoden:\n"
+            "• Antworte auf eine Nachricht des Users\n"
+            "• Erwähne den User mit @username\n"
+            "• Verwende den Befehl im gewünschten Topic"
+        )
 
     # 6) In DB speichern und Bestätigung
-    assign_topic(chat.id, target.id, topic_id or 0, topic_name)
-    name = f"@{target.username}" if target.username else target.first_name
-    await msg.reply_text(f"✅ {name} wurde als Themenbesitzer zugewiesen.")
+    try:
+        assign_topic(chat.id, target.id, topic_id or 0, topic_name)
+        name = f"@{target.username}" if target.username else target.first_name
+        await msg.reply_text(f"✅ {name} wurde als Themenbesitzer für Topic {topic_id or 'Hauptchat'} zugewiesen.")
+    except Exception as e:
+        logger.error(f"Fehler beim Zuweisen des Topics: {e}")
+        await msg.reply_text("❌ Fehler beim Zuweisen des Topics.")
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg    = update.effective_message
@@ -1391,7 +1417,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("settopic", set_topic))
+    app.add_handler(CommandHandler("settopic", set_topic, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS))
