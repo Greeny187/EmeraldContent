@@ -1430,15 +1430,9 @@ def register_handlers(app):
     app.add_handler(CommandHandler("mystrikes", mystrikes_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("strikes",   strikes_command,   filters=filters.ChatType.GROUPS))
     # Sehr frühe Handler (Gruppe -1)
-    app.add_handler(MessageHandler(
-        filters.ALL & ~filters.StatusUpdate.ALL, 
-        nightmode_enforcer
-    ), group=-1)
-    app.add_handler(MessageHandler(
-        filters.ALL, 
-        forum_topic_registry_tracker
-    ), group=-1)
-    
+    app.add_handler(MessageHandler((filters.ALL & ~filters.StatusUpdate.ALL & ~filters.COMMAND), nightmode_enforcer), group=-1)
+    app.add_handler(MessageHandler((filters.ALL & ~filters.COMMAND), forum_topic_registry_tracker), group=-1)
+        
     # Basis Message Handler (Gruppe 0) - NUR IN GRUPPEN
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
@@ -1468,7 +1462,7 @@ def register_handlers(app):
     
     # Captcha Handler - NUR IN GRUPPEN
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & filters.ChatType.GROUPS, math_captcha_handler))
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, math_captcha_handler))
 
     # Help Handler
     app.add_handler(help_handler)

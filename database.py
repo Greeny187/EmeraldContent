@@ -932,18 +932,18 @@ def get_link_settings(cur, chat_id:int):
 
 @_with_cursor
 def set_link_settings(cur, chat_id: int,
-                      protection: Optional[bool] = None,
-                      warning_on: Optional[bool] = None,
-                      warning_text: Optional[str] = None,
-                      exceptions_on: Optional[bool] = None,
-                      # 🔽 NEU: Aliase für alte Aufrufer
-                      only_admin_links: Optional[bool] = None,
-                      admins_only: Optional[bool] = None):
-    # Aliase auf 'protection' abbilden (letzter gewinnt)
-    if only_admin_links is not None:
-        protection = bool(only_admin_links)
-    if admins_only is not None:
-        protection = bool(admins_only)
+                      protection: bool | None = None,
+                      warning_on: bool | None = None,
+                      warning_text: str | None = None,
+                      exceptions_on: bool | None = None,
+                      only_admin_links: bool | None = None,   # NEU: Alias
+                      admins_only: bool | None = None):        # NEU: weiterer Alias
+    # Aliase auf 'protection' abbilden (falls gesetzt)
+    if protection is None:
+        if only_admin_links is not None:
+            protection = bool(only_admin_links)
+        elif admins_only is not None:
+            protection = bool(admins_only)
 
     parts, params = [], []
     if protection is not None:
@@ -1881,19 +1881,26 @@ def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
             "exceptions_enabled": bool(exc_on),
         }
 
-    admins_only = bool(ls.get("admins_only") or ls.get("only_admin_links") or False)
-    warn_text   = (ls.get("warning_text") or "🚫 Nur Admins dürfen Links posten.")
+    prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
 
-    wl = list(sp.get("link_whitelist") or [])
-    bl = list(sp.get("domain_blacklist") or [])
-    action = (sp.get("action_primary") or "delete").lower()
+    admins_only = bool(prot_on)
+    wl, bl = [], []
+
+    if topic_id:
+        pol = get_spam_policy_topic(chat_id, topic_id) or {}
+        # Topic-Override: only_admin_links
+        if pol.get("only_admin_links") is not None:
+            admins_only = bool(pol["only_admin_links"])
+        wl = pol.get("link_whitelist") or []
+        bl = pol.get("domain_blacklist") or []
 
     return {
         "admins_only": admins_only,
-        "warning_text": warn_text,
+        "warning_on": bool(warn_on),
+        "warning_text": warn_text or "⚠️ Nur Admins dürfen Links posten.",
+        "exceptions_on": bool(except_on),
         "whitelist": wl,
         "blacklist": bl,
-        "action": action,
     }
 
 def _pending_inputs_col(cur) -> str:
