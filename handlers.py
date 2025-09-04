@@ -60,9 +60,34 @@ def _bump_rate(context, chat_id:int, user_id:int):
 def tr(text: str, lang: str) -> str:
     return translate_hybrid(text, target_lang=lang)
 
-def _now_minutes_in_tz(tz_str: str) -> int:
-    now = datetime.datetime.now(ZoneInfo(tz_str))
-    return now.hour * 60 + now.minute
+async def _resolve_username_to_user(context, chat_id: int, username: str):
+    """
+    Versucht @username → telegram.User aufzulösen:
+    1) Aus context.chat_data['username_map'] (gefüllt durch message_logger)
+    2) Fallback: unter aktuellen Admins suchen
+    """
+    name = username.lstrip("@").lower()
+
+    # 1) Chat-Map
+    try:
+        umap = context.chat_data.get("username_map") or {}
+        uid = umap.get(name)
+        if uid:
+            member = await context.bot.get_chat_member(chat_id, uid)
+            return member.user
+    except Exception:
+        pass
+
+    # 2) Admin-Fallback
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        for a in admins:
+            if a.user.username and a.user.username.lower() == name:
+                return a.user
+    except Exception:
+        pass
+
+    return None
 
 def _is_quiet_now(start_min: int, end_min: int, now_min: int) -> bool:
     # Fenster über Mitternacht: start > end -> quiet wenn now >= start oder now < end
@@ -759,6 +784,15 @@ async def message_logger(update, context):
         except Exception as e:
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
 
+        # 🔹 NEU: Username→ID Map im Chat pflegen (für @username-Auflösung)
+        try:
+            if msg.from_user.username:
+                m = context.chat_data.get("username_map") or {}
+                m[msg.from_user.username.lower()] = msg.from_user.id
+                context.chat_data["username_map"] = m
+        except Exception:
+            pass
+        
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Schlanker Fallback:
@@ -976,42 +1010,53 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     target = None
-    # 1) Reply-Fallback, nur wenn es kein Bot ist
-    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
-        original_author = getattr(msg.reply_to_message, 'forward_from', None)
-        target = original_author or msg.reply_to_message.from_user
 
-    # 2) Text-Mention (aus Menü) – liefert ent.user direkt
+    # 1) Reply bevorzugen
+    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
+        target = msg.reply_to_message.from_user
+        # Fallback: "original_author" bei Forwards
+        if not target and getattr(msg.reply_to_message, "forward_origin", None):
+            orig = msg.reply_to_message.forward_origin
+            target = getattr(orig, "sender_user", None)
+
+    # 2) Text-Mention (mit echter User-ID) aus Entities
     if not target and msg.entities:
         for ent in msg.entities:
             if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, 'user', None):
                 target = ent.user
                 break
+            if ent.type == MessageEntity.TEXT_LINK and ent.url.startswith("tg://user?id="):
+                try:
+                    uid = int(ent.url.split("tg://user?id=")[1])
+                    member = await context.bot.get_chat_member(chat.id, uid)
+                    target = member.user
+                    break
+                except Exception:
+                    pass
 
-    # 3) Plain @username (nur Admins)
-    if not target and msg.entities:
-        for ent in msg.entities:
-            if ent.type == MessageEntity.MENTION:
-                username = msg.text[ent.offset:ent.offset + ent.length].lstrip('@').lower()
-                admins = await context.bot.get_chat_administrators(chat.id)
-                for adm in admins:
-                    if adm.user.username and adm.user.username.lower() == username:
-                        target = adm.user
-                        break
-                break
+    # 3) @username (MENTION) aus Entities oder aus Args
+    if not target:
+        uname = None
+        # aus Entities schneiden
+        if msg.entities:
+            for ent in msg.entities:
+                if ent.type == MessageEntity.MENTION:
+                    uname = (msg.text or "")[ent.offset: ent.offset + ent.length]
+                    break
+        # oder aus /settopic @name Argument
+        if not uname and context.args:
+            first = context.args[0]
+            if first.startswith("@"):
+                uname = first
 
-    # 4) Fallback: im Thread ohne Reply → Ausführenden User nehmen
-    if not target and topic_id:
-        target = user
+        if uname:
+            target = await _resolve_username_to_user(context, chat.id, uname)
 
-    # 5) Wenn immer noch kein Ziel – Fehlermeldung
+    # 4) Kein Ziel → Hinweis
     if not target:
         return await msg.reply_text(
-            "⚠️ Ich konnte keinen gültigen User finden.\n\n"
-            "Verwende eine dieser Methoden:\n"
-            "• Antworte auf eine Nachricht des Users\n"
-            "• Erwähne den User mit @username\n"
-            "• Verwende den Befehl im gewünschten Topic"
+            "⚠️ Ich konnte keinen Nutzer ermitteln. "
+            "Bitte antworte auf eine seiner Nachrichten oder nutze eine echte Erwähnung aus der Nutzerliste."
         )
 
     # 6) In DB speichern und Bestätigung
