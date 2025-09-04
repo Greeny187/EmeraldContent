@@ -1417,7 +1417,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("version", version))
     app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("settopic", set_topic_cmd, filters=filters.ChatType.GROUPS), group=0)
+    app.add_handler(CommandHandler("settopic", set_topic_cmd, filters=filters.ChatType.GROUPS), group=-2)
     app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
     app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS))

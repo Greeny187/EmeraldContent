@@ -1863,44 +1863,25 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
     """, (chat_id, feed_url, link))
 
 def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
-    ls = get_link_settings(chat_id) or {}
-    sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
-
-    # 🔽 NEU: Tuple → dict abbilden
-    if isinstance(ls, tuple):
-        # (link_protection_enabled, link_warning_enabled, link_warning_text, link_exceptions_enabled)
-        try:
-            prot, warn_on, warn_txt, exc_on = ls
-        except Exception:
-            prot, warn_on, warn_txt, exc_on = False, False, "🚫 Nur Admins dürfen Links posten.", True
-        ls = {
-            "only_admin_links": bool(prot),
-            "admins_only": bool(prot),      # Alias
-            "warning_on": bool(warn_on),
-            "warning_text": warn_txt or "🚫 Nur Admins dürfen Links posten.",
-            "exceptions_enabled": bool(exc_on),
-        }
-
-    prot_on, warn_on, warn_text, except_on = get_link_settings(chat_id)
+    # 1) Link-Flags (global) tolerant extrahieren: dict / tuple / list
+    link_settings = get_link_settings(chat_id) or {}
+    prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
 
     admins_only = bool(prot_on)
-    wl, bl = [], []
+    warning_text = warn_text or "🚫 Nur Admins dürfen Links posten."
 
-    if topic_id:
-        pol = get_spam_policy_topic(chat_id, topic_id) or {}
-        # Topic-Override: only_admin_links
-        if pol.get("only_admin_links") is not None:
-            admins_only = bool(pol["only_admin_links"])
-        wl = pol.get("link_whitelist") or []
-        bl = pol.get("domain_blacklist") or []
+    # 2) Topic-Overrides mergen
+    sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
+    wl     = list(sp.get("link_whitelist") or [])
+    bl     = list(sp.get("domain_blacklist") or [])
+    action = (sp.get("action_primary") or "delete").lower()
 
     return {
         "admins_only": admins_only,
-        "warning_on": bool(warn_on),
-        "warning_text": warn_text or "⚠️ Nur Admins dürfen Links posten.",
-        "exceptions_on": bool(except_on),
+        "warning_text": warning_text,
         "whitelist": wl,
         "blacklist": bl,
+        "action": action,
     }
 
 def _pending_inputs_col(cur) -> str:
