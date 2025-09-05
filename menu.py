@@ -786,46 +786,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Spam ---
     if func == 'spam' and sub is None:
-        pol = get_spam_policy_topic(cid, 0) or {}
-        level = pol.get('level', 'off')
-        prot_on, *_ = get_link_settings(cid)
-        wl = pol.get('link_whitelist') or []
-        bl = pol.get('domain_blacklist') or []
-        wl_txt = ", ".join(wl) if wl else "–"
-        bl_txt = ", ".join(bl) if bl else "–"
-        level_info = {
-            'off': '❌ Deaktiviert',
-            'light': '🟡 Leicht (20 Emojis, 10 Msgs/10s)',
-            'medium': '🟠 Mittel (10 Emojis, 60/min, 6 Msgs/10s)',
-            'strict': '🔴 Streng (6 Emojis, 30/min, 4 Msgs/10s)'
-        }
+        return await _render_spam_root(query, cid, lang)
 
-        text = (
-            "🧹 <b>Spamfilter (Default / Topic 0)</b>\n\n"
-            f"📊 <b>Level:</b> {level_info.get(level, level)}\n\n"
-            "⚙️ <b>Funktionen:</b>\n"
-            "• 📊 Emoji-Limits pro Nachricht/Minute\n"
-            "• ⏱ Flood-Protection (Nachrichten/10s)\n"
-            "• 🔗 Domain Whitelist/Blacklist\n"
-            "• 📝 Tageslimits pro Topic & User\n"
-            "• 🎯 Topic-spezifische Regeln\n\n"
-            f"📈 Aktuell: {pol.get('emoji_max_per_msg', 0)} Emojis, "
-            f"{pol.get('max_msgs_per_10s', 0)} Msgs/10s\n"
-            f"✅ Whitelist: {len(wl)} Domains\n"
-            f"❌ Blacklist: {len(bl)} Domains"
-        )
-        kb = [
-            [InlineKeyboardButton("📊 Level ändern", callback_data=f"{cid}_spam_lvl_cycle")],
-            [InlineKeyboardButton("📝 Whitelist", callback_data=f"{cid}_spam_wl_edit"),
-             InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit")],
-            [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} 🔗 Nur Admin-Links (Gruppe)",
-                                  callback_data=f"{cid}_spam_link_admins_global")],
-            [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
-            [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
-            [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
-        ]
-        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
-
+    if func == 'spam' and sub and sub.startswith('t_'):
+        topic_id = int(sub.split('_', 1)[1])
+        return await _render_spam_topic(query, cid, topic_id)
+    
     if func == 'spam' and sub:
         if sub == 'lvl_cycle':
             pol = get_spam_policy_topic(cid, 0) or {'level': 'off'}
@@ -852,40 +818,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # → cb_prefix = f"{cid}_spam_t_"
             page = int(payload.replace(f"{cid}_spam_t_", ""))
             return await query.edit_message_reply_markup(reply_markup=_topics_keyboard(cid, page, cb_prefix=f"{cid}_spam_t_"))
-
-        if sub.startswith('t_'):
-            topic_id = int(sub.split('_', 1)[1])
-            pol = get_spam_policy_topic(cid, topic_id) or {}
-            level = pol.get('level', 'off')
-            emsg = pol.get('emoji_max_per_msg', 0) or 0
-            rate = pol.get('max_msgs_per_10s', 0) or 0
-            wl = ", ".join(pol.get('link_whitelist') or []) or "–"
-            bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
-            limit = pol.get('per_user_daily_limit', 0) or 0
-            qmode = (pol.get('quota_notify') or 'smart')
-            admins_on = bool(pol.get("only_admin_links", False))
-            
-            text = (
-                f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
-                f"Level: <b>{level}</b>\n"
-                f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
-                f"Limit/Tag/User: <b>{limit}</b>\n"
-                f"Rest-Info: <b>{qmode}</b>\n"
-                f"Whitelist: {wl}\nBlacklist: {bl}"
-            )
-            kb = [
-                [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
-                [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_-_{topic_id}"),
-                InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
-                [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
-                InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
-                [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
-                InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
-                [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
-                [InlineKeyboardButton("Benachrichtigung ⏭", callback_data=f"{cid}_spam_qmode_{topic_id}")],
-                [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_spam_tsel")]
-            ]
-            return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
         if sub == 'link_admins_global':
             cur, *_ = get_link_settings(cid)            # prot_on
