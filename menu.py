@@ -73,6 +73,8 @@ async def _edit_or_send(query, title, markup):
             except Exception:
                 pass
 
+def _starts(s, prefix): return isinstance(s, str) and s.startswith(prefix)
+
 def _topics_keyboard(cid: int, page: int, cb_prefix: str):
     """
     Generischer Topic-Auswahldialog.
@@ -297,7 +299,7 @@ async def _render_spam_topic(query, cid, topic_id):
     rate  = pol.get('max_msgs_per_10s', 0) or 0
     limit = pol.get('per_user_daily_limit', 0) or 0
     qmode = (pol.get('quota_notify') or 'smart')
-
+    admins_on = bool(pol.get("only_admin_links", False))
     wl_list = pol.get('link_whitelist') or []
     bl_list = pol.get('domain_blacklist') or []
     wl = ", ".join(wl_list) if wl_list else "–"
@@ -318,6 +320,7 @@ async def _render_spam_topic(query, cid, topic_id):
     text = (
         f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
         f"Level: <b>{level}</b>\n"
+        f"\nNur-Admin-Links: <b>{'AN' if admins_on else 'AUS'}</b>\n"
         f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
         f"Limit/Tag/User: <b>{limit}</b>\n"
         f"Rest-Info: <b>{qmode}</b>\n"
@@ -331,7 +334,7 @@ async def _render_spam_topic(query, cid, topic_id):
          InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
         [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
          InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
-        [InlineKeyboardButton("🔗 Nur Admin-Links: TOGGLE", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
+        [InlineKeyboardButton(f"Nur Admin-Links: {'AN' if admins_on else 'AUS'}", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
          InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
         [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
          InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
@@ -863,7 +866,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bl = ", ".join(pol.get('domain_blacklist') or []) or "–"
             limit = pol.get('per_user_daily_limit', 0) or 0
             qmode = (pol.get('quota_notify') or 'smart')
-
+            admins_on = bool(pol.get("only_admin_links", False))
+            
             text = (
                 f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
                 f"Level: <b>{level}</b>\n"
@@ -875,25 +879,31 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = [
                 [InlineKeyboardButton("Level ⏭", callback_data=f"{cid}_spam_setlvl_{topic_id}")],
                 [InlineKeyboardButton("Emoji −", callback_data=f"{cid}_spam_emj_-_{topic_id}"),
-                 InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
+                InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
                 [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
-                 InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
-                [InlineKeyboardButton("🔗 Nur Admin-Links: TOGGLE", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
-                 InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
+                InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
+                [InlineKeyboardButton(f"Nur Admin-Links: {'AN' if admins_on else 'AUS'}", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
+                InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
                 [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
-                 InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
+                InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
                 [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
                 [InlineKeyboardButton("Benachrichtigung ⏭", callback_data=f"{cid}_spam_qmode_{topic_id}")],
                 [InlineKeyboardButton("↩️ Zurück (Topics)", callback_data=f"{cid}_spam_tsel")]
             ]
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-        if sub == 'link_admins_global':
-            # Toggle globale Link-Admin-Only
-            cur, warn_text, *_ = get_link_settings(cid)
-            await _call_db_safe(set_link_settings, cid, protection=not cur, warning_text=warn_text)
-            await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
-            return await _render_spam_root(query, cid)
+        if func == 'spam' and _starts(sub, 'link_admins_'):
+            try:
+                tid = int(sub.split('_')[-1])
+            except Exception:
+                await query.answer("Ungültiges Topic.", show_alert=True)
+                return
+
+            pol = get_spam_policy_topic(cid, tid) or {}
+            now = bool(pol.get('only_admin_links', False))
+            set_spam_policy_topic(cid, tid, only_admin_links=not now)
+            await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not now else 'AUS'}", show_alert=True)
+            return await _render_spam_topic(query, cid, tid)
         
         if sub == 'help':
             txt = ("🧹 <b>Spamfilter – Hilfe</b>\n\n"
@@ -1288,6 +1298,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    cid = msg.chat.id
+    user_id = update.effective_user.id if update.effective_user else None
     text = (msg.text or msg.caption or "").strip()
     photo_id = msg.photo[-1].file_id if msg.photo else None
     doc_id = msg.document.file_id if msg.document else None
@@ -1445,28 +1457,49 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             return await msg.reply_text("❌ Konnte Limit nicht speichern.")
 
     # Spam: Whitelist
-    if context.user_data.pop('awaiting_spam_whitelist', False) or (pend.get('spam_edit', {}).get('which') == 'whitelist'):
-        cid = context.user_data.pop('spam_group_id', pend.get('spam_edit', {}).get('chat_id'))
-        tid = context.user_data.pop('spam_topic_id', pend.get('spam_edit', {}).get('topic_id', 0))
-        doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
-        cur = get_spam_policy_topic(cid, tid) or {}
-        cur.setdefault("link_whitelist", [])
-        cur["link_whitelist"] = sorted(set(cur["link_whitelist"] + doms))
-        set_spam_policy_topic(cid, tid, link_whitelist=cur["link_whitelist"])
-        clear_pending_input(msg.chat.id, update.effective_user.id, "spam_edit")
-        return await msg.reply_text(f"✅ Whitelist aktualisiert ({len(cur['link_whitelist'])} Domains).")
+    if ud.pop("awaiting_spam_whitelist", False):
+        raw = (msg.text or "").strip()
+        doms = sorted({d.lower().lstrip(".") for d in re.split(r"[,\s]+", raw) if d})
+        pend = (context.chat_data.get("pending_inputs") or {}).get(user_id, {}) or {}
+        topic_id = int((pend.get("spam_edit") or {}).get("topic_id") or 0)
+
+        if topic_id > 0:
+            cur = get_spam_policy_topic(cid, topic_id) or {}
+            cur.setdefault("link_whitelist", [])
+            new_wl = sorted(set((cur["link_whitelist"] or []) + doms))
+            set_spam_policy_topic(cid, topic_id, link_whitelist=new_wl)
+            await msg.reply_text(f"✅ Whitelist gespeichert ({len(new_wl)} Einträge) für Topic {topic_id}.")
+            return await _render_spam_topic(query=None, cid=cid, topic_id=topic_id)
+        else:
+            # global → im Topic-Override „0“ persistieren
+            cur = get_spam_policy_topic(cid, 0) or {}
+            cur.setdefault("link_whitelist", [])
+            new_wl = sorted(set((cur["link_whitelist"] or []) + doms))
+            set_spam_policy_topic(cid, 0, link_whitelist=new_wl)
+            await msg.reply_text(f"✅ Whitelist (global) gespeichert ({len(new_wl)} Einträge).")
+            return await _render_spam_root(query=None, cid=cid)
 
     # Spam: Blacklist
-    if context.user_data.pop('awaiting_spam_blacklist', False) or (pend.get('spam_edit', {}).get('which') == 'blacklist'):
-        cid = context.user_data.pop('spam_group_id', pend.get('spam_edit', {}).get('chat_id'))
-        tid = context.user_data.pop('spam_topic_id', pend.get('spam_edit', {}).get('topic_id', 0))
-        doms = [d.strip().lower() for d in re.split(r"[,\s]+", text) if d.strip()]
-        cur = get_spam_policy_topic(cid, tid) or {}
-        cur.setdefault("domain_blacklist", [])
-        cur["domain_blacklist"] = sorted(set(cur["domain_blacklist"] + doms))
-        set_spam_policy_topic(cid, tid, domain_blacklist=cur["domain_blacklist"])
-        clear_pending_input(msg.chat.id, update.effective_user.id, "spam_edit")
-        return await msg.reply_text(f"✅ Blacklist aktualisiert ({len(cur['domain_blacklist'])} Domains).")
+    if ud.pop("awaiting_spam_blacklist", False):
+        raw = (msg.text or "").strip()
+        doms = sorted({d.lower().lstrip(".") for d in re.split(r"[,\s]+", raw) if d})
+        pend = (context.chat_data.get("pending_inputs") or {}).get(user_id, {}) or {}
+        topic_id = int((pend.get("spam_edit") or {}).get("topic_id") or 0)
+
+        if topic_id > 0:
+            cur = get_spam_policy_topic(cid, topic_id) or {}
+            cur.setdefault("domain_blacklist", [])
+            new_bl = sorted(set((cur["domain_blacklist"] or []) + doms))
+            set_spam_policy_topic(cid, topic_id, domain_blacklist=new_bl)
+            await msg.reply_text(f"✅ Blacklist gespeichert ({len(new_bl)} Einträge) für Topic {topic_id}.")
+            return await _render_spam_topic(query=None, cid=cid, topic_id=topic_id)
+        else:
+            cur = get_spam_policy_topic(cid, 0) or {}
+            cur.setdefault("domain_blacklist", [])
+            new_bl = sorted(set((cur["domain_blacklist"] or []) + doms))
+            set_spam_policy_topic(cid, 0, domain_blacklist=new_bl)
+            await msg.reply_text(f"✅ Blacklist (global) gespeichert ({len(new_bl)} Einträge).")
+            return await _render_spam_root(query=None, cid=cid)
 
     # Router: Keywords / Domains (ohne Topic-Angabe → einfache Regeln)
     if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in (pend or {})):

@@ -1866,22 +1866,15 @@ def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
     # 1) Link-Flags (global) tolerant extrahieren: dict / tuple / list
     link_settings = get_link_settings(chat_id) or {}
     prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
-
-    admins_only = bool(prot_on)
-    warning_text = warn_text or "🚫 Nur Admins dürfen Links posten."
-
-    # 2) Topic-Overrides mergen
     sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
-    wl     = list(sp.get("link_whitelist") or [])
-    bl     = list(sp.get("domain_blacklist") or [])
-    action = (sp.get("action_primary") or "delete").lower()
+    admins_only = bool(prot_on or sp.get("only_admin_links"))
 
     return {
         "admins_only": admins_only,
-        "warning_text": warning_text,
-        "whitelist": wl,
-        "blacklist": bl,
-        "action": action,
+        "warning_text": warn_text or "🚫 Nur Admins dürfen Links posten.",
+        "whitelist": list(sp.get("link_whitelist") or []),
+        "blacklist": list(sp.get("domain_blacklist") or []),
+        "action": (sp.get("action_primary") or "delete").lower(),
     }
 
 def _pending_inputs_col(cur) -> str:
@@ -1934,6 +1927,7 @@ def _default_policy():
         "level": "off",
         "link_whitelist": [],
         "domain_blacklist": [],
+        "only_admin_links": False,  # ← NEU
         "emoji_max_per_msg": 0,
         "emoji_max_per_min": 0,
         "max_msgs_per_10s": 0,
@@ -2143,6 +2137,7 @@ def migrate_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
         # neue Spalte in spam_policy_topic
         cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS per_user_daily_limit INT DEFAULT 0;")
+        cur.execute("ALTER TABLE spam_policy_topic ADD COLUMN IF NOT EXISTS only_admin_links BOOLEAN NOT NULL DEFAULT FALSE;")
         # message_logs: Topic-Spalte & Index (falls nicht vorhanden)
         cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")

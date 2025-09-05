@@ -223,7 +223,7 @@ async def spam_enforcer(update, context):
             def allowed(host):
                 return any(host.endswith('.'+d) or host == d for d in (policy.get("whitelist") or []))
             if not any(allowed(h) for h in domains_in_msg):
-                violation = True; reason = "admins_only"
+                violation = True
 
     if violation:
         deleted = await _safe_delete(msg)
@@ -971,102 +971,50 @@ async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             set_night_mode(chat.id, override_until=None)
 
 async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
     msg = update.effective_message
-    user = update.effective_user
-    
-    # Nur in Gruppen erlauben
-    if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("❌ Dieser Befehl funktioniert nur in Gruppen.")
-    
-    # Admin-Rechte prüfen
-    try:
-        admins = await context.bot.get_chat_administrators(chat.id)
-        admin_ids = [a.user.id for a in admins]
-        if user.id not in admin_ids:
-            return await msg.reply_text("❌ Nur Admins können Themenbesitzer zuweisen.")
-    except Exception as e:
-        logger.error(f"Admin-Check fehlgeschlagen: {e}")
-        return await msg.reply_text("❌ Konnte Admin-Rechte nicht überprüfen.")
-    
-    topic_id = msg.message_thread_id
-    topic_name = None
+    chat = update.effective_chat
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return await msg.reply_text("Bitte in der Gruppe verwenden.")
 
-    if topic_id:
-        try:
-            topic_info = await context.bot.get_forum_topic(chat.id, topic_id)
-            topic_name = topic_info.name
-        except Exception as e:
-            logger.warning(f"⚠️ Konnte Topicname nicht laden: {e}")
-            
-    # DEBUG: eingehende Parameter loggen
-    logger.debug(
-        "🔍 set_topic called by %s in chat %s: args=%s, entities=%s, has_reply=%s",
-        user.id,
-        chat.id,
-        context.args,
-        [ent.type for ent in (msg.entities or [])],
-        bool(msg.reply_to_message)
-    )
+    topic_id = getattr(msg, "message_thread_id", None)
+    if not topic_id:
+        return await msg.reply_text("⚠️ Bitte im gewünschten Topic ausführen (Thread öffnen) oder in die Nachricht im Topic antworten.")
 
-    target = None
+    target_uid = None
 
-    # 1) Reply bevorzugen
-    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
-        target = msg.reply_to_message.from_user
-        # Fallback: "original_author" bei Forwards
-        if not target and getattr(msg.reply_to_message, "forward_origin", None):
-            orig = msg.reply_to_message.forward_origin
-            target = getattr(orig, "sender_user", None)
+    # 1) Reply?
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target_uid = msg.reply_to_message.from_user.id
 
-    # 2) Text-Mention (mit echter User-ID) aus Entities
-    if not target and msg.entities:
+    # 2) TextMention-Entity mit eingebettetem User?
+    if not target_uid and msg.entities:
         for ent in msg.entities:
-            if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, 'user', None):
-                target = ent.user
+            if ent.type == MessageEntity.TEXT_MENTION and ent.user:
+                target_uid = ent.user.id
                 break
-            if ent.type == MessageEntity.TEXT_LINK and ent.url.startswith("tg://user?id="):
-                try:
-                    uid = int(ent.url.split("tg://user?id=")[1])
-                    member = await context.bot.get_chat_member(chat.id, uid)
-                    target = member.user
-                    break
-                except Exception:
-                    pass
 
-    # 3) @username (MENTION) aus Entities oder aus Args
-    if not target:
-        uname = None
-        # aus Entities schneiden
-        if msg.entities:
-            for ent in msg.entities:
-                if ent.type == MessageEntity.MENTION:
-                    uname = (msg.text or "")[ent.offset: ent.offset + ent.length]
-                    break
-        # oder aus /settopic @name Argument
-        if not uname and context.args:
-            first = context.args[0]
-            if first.startswith("@"):
-                uname = first
+    # 3) @username oder numerische ID als Argument?
+    if not target_uid and context.args:
+        a0 = context.args[0].strip()
+        if a0.startswith("@"):
+            try:
+                ch = await context.bot.get_chat(a0)  # versucht Nutzer zu resolven
+                if ch and ch.id:
+                    target_uid = ch.id
+            except Exception:
+                pass
+        elif a0.isdigit():
+            target_uid = int(a0)
 
-        if uname:
-            target = await _resolve_username_to_user(context, chat.id, uname)
+    if not target_uid:
+        return await msg.reply_text("Nenne einen Nutzer (Reply, @username oder ID).")
 
-    # 4) Kein Ziel → Hinweis
-    if not target:
-        return await msg.reply_text(
-            "⚠️ Ich konnte keinen Nutzer ermitteln. "
-            "Bitte antworte auf eine seiner Nachrichten oder nutze eine echte Erwähnung aus der Nutzerliste."
-        )
-
-    # 6) In DB speichern und Bestätigung
     try:
-        assign_topic(chat.id, target.id, topic_id or 0, topic_name)
-        name = f"@{target.username}" if target.username else target.first_name
-        await msg.reply_text(f"✅ {name} wurde als Themenbesitzer für Topic {topic_id or 'Hauptchat'} zugewiesen.")
+        assign_topic(chat.id, topic_id, target_uid)
+        return await msg.reply_text(f"✅ Nutzer {target_uid} ist jetzt Owner von Topic {topic_id}.")
     except Exception as e:
-        logger.error(f"Fehler beim Zuweisen des Topics: {e}")
-        await msg.reply_text("❌ Fehler beim Zuweisen des Topics.")
+        logger.exception(f"/settopic failed in {chat.id}/{topic_id}: {e}")
+        return await msg.reply_text("❌ Konnte den Topic-Owner nicht setzen.")
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg    = update.effective_message
