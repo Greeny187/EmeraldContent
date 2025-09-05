@@ -253,7 +253,9 @@ async def _render_spam_root(query, cid, lang=None):
         'medium': '🟠 Mittel (10 Emojis, 60/min, 6 Msgs/10s)',
         'strict': '🔴 Streng (6 Emojis, 30/min, 4 Msgs/10s)'
     }
-    prot_on, *_ = get_link_settings(cid)
+    ls = get_link_settings(cid) or {}
+    prot_on = bool(ls.get("only_admin_links") or ls.get("admins_only") or ls.get("protection"))
+
     wl = pol.get('link_whitelist') or []
     bl = pol.get('domain_blacklist') or []
     text = (
@@ -820,8 +822,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await query.edit_message_reply_markup(reply_markup=_topics_keyboard(cid, page, cb_prefix=f"{cid}_spam_t_"))
 
         if sub == 'link_admins_global':
-            cur, *_ = get_link_settings(cid)            # prot_on
-            set_link_settings(cid, protection=not cur)  # alias-sicher
+            ls = get_link_settings(cid) or {}
+            cur = bool(ls.get("only_admin_links") or ls.get("admins_only") or ls.get("protection"))
+            # wahlweise synchron:
+            set_link_settings(cid, protection=not cur)
+            # oder wenn du konsequent _call_db_safe nutzt:
+            # await _call_db_safe(set_link_settings, cid, protection=not cur)
+
             await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
             return await _render_spam_root(query, cid)
         
