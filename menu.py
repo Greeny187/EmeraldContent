@@ -276,6 +276,7 @@ async def _render_spam_root(query, cid, lang=None):
          InlineKeyboardButton("❌ Blacklist", callback_data=f"{cid}_spam_bl_edit_0")],
         [InlineKeyboardButton(f"{'✅' if prot_on else '☐'} 🔗 Nur Admin-Links (Gruppe)",
                               callback_data=f"{cid}_spam_link_admins_global")],
+        [InlineKeyboardButton("✏️ Warntext (Gruppe)", callback_data=f"{cid}_spam_link_warn_global")],
         [InlineKeyboardButton("🎯 Topic-Regeln", callback_data=f"{cid}_spam_tsel")],
         [InlineKeyboardButton("❓ Hilfe", callback_data=f"{cid}_spam_help")],
         [InlineKeyboardButton(tr('↩️ Zurück', lang), callback_data=f"group_{cid}")]
@@ -299,7 +300,6 @@ async def _render_spam_topic(query, cid, topic_id):
     rate  = pol.get('max_msgs_per_10s', 0) or 0
     limit = pol.get('per_user_daily_limit', 0) or 0
     qmode = (pol.get('quota_notify') or 'smart')
-    admins_on = bool(pol.get("only_admin_links", False))
     wl_list = pol.get('link_whitelist') or []
     bl_list = pol.get('domain_blacklist') or []
     wl = ", ".join(wl_list) if wl_list else "–"
@@ -320,7 +320,6 @@ async def _render_spam_topic(query, cid, topic_id):
     text = (
         f"🧹 <b>Spamfilter – Topic {topic_id}</b>\n\n"
         f"Level: <b>{level}</b>\n"
-        f"\nNur-Admin-Links: <b>{'AN' if admins_on else 'AUS'}</b>\n"
         f"Emoji/Msg: <b>{emsg}</b> • Flood/10s: <b>{rate}</b>\n"
         f"Limit/Tag/User: <b>{limit}</b>\n"
         f"Rest-Info: <b>{qmode}</b>\n"
@@ -334,8 +333,6 @@ async def _render_spam_topic(query, cid, topic_id):
          InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
         [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
          InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
-        [InlineKeyboardButton(f"Nur Admin-Links: {'AN' if admins_on else 'AUS'}", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
-         InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
         [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
          InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
         [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
@@ -882,8 +879,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("Emoji +", callback_data=f"{cid}_spam_emj_+_{topic_id}")],
                 [InlineKeyboardButton("Flood −", callback_data=f"{cid}_spam_rate_-_{topic_id}"),
                 InlineKeyboardButton("Flood +", callback_data=f"{cid}_spam_rate_+_{topic_id}")],
-                [InlineKeyboardButton(f"Nur Admin-Links: {'AN' if admins_on else 'AUS'}", callback_data=f"{cid}_spam_link_admins_{topic_id}"),
-                InlineKeyboardButton("✏️ Warntext", callback_data=f"{cid}_spam_link_warn_{topic_id}")],
                 [InlineKeyboardButton("Whitelist bearbeiten", callback_data=f"{cid}_spam_wl_edit_{topic_id}"),
                 InlineKeyboardButton("Blacklist bearbeiten", callback_data=f"{cid}_spam_bl_edit_{topic_id}")],
                 [InlineKeyboardButton("Limit/Tag setzen", callback_data=f"{cid}_spam_limt_edit_{topic_id}")],
@@ -892,43 +887,29 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-        if func == 'spam' and _starts(sub, 'link_admins_'):
-            try:
-                tid = int(sub.split('_')[-1])
-            except Exception:
-                await query.answer("Ungültiges Topic.", show_alert=True)
-                return
-
-            pol = get_spam_policy_topic(cid, tid) or {}
-            now = bool(pol.get('only_admin_links', False))
-            set_spam_policy_topic(cid, tid, only_admin_links=not now)
-            await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not now else 'AUS'}", show_alert=True)
-            return await _render_spam_topic(query, cid, tid)
+        if sub == 'link_admins_global':
+            cur, *_ = get_link_settings(cid)            # prot_on
+            set_link_settings(cid, protection=not cur)  # alias-sicher
+            await query.answer(f"Nur Admin-Links: {'AN' if not cur else 'AUS'}", show_alert=True)
+            return await _render_spam_root(query, cid)
         
         if sub == 'help':
             txt = ("🧹 <b>Spamfilter – Hilfe</b>\n\n"
                 "• Level: off/light/medium/strict\n"
                 "• Emoji- & Flood-Limits: pro Topic anpassbar\n"
                 "• Whitelist/Blacklist: Domains erlauben/verbieten\n"
-                "• Nur-Admin-Links: Links nur von Admins zulassen\n"
                 "• Tageslimit/Benachrichtigung: pro Topic/Benutzer\n")
             return await query.edit_message_text(txt, parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Zurück", callback_data=f"{cid}_spam")]]))
     
-        if sub.startswith('link_admins_'):
-            tid = int(sub.split('_')[-1])
-            pol = get_spam_policy_topic(cid, tid) or {}
-            cur = bool(pol.get('only_admin_links', False))
-            set_spam_policy_topic(cid, tid, only_admin_links=not cur)   # ← doppelte Zeile entfernen
-            await query.answer(f"Nur Admin-Links (Topic {tid}): {'AN' if not cur else 'AUS'}", show_alert=True)
-            return await _render_spam_topic(query, cid, tid)
-
-        if sub.startswith('link_warn_'):
-            tid = int(sub.split('_')[-1])
+        if sub == 'link_warn_global':
+            # globaler Warntext → Pending setzen
             context.user_data['awaiting_link_warn'] = True
             context.user_data['link_warn_group'] = cid
-            set_pending_input(query.message.chat.id, update.effective_user.id, "link_warn", {"chat_id": cid, "topic_id": tid})
-            await query.message.reply_text("Bitte neuen Warntext senden:", reply_markup=ForceReply(selective=True))
+            set_pending_input(query.message.chat.id, update.effective_user.id,
+                            "link_warn", {"chat_id": cid})
+            await query.message.reply_text("Bitte neuen Warntext (Gruppe) senden:",
+                                        reply_markup=ForceReply(selective=True))
             return
 
         if sub.startswith('setlvl_'):

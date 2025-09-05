@@ -1863,18 +1863,25 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
     """, (chat_id, feed_url, link))
 
 def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
-    # 1) Link-Flags (global) tolerant extrahieren: dict / tuple / list
+    # 1) Link-Flags (global) tolerant extrahieren
     link_settings = get_link_settings(chat_id) or {}
     prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
+
+    admins_only  = bool(prot_on)                          # ← NUR global
+    warning_text = warn_text or "🚫 Nur Admins dürfen Links posten."
+
+    # 2) Topic-Overrides nur für WL/BL/Aktion
     sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
-    admins_only = bool(prot_on or sp.get("only_admin_links"))
+    wl     = list(sp.get("link_whitelist") or [])
+    bl     = list(sp.get("domain_blacklist") or [])
+    action = (sp.get("action_primary") or "delete").lower()
 
     return {
         "admins_only": admins_only,
-        "warning_text": warn_text or "🚫 Nur Admins dürfen Links posten.",
-        "whitelist": list(sp.get("link_whitelist") or []),
-        "blacklist": list(sp.get("domain_blacklist") or []),
-        "action": (sp.get("action_primary") or "delete").lower(),
+        "warning_text": warning_text,
+        "whitelist": wl,
+        "blacklist": bl,
+        "action": action,
     }
 
 def _pending_inputs_col(cur) -> str:
