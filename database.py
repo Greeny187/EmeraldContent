@@ -1,6 +1,6 @@
 # Cache für Spaltenerkennung in pending_inputs
 _pi_col_cache: str | None = None
-
+import re
 import os
 import json
 import logging
@@ -1862,26 +1862,47 @@ def set_last_posted_link(cur, chat_id: int, feed_url: str, link: str):
             SET link = EXCLUDED.link, posted_at = EXCLUDED.posted_at;
     """, (chat_id, feed_url, link))
 
-def get_effective_link_policy(chat_id: int, topic_id: int | None) -> dict:
-    # 1) Link-Flags (global) tolerant extrahieren
-    link_settings = get_link_settings(chat_id) or {}
-    prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
+def _norm_dom(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r'^(https?://)?(www\.)?', '', s)
+    return s.strip('/')
 
-    admins_only  = bool(prot_on)                          # ← NUR global
-    warning_text = warn_text or "🚫 Nur Admins dürfen Links posten."
+@_with_cursor
+def get_effective_link_policy(cur, chat_id: int, topic_id: int | None):
+    # 1) Gruppenweite Link-Flags (nur-Admin-Links, Warntext, …)
+    cur.execute("""
+        SELECT link_protection_enabled, link_warning_enabled, link_warning_text
+          FROM group_settings WHERE chat_id=%s;
+    """, (chat_id,))
+    row = cur.fetchone() or (False, False, None)
+    admins_only  = bool(row[0])
+    warn_enabled = bool(row[1])
+    warn_text    = row[2] or "🚫 Nur Admins dürfen Links posten."
 
-    # 2) Topic-Overrides nur für WL/BL/Aktion
-    sp = get_spam_policy_topic(chat_id, int(topic_id or 0)) or {}
-    wl     = list(sp.get("link_whitelist") or [])
-    bl     = list(sp.get("domain_blacklist") or [])
-    action = (sp.get("action_primary") or "delete").lower()
+    # 2) Spam-Policy global (topic 0) + Topic-Override mergen
+    tid  = int(topic_id or 0)
+    cur.execute("""
+        SELECT topic_id, link_whitelist, domain_blacklist, action
+          FROM spam_policies
+         WHERE chat_id=%s AND topic_id IN (0, %s)
+         ORDER BY topic_id ASC;
+    """, (chat_id, tid))
+    base = {"link_whitelist": [], "domain_blacklist": [], "action": "delete"}
+    for t_id, wl, bl, act in cur.fetchall():
+        if wl:
+            base["link_whitelist"] = sorted({ _norm_dom(d) for d in (base["link_whitelist"] or []) + wl })
+        if bl:
+            base["domain_blacklist"] = sorted({ _norm_dom(d) for d in (base["domain_blacklist"] or []) + bl })
+        if act:
+            base["action"] = act
 
     return {
         "admins_only": admins_only,
-        "warning_text": warning_text,
-        "whitelist": wl,
-        "blacklist": bl,
-        "action": action,
+        "warning_enabled": warn_enabled,
+        "warning_text": warn_text,
+        "whitelist": base["link_whitelist"],
+        "blacklist": base["domain_blacklist"],
+        "action": base["action"] or "delete",
     }
 
 def _pending_inputs_col(cur) -> str:

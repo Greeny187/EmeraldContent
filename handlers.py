@@ -60,6 +60,21 @@ def _bump_rate(context, chat_id:int, user_id:int):
 def tr(text: str, lang: str) -> str:
     return translate_hybrid(text, target_lang=lang)
 
+async def _is_admin(bot, chat_id: int, user_id: int) -> bool:
+    """True, wenn user_id in chat_id Admin/Owner ist."""
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+        return str(getattr(m, "status", "")).lower() in ("administrator", "creator")
+    except Exception:
+        return False
+
+def _is_anon_admin_message(msg) -> bool:
+    """True, wenn Nachricht als anonymer Admin (sender_chat == chat) kam."""
+    try:
+        return bool(getattr(msg, "sender_chat", None) and msg.sender_chat.id == msg.chat.id)
+    except Exception:
+        return False
+
 async def _resolve_username_to_user(context, chat_id: int, username: str):
     """
     Versucht @username → telegram.User aufzulösen:
@@ -971,50 +986,69 @@ async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             set_night_mode(chat.id, override_until=None)
 
 async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    chat = update.effective_chat
-    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-        return await msg.reply_text("Bitte in der Gruppe verwenden.")
+    msg   = update.effective_message
+    chat  = update.effective_chat
+    user  = update.effective_user
 
+    if not msg or chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return await update.message.reply_text("Nur in Gruppen nutzbar.")
+
+    # Admin-Check (korrekte Helper-Funktion!)
+    if not await _is_admin(context.bot, chat.id, user.id):
+        return await update.message.reply_text("Nur Admins dürfen das.")
+
+    # Topic ermitteln (Thread)
     topic_id = getattr(msg, "message_thread_id", None)
-    if not topic_id:
-        return await msg.reply_text("⚠️ Bitte im gewünschten Topic ausführen (Thread öffnen) oder in die Nachricht im Topic antworten.")
 
-    target_uid = None
+    # Ziel-User suchen: 1) Reply  2) TEXT_MENTION  3) MENTION (@username)  4) Arg @username  5) Fallback: Ausführender im Topic
+    target_user = None
 
-    # 1) Reply?
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        target_uid = msg.reply_to_message.from_user.id
+    # 1) Reply bevorzugt
+    if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
+        target_user = msg.reply_to_message.from_user
+        topic_id = topic_id or getattr(msg.reply_to_message, "message_thread_id", None)
 
-    # 2) TextMention-Entity mit eingebettetem User?
-    if not target_uid and msg.entities:
+    # 2) TEXT_MENTION (echter User in Entity)
+    if not target_user and msg.entities:
         for ent in msg.entities:
-            if ent.type == MessageEntity.TEXT_MENTION and ent.user:
-                target_uid = ent.user.id
+            if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, "user", None):
+                target_user = ent.user
                 break
 
-    # 3) @username oder numerische ID als Argument?
-    if not target_uid and context.args:
-        a0 = context.args[0].strip()
-        if a0.startswith("@"):
-            try:
-                ch = await context.bot.get_chat(a0)  # versucht Nutzer zu resolven
-                if ch and ch.id:
-                    target_uid = ch.id
-            except Exception:
-                pass
-        elif a0.isdigit():
-            target_uid = int(a0)
+    # 3) MENTION (@username) innerhalb der Nachricht
+    if not target_user and msg.entities:
+        for ent in msg.entities:
+            if ent.type == MessageEntity.MENTION:
+                uname = (msg.text or "")[ent.offset: ent.offset + ent.length]
+                target_user = await _resolve_username_to_user(context, chat.id, uname)
+                if target_user:
+                    break
 
-    if not target_uid:
-        return await msg.reply_text("Nenne einen Nutzer (Reply, @username oder ID).")
+    # 4) @username als Argument
+    if not target_user:
+        args = context.args or []
+        if args and args[0].startswith("@"):
+            target_user = await _resolve_username_to_user(context, chat.id, args[0])
+
+    # 5) Fallback: im Thread ohne Ziel → den Ausführenden nehmen
+    if not target_user and topic_id:
+        target_user = user
+
+    if not topic_id:
+        return await update.message.reply_text("Bitte im gewünschten Topic ausführen oder auf eine Nachricht im Ziel-Topic antworten.")
+    if not target_user:
+        return await update.message.reply_text("Kein Nutzer erkannt. Antworte auf eine Nachricht oder nutze @username.")
 
     try:
-        assign_topic(chat.id, topic_id, target_uid)
-        return await msg.reply_text(f"✅ Nutzer {target_uid} ist jetzt Owner von Topic {topic_id}.")
+        assign_topic(chat.id, target_user.id, topic_id, None)
+        return await update.message.reply_text(
+            f"✅ Ausnahme gesetzt: {target_user.mention_html()} → Topic {topic_id}",
+            parse_mode="HTML"
+        )
     except Exception as e:
-        logger.exception(f"/settopic failed in {chat.id}/{topic_id}: {e}")
-        return await msg.reply_text("❌ Konnte den Topic-Owner nicht setzen.")
+        logger.error(f"/settopic failed: {e}", exc_info=True)
+        return await update.message.reply_text("❌ Konnte nicht speichern.")
+
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg    = update.effective_message

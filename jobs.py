@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes, Application
 from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
 from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, prune_pending_inputs_older_than, 
-                    purge_deleted_members, get_group_stats, get_night_mode) # <-- HIER HINZUGEFÜGT
+                    purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
 from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
     compute_response_times, fetch_media_and_poll_stats, get_member_stats, 
@@ -16,6 +16,7 @@ from statistic import (
 )
 from telegram.constants import ParseMode
 from translator import translate_hybrid as tr
+from handlers import _apply_hard_permissions
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
@@ -59,6 +60,33 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             
         except Exception as e:
             logger.error(f"Tagesstatistik-Fehler für {chat_id}: {e}")
+
+async def import_all_forum_topics(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not telethon_client.is_connected():
+            await start_telethon()
+    except Exception:
+        pass
+
+    for chat_id, _ in get_registered_groups():
+        try:
+            entity = await telethon_client.get_entity(chat_id)
+            offset_id = 0
+            offset_topic = 0
+            while True:
+                res = await telethon_client(GetForumTopicsRequest(
+                    channel=entity, offset_date=None, offset_id=offset_id, offset_topic=offset_topic, limit=100
+                ))
+                topics = getattr(res, "topics", []) or []
+                if not topics:
+                    break
+                for t in topics:
+                    upsert_forum_topic(chat_id, t.id, getattr(t, "title", None) or None)
+                    offset_topic = t.id
+                if len(topics) < 100:
+                    break
+        except Exception as e:
+            logger.warning(f"Topic-Import für {chat_id} fehlgeschlagen: {e}")
 
 async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
     if not telethon_client.is_connected():
@@ -281,28 +309,39 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
 
         # Prüfen, ob der Status sich gerade geändert hat
         # KORREKTUR: Direkter Zugriff auf das chat_data-Dictionary für die jeweilige ID.
-        nm_key = f"nm_status_{chat_id}"  # Eindeutiger Schlüssel pro Chat
-        last_status = context.bot_data.get(nm_key, is_active)
+        nm_key = f"nm_status_{chat_id}"
+        last_status = context.bot_data.get(nm_key, is_active)  # default = aktueller Status (verhindert Boot-Spam)
 
         if is_active and not last_status:
-            # Nachtmodus wurde gerade AKTIVIERT => "bis hh:mm (TZ)"
+            # gerade AKTIV geworden
             lang = get_group_language(chat_id) or 'de'
-            # Ende-Zeitpunkt berechnen:
             end_local = dt.datetime.combine(now_local.date(), end_time, tzinfo=group_tz)
             if start_time > end_time and now_local.time() >= start_time:
-                # über Mitternacht -> Ende am nächsten Tag
                 end_local += dt.timedelta(days=1)
-            human = end_local.strftime("%H:%M")
-            await bot.send_message(chat_id, tr("🌙 Nachtmodus aktiv bis", lang) + f" {human} ({group_tz.key}).")
+            await bot.send_message(chat_id, tr("🌙 Nachtmodus aktiv bis", lang) + f" {end_local.strftime('%H:%M')} ({group_tz.key}).")
             context.bot_data[nm_key] = True
-            
+
+            # Hard-Apply falls konfiguriert
+            flags = get_night_mode(chat_id) or {}
+            if flags.get("hard_applied"):
+                try:
+                    await _apply_hard_permissions(context, chat_id, True)
+                except Exception as e:
+                    logger.warning(f"Hard apply failed: {e}")
+
         elif not is_active and last_status:
-            # Nachtmodus wurde gerade DEAKTIVIERT
+            # gerade DEAKTIV geworden
             lang = get_group_language(chat_id) or 'de'
             await bot.send_message(chat_id, tr("☀️ Der Nachtmodus ist beendet. Alle können wieder schreiben.", lang))
-            # KORREKTUR: In bot_data speichern statt chat_data
             context.bot_data[nm_key] = False
 
+            flags = get_night_mode(chat_id) or {}
+            if flags.get("hard_applied"):
+                try:
+                    await _apply_hard_permissions(context, chat_id, False)
+                except Exception as e:
+                    logger.warning(f"Hard remove failed: {e}")
+            
         # Nachrichten im Nachtmodus löschen, wenn aktiviert
         if is_active and del_non:
             # Diese Schleife ist konzeptionell fehlerhaft in einem Job,
@@ -349,6 +388,8 @@ def register_jobs(app):
         time(hour=4, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="dev_stats_nightly"
     )
+    
+    jq.run_repeating(import_all_forum_topics, interval=86400, first=60, name="import_forum_topics")
     
     tz = ZoneInfo("Europe/Berlin")
     first = dt.datetime.now(tz).replace(hour=2, minute=15, second=0, microsecond=0)
