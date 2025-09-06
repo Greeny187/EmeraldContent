@@ -1869,7 +1869,7 @@ def _norm_dom(s: str) -> str:
 
 @_with_cursor
 def get_effective_link_policy(cur, chat_id: int, topic_id: int | None):
-    # 1) Gruppenweite Link-Flags (nur-Admin-Links, Warntext, …)
+    # 1) Gruppenweite Link-Flags (Nur-Admin-Links, Warntext, …) aus group_settings
     cur.execute("""
         SELECT link_protection_enabled, link_warning_enabled, link_warning_text
           FROM group_settings WHERE chat_id=%s;
@@ -1879,30 +1879,47 @@ def get_effective_link_policy(cur, chat_id: int, topic_id: int | None):
     warn_enabled = bool(row[1])
     warn_text    = row[2] or "🚫 Nur Admins dürfen Links posten."
 
-    # 2) Spam-Policy global (topic 0) + Topic-Override mergen
-    tid  = int(topic_id or 0)
+    # 2) Globale Basis aus spam_policy (ohne topic_id)
     cur.execute("""
-        SELECT topic_id, link_whitelist, domain_blacklist, action
+        SELECT link_whitelist, domain_blacklist, action
           FROM spam_policy
-         WHERE chat_id=%s AND topic_id IN (0, %s)
-         ORDER BY topic_id ASC;
-    """, (chat_id, tid))
-    base = {"link_whitelist": [], "domain_blacklist": [], "action": "delete"}
-    for t_id, wl, bl, act in cur.fetchall():
-        if wl:
-            base["link_whitelist"] = sorted({ _norm_dom(d) for d in (base["link_whitelist"] or []) + wl })
-        if bl:
-            base["domain_blacklist"] = sorted({ _norm_dom(d) for d in (base["domain_blacklist"] or []) + bl })
-        if act:
-            base["action"] = act
+         WHERE chat_id=%s
+         LIMIT 1;
+    """, (chat_id,))
+    base_wl, base_bl, base_action = ([], [], "delete")
+    r = cur.fetchone()
+    if r:
+        wl, bl, act = r
+        base_wl = [ _norm_dom(d) for d in (wl or []) ]
+        base_bl = [ _norm_dom(d) for d in (bl or []) ]
+        base_action = act or "delete"
+
+    # 3) Topic-Override aus spam_policy_topic mergen
+    tid = int(topic_id or 0)
+    topic_wl, topic_bl = [], []
+    if tid != 0:
+        cur.execute("""
+            SELECT link_whitelist, domain_blacklist
+              FROM spam_policy_topic
+             WHERE chat_id=%s AND topic_id=%s;
+        """, (chat_id, tid))
+        tr = cur.fetchone()
+        if tr:
+            twl, tbl = tr
+            topic_wl = [ _norm_dom(d) for d in (twl or []) ]
+            topic_bl = [ _norm_dom(d) for d in (tbl or []) ]
+
+    # Union (Sets), danach wieder sortierte Liste
+    wl_merged = sorted(set(base_wl) | set(topic_wl))
+    bl_merged = sorted(set(base_bl) | set(topic_bl))
 
     return {
         "admins_only": admins_only,
         "warning_enabled": warn_enabled,
         "warning_text": warn_text,
-        "whitelist": base["link_whitelist"],
-        "blacklist": base["domain_blacklist"],
-        "action": base["action"] or "delete",
+        "whitelist": wl_merged,
+        "blacklist": bl_merged,
+        "action": base_action,
     }
 
 def _pending_inputs_col(cur) -> str:
