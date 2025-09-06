@@ -788,30 +788,27 @@ def get_ad_stats(cur):
     total_impressions = cur.fetchone()[0]
     
     # Top Gruppen (mit Join zu Gruppennamen)
+    # Top Gruppen (ohne Abhängigkeit von message_logs-Titeln)
     cur.execute("""
-        WITH group_names AS (
-            SELECT DISTINCT chat_id, title FROM message_logs
-        )
-        SELECT 
-            COALESCE(gn.title, 'Unknown Group') as group_name,
-            COUNT(*) as impression_count
-        FROM 
-            adv_impressions ai
-            LEFT JOIN group_names gn ON ai.chat_id = gn.chat_id
-        GROUP BY 
-            group_name
-        ORDER BY 
-            impression_count DESC
+        SELECT chat_id, COUNT(*) AS impression_count
+        FROM adv_impressions
+        GROUP BY chat_id
+        ORDER BY impression_count DESC
         LIMIT 5;
     """)
-    top_groups = cur.fetchall()
-    
+    rows = cur.fetchall() or []
+
+    # Namen aus der registrierten Gruppenliste mappen
+    name_map = dict(get_registered_groups())  # -> {chat_id: title}
+    top_groups = [(name_map.get(cid, f"Group {cid}"), cnt) for (cid, cnt) in rows]
+
     return {
-        "campaign_count": campaign_count,
-        "impressions_today": impressions_today,
-        "total_impressions": total_impressions,
-        "top_groups": top_groups or []
-    }
+    "campaign_count": campaign_count,
+    "impressions_today": impressions_today,
+    "total_impressions": total_impressions,
+    "top_groups": top_groups
+}
+
 
 def register_dev_handlers(app):
     app.add_handler(CommandHandler("devmenu", dev_menu_command), group=-1)
