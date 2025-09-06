@@ -1456,7 +1456,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("spamlevel", spamlevel_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("router", router_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("faq", faq_command), group=0)
+    app.add_handler(CommandHandler("faq", faq_command), group=-2)
     app.add_handler(CommandHandler("topiclimit", topiclimit_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("myquota", myquota_command, filters=filters.ChatType.GROUPS))
     app.add_handler(CommandHandler("mystrikes", mystrikes_command, filters=filters.ChatType.GROUPS))
@@ -1494,7 +1494,7 @@ def register_handlers(app):
     
     # Captcha Handler - NUR IN GRUPPEN
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, math_captcha_handler))
-
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, math_captcha_handler
+    ), group=1)
     # Help Handler
     app.add_handler(help_handler)
