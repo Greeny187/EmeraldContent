@@ -1103,15 +1103,20 @@ async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    txt = " ".join(context.args or []).strip()
+    msg  = update.effective_message
+    txt  = " ".join(context.args or []).strip()
+
+    if not txt and msg and msg.reply_to_message:
+        txt = (msg.reply_to_message.text or msg.reply_to_message.caption or "").strip()
+
     if not txt:
-        return await update.message.reply_text("Nutze: /faq <Stichwort oder Frage>")
+        return await msg.reply_text("Nutze: /faq <Stichwort oder Frage> oder antworte mit /faq auf eine Nachricht.")
+
     hit = find_faq_answer(chat.id, txt)
     if hit:
-        trig, ans = hit
-        await update.message.reply_text(ans, parse_mode="HTML")
-    else:
-        await update.message.reply_text("Keine passende FAQ gefunden.")
+        _, ans = hit
+        return await msg.reply_text(ans, parse_mode="HTML")
+    return await msg.reply_text("Keine passende FAQ gefunden.")
 
 async def show_rules_cmd(update, context):
     chat_id = update.effective_chat.id
