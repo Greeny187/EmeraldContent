@@ -16,14 +16,54 @@ except Exception as e:
     logging.warning("psutil nicht verfügbar: %s", e)
 
 try:
-    from ads import list_active_campaigns, get_subscription_info, set_pro_until
+    from ads import list_active_campaigns, get_subscription_info, set_pro_until, add_campaign
 except Exception as e:
     logging.warning("ads-Modul nicht verfügbar: %s", e)
     def list_active_campaigns(): return []
     def get_subscription_info(_): return {"active": False, "valid_until": None}
     def set_pro_until(_chat_id, _until): raise RuntimeError("ads-API nicht verfügbar")
+    def add_campaign(*args, **kwargs): raise RuntimeError("ads-API nicht verfügbar")
 
 logger = logging.getLogger(__name__)
+
+@_with_cursor
+def _adv_list_all(cur, limit:int=20, offset:int=0):
+    cur.execute("""
+      SELECT campaign_id, title, body_text, media_url, link_url, cta_label, weight, enabled
+        FROM adv_campaigns
+       ORDER BY campaign_id DESC
+       LIMIT %s OFFSET %s;
+    """, (limit, offset))
+    return cur.fetchall() or []
+
+@_with_cursor
+def _adv_set_enabled(cur, campaign_id:int, enabled:bool):
+    cur.execute("UPDATE adv_campaigns SET enabled=%s WHERE campaign_id=%s;", (enabled, campaign_id))
+
+@_with_cursor
+def _adv_get(cur, campaign_id:int):
+    cur.execute("""
+      SELECT campaign_id, title, body_text, media_url, link_url, cta_label, weight, enabled
+        FROM adv_campaigns WHERE campaign_id=%s;
+    """, (campaign_id,))
+    return cur.fetchone()
+
+@_with_cursor
+def _adv_update(cur, campaign_id:int, **fields):
+    allowed = {"title","body_text","media_url","link_url","cta_label","weight"}
+    sets, vals = [], []
+    for k,v in fields.items():
+        if k in allowed:
+            sets.append(f"{k}=%s"); vals.append(v)
+    if not sets: return
+    vals.append(campaign_id)
+    cur.execute(f"UPDATE adv_campaigns SET {', '.join(sets)} WHERE campaign_id=%s;", tuple(vals))
+
+@_with_cursor
+def _adv_soft_delete(cur, campaign_id:int):
+    # Soft-Delete: deaktivieren + Endzeit setzen
+    cur.execute("UPDATE adv_campaigns SET enabled=FALSE, end_ts=NOW() WHERE campaign_id=%s;", (campaign_id,))
+
 
 def _dev_ids_from_env(user_id_hint: int | None = None) -> set[int]:
     """
@@ -283,6 +323,8 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
         overview = _get_global_overview(chat_id=chat_id)
 
+        ram_line = f"🧠 RAM: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB" if psutil else "🧠 RAM: n/a"
+
         text = (
             "📊 **System-Statistiken**\n\n"
             f"🔎 Datenquelle: {get_scope_label(context)}\n"
@@ -290,7 +332,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ Aktive Gruppen: {active_groups}\n"
             f"💾 DB-Pool: {_db_pool.closed}/{_db_pool.maxconn}\n"
             f"⚡ Handler: {len(context.application.handlers)}\n"
-            f"🧠 RAM: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB\n\n"
+            f"{ram_line}\n\n"
             "🗂 **Datenbank (aggregiert)**\n"
             f"• Nachrichten gesamt: {overview.get('messages_total','–')}\n"
             f"• Nachrichten heute: {overview.get('messages_today','–')}\n"
@@ -300,6 +342,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]]
         return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
     
     elif data == "dev_show_logs":
         # Logs anzeigen
@@ -337,17 +380,101 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    # Zusätzliche Callback-Handler
-    elif data in ("dev_ad_new", "dev_ad_toggle_menu", "dev_ad_edit_menu", "dev_ad_delete_menu"):
-        await query.edit_message_text(
-            "🧰 **Werbung-Verwaltung**\n\n"
-            "Diese Aktion ist vorbereitet, wird aber erst mit der Ads-API/DB vollständig verfügbar.\n"
-            "• Free-Regel: Werbung nur in Gruppen **ohne** PRO.\n"
-            "• Du kannst bis dahin die Kampagnenliste/Stats nutzen.\n",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]])
+    elif data == "dev_ad_new":
+        # Wizard: Titel → Text → Link → BildURL(optional) → CTA(optional) → Gewicht
+        context.user_data['ad_wizard'] = {'mode':'new', 'stage':'title', 'data':{}}
+        kb = [[InlineKeyboardButton("❌ Abbrechen", callback_data="dev_ad_cancel")]]
+        return await query.edit_message_text(
+            "➕ **Neue Kampagne**\n\nBitte *Titel* senden.",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
         )
+
+    elif data == "dev_ad_toggle_menu":
+        rows = _adv_list_all(limit=20, offset=0)
+        text = "🟢/🔴 **Aktivieren / Deaktivieren**\n\n"
+        kb = []
+        if not rows:
+            text += "Keine Kampagnen vorhanden."
+        else:
+            for (cid, title, _body, _media, _link, _cta, weight, enabled) in rows:
+                state = "🟢 aktiv" if enabled else "🔴 aus"
+                btn = InlineKeyboardButton("Deaktivieren" if enabled else "Aktivieren",
+                                        callback_data=f"dev_ad_toggle:{cid}:{'off' if enabled else 'on'}")
+                kb.append([InlineKeyboardButton(f"#{cid} {title[:30]} • w={weight} • {state}", callback_data="dev_nop")])
+                kb.append([btn])
+        kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")])
+        return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data == "dev_ad_edit_menu":
+        rows = _adv_list_all(limit=20, offset=0)
+        text = "✏️ **Kampagne bearbeiten**\n\nWähle eine Kampagne:"
+        kb = []
+        for (cid, title, *_rest) in rows:
+            kb.append([InlineKeyboardButton(f"#{cid} {title[:28]}", callback_data=f"dev_ad_edit:{cid}")])
+        kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")])
+        return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data == "dev_ad_delete_menu":
+        rows = _adv_list_all(limit=20, offset=0)
+        text = "🗑 **Kampagne löschen**\n\nWähle eine Kampagne:"
+        kb = []
+        for (cid, title, *_rest) in rows:
+            kb.append([InlineKeyboardButton(f"#{cid} {title[:28]}", callback_data=f"dev_ad_delete:{cid}")])
+        kb.append([InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")])
+        return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     
+    elif data.startswith("dev_ad_toggle:"):
+        # dev_ad_toggle:<cid>:on|off
+        _, cid, action = data.split(":")
+        _adv_set_enabled(int(cid), action == "on")
+        await query.answer("Gespeichert.")
+        # zurück in die Liste
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_edit:"):
+        # Feldauswahl
+        _, cid = data.split(":")
+        context.user_data['ad_wizard'] = {'mode':'edit', 'cid': int(cid), 'stage':'field'}
+        kb = [
+            [InlineKeyboardButton("Titel",   callback_data=f"dev_ad_edit_field:{cid}:title"),
+            InlineKeyboardButton("Text",    callback_data=f"dev_ad_edit_field:{cid}:body_text")],
+            [InlineKeyboardButton("Link",    callback_data=f"dev_ad_edit_field:{cid}:link_url"),
+            InlineKeyboardButton("BildURL", callback_data=f"dev_ad_edit_field:{cid}:media_url")],
+            [InlineKeyboardButton("CTA",     callback_data=f"dev_ad_edit_field:{cid}:cta_label"),
+            InlineKeyboardButton("Gewicht", callback_data=f"dev_ad_edit_field:{cid}:weight")],
+            [InlineKeyboardButton("🔙 Zurück", callback_data="dev_ad_edit_menu")]
+        ]
+        return await query.edit_message_text("✏️ Feld wählen:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith("dev_ad_edit_field:"):
+        # Eingabewert erfragen
+        _, cid, field = data.split(":")
+        context.user_data['ad_wizard'] = {'mode':'edit', 'cid': int(cid), 'stage':'value', 'field': field}
+        kb = [[InlineKeyboardButton("❌ Abbrechen", callback_data="dev_ad_cancel")]]
+        hint = "neuen Wert senden"
+        if field == "weight": hint = "neue Zahl (1..10) senden"
+        return await query.edit_message_text(f"✏️ **{field}** – bitte {hint}.", parse_mode="Markdown",
+                                            reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith("dev_ad_delete:") and not data.startswith("dev_ad_delete_confirm:"):
+        _, cid = data.split(":")
+        kb = [
+            [InlineKeyboardButton("✅ Ja, löschen", callback_data=f"dev_ad_delete_confirm:{cid}")],
+            [InlineKeyboardButton("❌ Abbrechen", callback_data="dev_ad_delete_menu")]
+        ]
+        return await query.edit_message_text("Wirklich löschen (Soft-Delete)?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif data.startswith("dev_ad_delete_confirm:"):
+        _, cid = data.split(":")
+        _adv_soft_delete(int(cid))
+        await query.answer("Gelöscht.")
+        return await dev_callback_handler(update, context)
+
+    elif data == "dev_ad_cancel":
+        context.user_data.pop('ad_wizard', None)
+        return await query.edit_message_text("Abgebrochen.", parse_mode="Markdown",
+                                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]]))
+
     elif data == "dev_db_vacuum":
         # VACUUM Datenbank
         await query.edit_message_text("🔄 VACUUM wird ausgeführt...", parse_mode="Markdown")
@@ -374,7 +501,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             return await query.answer("Ungültige Eingabe.", show_alert=True)
 
-        until = (datetime.datetime.utcnow() + datetime.timedelta(days=days)).replace(microsecond=0)
+        until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)).replace(microsecond=0)
         try:
             set_pro_until(chat_id, until)
         except Exception as e:
@@ -391,7 +518,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             return await query.answer("Ungültige Eingabe.", show_alert=True)
 
-        now = datetime.datetime.utcnow().replace(microsecond=0)
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         try:
             set_pro_until(chat_id, now)
         except Exception as e:
@@ -406,7 +533,7 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         groups = get_registered_groups()
         start_idx = page * page_size
         end_idx = min(start_idx + page_size, len(groups))
-        until = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).replace(microsecond=0)
+        until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)).replace(microsecond=0)
 
         changed = 0
         for chat_id, _title in groups[start_idx:end_idx]:
@@ -450,6 +577,78 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("ℹ️ Aktion wird implementiert.", show_alert=False)
 
 # Hilfsfunktionen für Entwicklermenü
+async def dev_wizard_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Nur aktiv, wenn Wizard-State existiert
+    state = context.user_data.get('ad_wizard')
+    if not state:
+        return
+
+    # Dev-Guard
+    user_id = update.effective_user.id
+    if user_id not in _dev_ids_from_env(user_id):
+        return
+
+    txt = (update.effective_message.text or "").strip()
+    mode = state.get('mode')
+    stage = state.get('stage')
+
+    # --- Neuerstellung ---
+    if mode == 'new':
+        data = state['data']
+        if stage == 'title':
+            data['title'] = txt[:120]
+            state['stage'] = 'body_text'
+            return await update.effective_message.reply_text("Bitte *Text* senden.", parse_mode="Markdown")
+        if stage == 'body_text':
+            data['body_text'] = txt[:1000]
+            state['stage'] = 'link_url'
+            return await update.effective_message.reply_text("Bitte *Link-URL* senden (https://…)", parse_mode="Markdown")
+        if stage == 'link_url':
+            data['link_url'] = txt
+            state['stage'] = 'media_url'
+            return await update.effective_message.reply_text("Optional: *Bild-URL* senden oder `-` für ohne.", parse_mode="Markdown")
+        if stage == 'media_url':
+            if txt != "-":
+                data['media_url'] = txt
+            state['stage'] = 'cta_label'
+            return await update.effective_message.reply_text("Optional: *CTA-Label* senden (Standard: „Mehr erfahren“) oder `-`.", parse_mode="Markdown")
+        if stage == 'cta_label':
+            if txt != "-":
+                data['cta_label'] = txt[:30]
+            state['stage'] = 'weight'
+            return await update.effective_message.reply_text("Optional: *Gewicht* (1..10) senden oder `-`.", parse_mode="Markdown")
+        if stage == 'weight':
+            weight = 1
+            if txt != "-":
+                try:
+                    weight = max(1, min(10, int(txt)))
+                except:
+                    return await update.effective_message.reply_text("Bitte Zahl 1..10 oder `-` senden.")
+            cid = add_campaign(
+                data.get('title'), data.get('body_text'), data.get('link_url'),
+                data.get('media_url'), data.get('cta_label', "Mehr erfahren"),
+                weight=weight
+            )
+            context.user_data.pop('ad_wizard', None)
+            kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]]
+            return await update.effective_message.reply_text(f"✅ Kampagne **#{cid}** gespeichert & aktiv.", parse_mode="Markdown",
+                                                             reply_markup=InlineKeyboardMarkup(kb))
+
+    # --- Bearbeitung ---
+    if mode == 'edit':
+        if stage == 'value':
+            cid = int(state['cid']); field = state['field']
+            val = txt
+            if field == 'weight':
+                try:
+                    val = max(1, min(10, int(txt)))
+                except:
+                    return await update.effective_message.reply_text("Bitte Zahl 1..10 senden.")
+            _adv_update(cid, **{field: val})
+            context.user_data['ad_wizard'] = {'mode':'edit', 'cid': cid, 'stage':'field'}
+            kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ad_edit_menu")]]
+            return await update.effective_message.reply_text("✅ Gespeichert. Feld erneut wählen oder zurück.", parse_mode="Markdown",
+                                                             reply_markup=InlineKeyboardMarkup(kb))
 
 def _set_dev_aggregate_scope(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -617,4 +816,5 @@ def get_ad_stats(cur):
 def register_dev_handlers(app):
     app.add_handler(CommandHandler("devmenu", dev_menu_command), group=-1)
     app.add_handler(CallbackQueryHandler(dev_callback_handler, pattern="^dev_", block=True), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, dev_wizard_router), group=2)  # << neu
     register_ads(app)

@@ -1444,57 +1444,44 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
 
 def register_handlers(app):
-    # Commands (Gruppe 0)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu_command))
-    app.add_handler(CommandHandler("version", version))
-    app.add_handler(CommandHandler("rules", show_rules_cmd, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("settopic", set_topic_cmd, filters=filters.ChatType.GROUPS), group=-2)
-    app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("removetopic", remove_topic_cmd))
-    app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS))
+    app.add_handler(CommandHandler("start", start), group=-3)
+    app.add_handler(CommandHandler("menu", menu_command), group=-3)
+    app.add_handler(CommandHandler("version", version), group=-3)
+    app.add_handler(CommandHandler("rules", show_rules_cmd), group=-3)
+    app.add_handler(CommandHandler("settopic", set_topic_cmd, filters=filters.ChatType.GROUPS), group=-3)
+    app.add_handler(CommandHandler("router", router_command), group=-3)
+    app.add_handler(CommandHandler("spamlevel", spamlevel_command), group=-3)
+    app.add_handler(CommandHandler("topiclimit", topiclimit_command), group=-3)
     app.add_handler(CommandHandler("sync_admins_all", sync_admins_all, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("spamlevel", spamlevel_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("router", router_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("faq", faq_command), group=-2)
-    app.add_handler(CommandHandler("topiclimit", topiclimit_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("myquota", myquota_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("mystrikes", mystrikes_command, filters=filters.ChatType.GROUPS))
-    app.add_handler(CommandHandler("strikes",   strikes_command,   filters=filters.ChatType.GROUPS))
-    # Sehr frühe Handler (Gruppe -1)
-    app.add_handler(MessageHandler((filters.ALL & ~filters.StatusUpdate.ALL & ~filters.COMMAND), nightmode_enforcer), group=-1)
-    app.add_handler(MessageHandler((filters.ALL & ~filters.COMMAND), forum_topic_registry_tracker), group=-1)
-        
-    # Basis Message Handler (Gruppe 0) - NUR IN GRUPPEN
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
-        message_logger
-    ), group=0)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-                                   faq_autoresponder), group=0)
-    
-    # Spam-Filter (Gruppe 2) - NUR IN GRUPPEN (nach Menü-Replies)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-                                   spam_enforcer), group=2)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-                                   ai_moderation_enforcer), group=2)
-    # Text-Handler (Gruppe 3) - nur Privat & Gruppen (nicht in Kanälen)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS),
-        text_handler), group=3)
-    
-    # Status Updates und Chat Member Handler - NUR IN GRUPPEN
-    app.add_handler(MessageHandler(
-        (filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER) 
-        & filters.ChatType.GROUPS,  # <- GROUPS-Filter hinzufügen
-        track_members
-    ), group=0)
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER))
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER))
-    
-    # Captcha Handler - NUR IN GRUPPEN
-    app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r'^\d+_captcha_button_\d+$'))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, math_captcha_handler
-    ), group=1)
-    # Help Handler
-    app.add_handler(help_handler)
+    app.add_handler(CommandHandler("faq", faq_command), group=-3)
+    app.add_handler(CommandHandler("myquota", myquota_command), group=-3)
+    app.add_handler(CommandHandler("mystrikes", mystrikes_command), group=-3)
+    app.add_handler(CommandHandler("strikes", strikes_command), group=-3)
+    app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS), group=-3)
+    app.add_handler(CommandHandler("removetopic", remove_topic_cmd), group=-3)
+    app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS), group=-3)
+
+    # --- Callbacks / spezielle Replies ---
+    # ggf. weitere CallbackQueryHandler hier
+
+    # --- Frühe Message-Guards (keine Commands!) ---
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forum_topic_registry_tracker), group=-1)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, nightmode_enforcer), group=-1)
+
+    # --- Logging / leichte Helfer ---
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_logger), group=0)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=0)
+
+    # --- Moderation ---
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_moderation_enforcer), group=1)
+
+    # --- Mitglieder-Events ---
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=0)
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
+
+    # (Optional) Fallback-Text-Handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=3)
+
+    # Hilfe (wenn du einen help_handler als Conversation/Handler-Objekt hast)
+    app.add_handler(help_handler, group=0)

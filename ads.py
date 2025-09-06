@@ -226,7 +226,7 @@ def get_subscription_info(cur, chat_id: int) -> dict:
     if not r:
         return {"tier": "free", "valid_until": None, "active": False}
     tier, until = r
-    active = tier in ("pro","pro_plus") and (until is None or until > datetime.utcnow())
+    active = tier in ("pro","pro_plus") and (until is None or until > datetime.now(ZoneInfo("UTC")))
     return {"tier": tier, "valid_until": until, "active": active}
 
 @_with_cursor
