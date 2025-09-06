@@ -1883,7 +1883,7 @@ def get_effective_link_policy(cur, chat_id: int, topic_id: int | None):
     tid  = int(topic_id or 0)
     cur.execute("""
         SELECT topic_id, link_whitelist, domain_blacklist, action
-          FROM spam_policies
+          FROM spam_policy
          WHERE chat_id=%s AND topic_id IN (0, %s)
          ORDER BY topic_id ASC;
     """, (chat_id, tid))
