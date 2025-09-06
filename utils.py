@@ -48,49 +48,76 @@ async def _get_member(bot: ExtBot, chat_id: int, user_id: int) -> ChatMember | N
         logger.debug(f"get_chat_member({chat_id},{user_id}) -> {e}")
         return None
 
-async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *, dry_run: bool = False) -> int:
+async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
+                                         dry_run: bool = False,
+                                         demote_admins: bool = False) -> int:
     """
-    Entfernt NUR gelöschte Accounts aus dem Chat (Ban+Unban) und räumt die DB-Mitgliederliste auf.
-    Gibt die Anzahl tatsächlich entfernter (gekickter) gelöschter Accounts zurück.
+    Entfernt gelöschte Accounts per ban+unban.
+    - Entfernt DB-Eintrag NUR, wenn Kick erfolgreich war ODER der User nicht (mehr) im Chat ist.
+    - Optional: demote_admins=True versucht gelöschte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
     """
-    user_ids = list_members(chat_id)  # aus eurer DB – keine Bot-API-Iteration nötig
+    user_ids = list_members(chat_id)
     removed = 0
 
     for uid in user_ids:
         member = await _get_member(bot, chat_id, uid)
         if member is None:
-            # Nicht (mehr) im Chat → nur DB aufräumen
-            remove_member(chat_id, uid)
+            # Nicht (mehr) im Chat -> DB aufräumen
+            try: remove_member(chat_id, uid)
+            except Exception: pass
             continue
 
-        # Admins/Owner NIE anfassen
+        # Gelöschten Status erkennen (robuster)
+        looks_del = _looks_deleted(member.user) or is_deleted_account(member)
+
+        # Admin/Owner-Handhabung
         if member.status in ("administrator", "creator"):
+            if not looks_del or not demote_admins or member.status == "creator":
+                # Creator (Owner) nie anfassen; Admins nur wenn demote_admins=True
+                continue
+            # Demote versuchen (alle Rechte false)
+            try:
+                await bot.promote_chat_member(
+                    chat_id, uid,
+                    can_manage_chat=False, can_post_messages=False, can_edit_messages=False,
+                    can_delete_messages=False, can_manage_video_chats=False, can_invite_users=False,
+                    can_restrict_members=False, can_pin_messages=False, can_promote_members=False,
+                    is_anonymous=False
+                )
+                # Status neu laden
+                member = await _get_member(bot, chat_id, uid)
+            except Exception as e:
+                logger.warning(f"Demote admin {uid} in {chat_id} fehlgeschlagen: {e}")
+                continue  # ohne Demote kein Kick möglich
+
+        if not looks_del:
             continue
 
-        if _looks_deleted(member.user):
-            if dry_run:
-                removed += 1
-                continue
+        if dry_run:
+            removed += 1
+            continue
 
-            # Kick durch ban + optionales unban (so "verschwindet" der Ghost)
+        kicked = False
+        try:
+            await bot.ban_chat_member(chat_id, uid)
             try:
-                await bot.ban_chat_member(chat_id, uid)
-                try:
-                    # Nur wenn gebannt – verhindert Fehlerflut
-                    await bot.unban_chat_member(chat_id, uid, only_if_banned=True)
-                except BadRequest:
-                    pass
-                removed += 1
-            except Forbidden as e:
-                logger.warning(f"Keine Rechte um {uid} zu entfernen in {chat_id}: {e}")
-            except BadRequest as e:
-                logger.warning(f"Ban/Unban fehlgeschlagen für {uid} in {chat_id}: {e}")
+                await bot.unban_chat_member(chat_id, uid, only_if_banned=True)
+            except BadRequest:
+                pass
+            kicked = True
+            removed += 1
+        except Forbidden as e:
+            logger.warning(f"Keine Rechte um {uid} zu entfernen in {chat_id}: {e}")
+        except BadRequest as e:
+            logger.warning(f"Ban/Unban fehlgeschlagen für {uid} in {chat_id}: {e}")
 
-            # Egal ob erfolgreich gebannt: aus eurer DB entfernen
-            try:
+        # DB nur dann aufräumen, wenn wirklich draußen
+        try:
+            member_after = await _get_member(bot, chat_id, uid)
+            if kicked or member_after is None or getattr(member_after, "status", "") in ("left", "kicked"):
                 remove_member(chat_id, uid)
-            except Exception as e:
-                logger.debug(f"remove_member DB fail ({chat_id},{uid}): {e}")
+        except Exception:
+            pass
 
     return removed
 

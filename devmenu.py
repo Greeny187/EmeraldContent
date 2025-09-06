@@ -7,7 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from ads import register_ads
 from patchnotes import __version__
-from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor 
+from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor, add_campaign
 
 try:
     import psutil
@@ -16,13 +16,21 @@ except Exception as e:
     logging.warning("psutil nicht verfügbar: %s", e)
 
 try:
-    from ads import list_active_campaigns, get_subscription_info, set_pro_until, add_campaign
+    from ads import (
+        list_active_campaigns, get_subscription_info, set_pro_until,
+        get_adv_settings, set_adv_settings, set_adv_topic
+    )
 except Exception as e:
     logging.warning("ads-Modul nicht verfügbar: %s", e)
     def list_active_campaigns(): return []
     def get_subscription_info(_): return {"active": False, "valid_until": None}
     def set_pro_until(_chat_id, _until): raise RuntimeError("ads-API nicht verfügbar")
-    def add_campaign(*args, **kwargs): raise RuntimeError("ads-API nicht verfügbar")
+    def get_adv_settings(_chat_id):
+        return {"adv_enabled": True, "adv_topic_id": None, "min_gap_min": 240,
+                "daily_cap": 2, "every_n_messages": 0, "label": "Anzeige",
+                "quiet_start_min": 1320, "quiet_end_min": 360, "last_adv_ts": None}
+    def set_adv_settings(_chat_id, **fields): raise RuntimeError("ads-API nicht verfügbar")
+    def set_adv_topic(_chat_id, _topic_id): raise RuntimeError("ads-API nicht verfügbar")
 
 logger = logging.getLogger(__name__)
 
@@ -277,9 +285,11 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🟢/🔴 Aktiv/Deaktiv", callback_data="dev_ad_toggle_menu")],
             [InlineKeyboardButton("✏️ Bearbeiten", callback_data="dev_ad_edit_menu")],
             [InlineKeyboardButton("🗑 Löschen", callback_data="dev_ad_delete_menu")],
+            [InlineKeyboardButton("⚙️ Einstellungen", callback_data="dev_ad_settings")],   # ← NEU
             [InlineKeyboardButton("📊 Statistiken", callback_data="dev_ad_stats")],
             [InlineKeyboardButton("🔙 Zurück", callback_data="dev_back_to_menu")]
         ]
+
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     
     elif data == "dev_db_management":
@@ -571,12 +581,192 @@ async def dev_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         
         kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]]
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-    
-    else:
-        # Platzhalter für weitere Dev-Callbacks
-        await query.answer("ℹ️ Aktion wird implementiert.", show_alert=False)
+
+    elif data == "dev_ad_settings":
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        bulk = chat_id is None
+
+        if bulk:
+            # Aggregat – keine konkrete Zeile, daher nur Info
+            s = {"adv_enabled":"—","min_gap_min":"—","daily_cap":"—","every_n_messages":"—",
+                "label":"—","quiet":"—","topic":"—"}
+        else:
+            S = get_adv_settings(chat_id)
+            s = {
+                "adv_enabled": "✅ an" if S["adv_enabled"] else "🔴 aus",
+                "min_gap_min": f'{S["min_gap_min"]} min',
+                "daily_cap":   str(S["daily_cap"]),
+                "every_n_messages": str(S["every_n_messages"]),
+                "label": S["label"],
+                "quiet": f'{_fmt_hhmm(S["quiet_start_min"])}–{_fmt_hhmm(S["quiet_end_min"])}',
+                "topic": str(S["adv_topic_id"]) if S["adv_topic_id"] is not None else "Default"
+            }
+
+        header = "⚙️ **Werbung-Einstellungen**\n"
+        scope_line = f'🔎 Quelle: {get_scope_label(context)}'
+        warn = "\n\n⚠️ Aggregat: Änderungen wirken auf **ALLE** Gruppen." if bulk else ""
+        text = (
+            f"{header}\n{scope_line}{warn}\n\n"
+            f"• Status: {s['adv_enabled']}\n"
+            f"• Mindestabstand: {s['min_gap_min']}\n"
+            f"• Tages-Limit: {s['daily_cap']}\n"
+            f"• Nach N Nachrichten: {s['every_n_messages']}\n"
+            f"• Label: {s['label']}\n"
+            f"• Ruhezeit: {s['quiet']}\n"
+            f"• Topic: {s['topic']}\n"
+        )
+
+        kb = [
+            [InlineKeyboardButton("🟢 Aktiv", callback_data="dev_ad_en:on"),
+            InlineKeyboardButton("🔴 Aus",   callback_data="dev_ad_en:off")],
+            [InlineKeyboardButton("Gap −30", callback_data="dev_ad_gap:-30"),
+            InlineKeyboardButton("Gap +30", callback_data="dev_ad_gap:+30")],
+            [InlineKeyboardButton("Cap −1",  callback_data="dev_ad_cap:-1"),
+            InlineKeyboardButton("Cap +1",  callback_data="dev_ad_cap:+1")],
+            [InlineKeyboardButton("Nmsgs −5",callback_data="dev_ad_nmsgs:-5"),
+            InlineKeyboardButton("Nmsgs +5",callback_data="dev_ad_nmsgs:+5")],
+            [InlineKeyboardButton("Label: Anzeige",   callback_data="dev_ad_label:Anzeige"),
+            InlineKeyboardButton("Label: Sponsored", callback_data="dev_ad_label:Sponsored")],
+            [InlineKeyboardButton("Quiet 22–06", callback_data="dev_ad_quiet:1320-360"),
+            InlineKeyboardButton("Quiet aus",   callback_data="dev_ad_quiet:0-0")],
+            [InlineKeyboardButton("🧹 Topic entfernen", callback_data="dev_ad_topic:clear")],
+            [InlineKeyboardButton("❓ Topic setzen – Anleitung", callback_data="dev_ad_topic_help")],
+            [InlineKeyboardButton("🔙 Zurück", callback_data="dev_ads_dashboard")]
+        ]
+        return await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+# --- einzelne Aktionen ---
+
+    elif data.startswith("dev_ad_en:"):
+        on = data.split(":",1)[1] == "on"
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            n = _apply_adv_settings_bulk(context, {"adv_enabled": on})
+            await query.answer(f"Gesetzt für {n} Gruppen.")
+        else:
+            set_adv_settings(chat_id, adv_enabled=on)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_gap:"):
+        delta = int(data.split(":",1)[1])
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            changed = 0
+            for cid,_ in get_registered_groups():
+                s = get_adv_settings(cid); new = max(0, int(s["min_gap_min"]) + delta)
+                set_adv_settings(cid, min_gap_min=new); changed += 1
+            await query.answer(f"Gap angepasst ({changed} Gruppen).")
+        else:
+            s = get_adv_settings(chat_id); new = max(0, int(s["min_gap_min"]) + delta)
+            set_adv_settings(chat_id, min_gap_min=new)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_cap:"):
+        delta = int(data.split(":",1)[1])
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            changed = 0
+            for cid,_ in get_registered_groups():
+                s = get_adv_settings(cid); new = max(0, int(s["daily_cap"]) + delta)
+                set_adv_settings(cid, daily_cap=new); changed += 1
+            await query.answer(f"Cap angepasst ({changed} Gruppen).")
+        else:
+            s = get_adv_settings(chat_id); new = max(0, int(s["daily_cap"]) + delta)
+            set_adv_settings(chat_id, daily_cap=new)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_nmsgs:"):
+        delta = int(data.split(":",1)[1])
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            changed = 0
+            for cid,_ in get_registered_groups():
+                s = get_adv_settings(cid); new = max(0, int(s["every_n_messages"]) + delta)
+                set_adv_settings(cid, every_n_messages=new); changed += 1
+            await query.answer(f"Nmsgs angepasst ({changed} Gruppen).")
+        else:
+            s = get_adv_settings(chat_id); new = max(0, int(s["every_n_messages"]) + delta)
+            set_adv_settings(chat_id, every_n_messages=new)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_label:"):
+        label = data.split(":",1)[1][:40]
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            n = _apply_adv_settings_bulk(context, {"label": label})
+            await query.answer(f"Label gesetzt ({n} Gruppen).")
+        else:
+            set_adv_settings(chat_id, label=label)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data.startswith("dev_ad_quiet:"):
+        mins = data.split(":",1)[1]
+        a,b = mins.split("-",1)
+        qs, qe = int(a), int(b)
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        fields = {"quiet_start_min": qs, "quiet_end_min": qe}
+        if chat_id is None:
+            n = _apply_adv_settings_bulk(context, fields)
+            await query.answer(f"Quiet gesetzt ({n} Gruppen).")
+        else:
+            set_adv_settings(chat_id, **fields)
+            await query.answer("Gespeichert.")
+        return await dev_callback_handler(update, context)
+
+    elif data == "dev_ad_topic:clear":
+        scope = context.user_data.get('scope', {'type':'all'})
+        chat_id = scope.get('chat_id') if scope.get('type') == 'group' else None
+        if chat_id is None:
+            n = 0
+            for cid,_ in get_registered_groups():
+                set_adv_topic(cid, None); n += 1
+            await query.answer(f"Topic entfernt ({n} Gruppen).")
+        else:
+            set_adv_topic(chat_id, None)
+            await query.answer("Topic entfernt.")
+        return await dev_callback_handler(update, context)
+
+    elif data == "dev_ad_topic_help":
+        kb = [[InlineKeyboardButton("🔙 Zurück", callback_data="dev_ad_settings")]]
+        help_text = (
+            "📍 **Topic setzen (Gruppen-Thread)**\n\n"
+            "1) Öffne im ZIEL-Gruppenchat den gewünschten Thread.\n"
+            "2) Sende dort: `/set_adv_topic`\n"
+            "→ Ab dann wird Werbung in genau diesem Thread gepostet (oder Default, wenn entfernt).\n"
+        )
+        return await query.edit_message_text(help_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    # --- einzelne Aktionen ---
+
+def _fmt_hhmm(total_min: int) -> str:
+    h = (total_min // 60) % 24
+    m = total_min % 60
+    return f"{h:02d}:{m:02d}"
+
+def _apply_adv_settings_bulk(context, fields: dict) -> int:
+    changed = 0
+    for chat_id, _name in get_registered_groups():
+        try:
+            set_adv_settings(chat_id, **fields)
+            changed += 1
+        except Exception:
+            pass
+    return changed
 
 # Hilfsfunktionen für Entwicklermenü
+
 async def dev_wizard_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Nur aktiv, wenn Wizard-State existiert
     state = context.user_data.get('ad_wizard')

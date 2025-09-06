@@ -1263,10 +1263,16 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    count   = await clean_delete_accounts_for_chat(chat_id, context.bot)
-    await update.message.reply_text(
-        f"✅ Gelöschte Accounts entfernt: {count}"
-    )
+    args = [a.lower() for a in (context.args or [])]
+    dry   = ("--dry-run" in args) or ("--dry" in args)
+    demote = ("--demote" in args)
+
+    count = await clean_delete_accounts_for_chat(chat_id, context.bot,
+                                                 dry_run=dry, demote_admins=demote)
+    prefix = "🔎 Vorschau" if dry else "✅ Entfernt"
+    suffix = " (inkl. Admin-Demote)" if demote else ""
+    await update.message.reply_text(f"{prefix}: {count} gelöschte Accounts{suffix}.")
+
 
 async def spamlevel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
