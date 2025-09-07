@@ -591,12 +591,14 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # nur kurze Fragen / Hinweise triggern (heuristisch)
     if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
+        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}…')")
         return
 
     t0 = time.time()
     hit = find_faq_answer(chat.id, text)
     if hit:
         trig, ans = hit
+        logger.debug(f"[FAQ] HIT via DB trigger='{trig}' latency_ms={(time.time()-t0)*1000:.0f}")
         await msg.reply_text(ans, parse_mode="HTML")
         dt = int((time.time()-t0)*1000)
         log_auto_response(chat.id, trig, 1.0, ans[:200], dt, None)
@@ -605,6 +607,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # optionaler KI-Fallback
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq or not is_pro_chat(chat.id):
+        logger.debug("[FAQ] skip: AI fallback disabled in settings")
         return
 
     # sehr knapp, mit gruppenspezifischen Infos
@@ -619,6 +622,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # wir nutzen denselben Wrapper und 'missbrauchen' ai_summarize hier kurz
         answer = await ai_summarize(prompt, lang=lang)
+        logger.debug(f"[FAQ] AI fallback called ok len={len(answer) if answer else 0}")
     except Exception:
         answer = None
 
