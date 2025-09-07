@@ -2241,11 +2241,15 @@ def migrate_db():
         ADD COLUMN IF NOT EXISTS link_warning_text       TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
         ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS mood_topic_id BIGINT NOT NULL DEFAULT 0;
-        ADD COLUMN IF NOT EXISTS clean_deleted_enabled boolean DEFAULT false,
-        ADD COLUMN IF NOT EXISTS clean_deleted_hour smallint,
-        ADD COLUMN IF NOT EXISTS clean_deleted_min smallint,
-        ADD COLUMN IF NOT EXISTS clean_deleted_weekday smallint, -- 0=Mo ... 6=So; NULL = täglich
-        ADD COLUMN IF NOT EXISTS clean_deleted_demote boolean DEFAULT false;
+        """)
+    
+        cur.execute("""
+        ALTER TABLE group_settings
+        ADD COLUMN IF NOT EXISTS clean_deleted_enabled  BOOLEAN  NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS clean_deleted_hh       SMALLINT,
+        ADD COLUMN IF NOT EXISTS clean_deleted_mm       SMALLINT,
+        ADD COLUMN IF NOT EXISTS clean_deleted_weekday  SMALLINT,  -- 0=Mo ... 6=So, NULL = täglich
+        ADD COLUMN IF NOT EXISTS clean_deleted_demote   BOOLEAN  NOT NULL DEFAULT FALSE;
         """)
     
         cur.execute("""
