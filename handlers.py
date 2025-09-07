@@ -1470,7 +1470,7 @@ def register_handlers(app):
 
     # --- Logging / leichte Helfer ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_logger), group=0)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=0)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=-2)
 
     # --- Moderation ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=1)
