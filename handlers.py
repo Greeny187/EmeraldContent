@@ -1504,7 +1504,7 @@ def register_handlers(app):
 
     # --- Moderation ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=1)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=0)
