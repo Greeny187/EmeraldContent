@@ -6,7 +6,8 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, prune_pending_inputs_older_than, 
+from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+                    prune_pending_inputs_older_than, get_clean_deleted_settings,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
 from statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
@@ -17,6 +18,8 @@ from statistic import (
 from telegram.constants import ParseMode
 from translator import translate_hybrid as tr
 from handlers import _apply_hard_permissions
+from utils import clean_delete_accounts_for_chat
+
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
@@ -153,6 +156,67 @@ async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Purge von gelöschten Mitgliedern abgeschlossen.")
     except Exception as e:
         logger.error(f"Fehler beim Purgen von Mitgliedern: {e}")
+
+async def job_cleanup_deleted(context):
+    chat_id = context.job.chat_id
+    demote  = bool(getattr(context.job.data, "demote", False))
+    try:
+        count = await clean_delete_accounts_for_chat(chat_id, context.bot, dry_run=False)  # demote-Variante optional s.u.
+        if demote:
+            # Wenn du die demote-Variante aus meiner letzten Antwort eingebaut hast:
+            # count = await clean_delete_accounts_for_chat(chat_id, context.bot, dry_run=False, demote_admins=True)
+            pass
+        # Optional kurze Admin-Logmeldung in die Gruppe:
+        # await context.bot.send_message(chat_id, f"🧹 Auto-Cleanup erledigt: {count} gelöschte Accounts.")
+    except Exception as e:
+        # still und robust – kein Crash
+        import logging; logging.getLogger(__name__).error(f"job_cleanup_deleted failed: {e}", exc_info=True)
+
+# 2.2 pro Gruppe (re)planen
+def schedule_cleanup_for_chat(job_queue, chat_id:int, tz_str:str="Europe/Berlin"):
+    s = get_clean_deleted_settings(chat_id)
+    for j in list(job_queue.jobs()):
+        # vorhandene Cleanups für denselben Chat entfernen
+        if j.name == f"cleanup:{chat_id}":
+            j.schedule_removal()
+
+    if not s.get("enabled"):
+        return
+
+    hh, mm = (s.get("hh") or 3), (s.get("mm") or 0)
+    weekday = s.get("weekday")  # None = täglich
+    tz = ZoneInfo(tz_str)
+
+    if weekday is None:
+        job_queue.run_daily(
+            job_cleanup_deleted,
+            time(hour=hh, minute=mm, tzinfo=tz),
+            days=(0,1,2,3,4,5,6),
+            name=f"cleanup:{chat_id}",
+            chat_id=chat_id,
+            data=type("JobData",(object,),{"demote": s.get("demote", False)})()
+        )
+    else:
+        job_queue.run_daily(
+            job_cleanup_deleted,
+            time(hour=hh, minute=mm, tzinfo=tz),
+            days=(int(weekday),),
+            name=f"cleanup:{chat_id}",
+            chat_id=chat_id,
+            data=type("JobData",(object,),{"demote": s.get("demote", False)})()
+        )
+
+# 2.3 beim Start alle geplanten Jobs laden
+def load_all_cleanup_jobs(job_queue):
+    from database import get_registered_groups, get_timezone_for_chat  # falls du je Chat eine TZ speicherst
+    chats = get_registered_groups()  # [(chat_id, title), ...]
+    for cid, _title in chats:
+        tz = "Europe/Berlin"
+        try:
+            tz = get_timezone_for_chat(cid) or tz
+        except Exception:
+            pass
+        schedule_cleanup_for_chat(job_queue, cid, tz)
 
 async def dev_stats_nightly_job(context: ContextTypes.DEFAULT_TYPE):
     """Sendet das Dev-Dashboard täglich automatisch an alle Developer."""

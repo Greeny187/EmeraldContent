@@ -7,7 +7,7 @@
 # - Klare Abschnitts-Kommentare und konsistentes Error-Handling
 # ------------------------------------------------------------
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update, CallbackQuery
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
 from telegram.error import BadRequest
 import re
@@ -26,10 +26,10 @@ from database import (
     get_ai_settings, set_ai_settings, add_topic_router_rule,
     is_daily_stats_enabled, set_daily_stats,
     get_mood_question, set_mood_question, get_mood_topic,
-    list_faqs, upsert_faq, delete_faq,
+    list_faqs, upsert_faq, delete_faq, set_clean_deleted_settings, 
     get_group_language, set_group_language,
     list_forum_topics, count_forum_topics, get_topic_owners,
-    get_night_mode, set_night_mode, add_rss_feed,
+    get_night_mode, set_night_mode, add_rss_feed, get_clean_deleted_settings,
     set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
     get_rss_feed_options, set_spam_policy_topic, get_spam_policy_topic,
     effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings,
@@ -41,6 +41,7 @@ from utils import clean_delete_accounts_for_chat, tr
 from translator import translate_hybrid
 from patchnotes import PATCH_NOTES, __version__
 from user_manual import HELP_TEXT
+from jobs import schedule_cleanup_for_chat, job_cleanup_deleted
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,15 @@ async def _edit_or_send(query, title, markup):
             except Exception:
                 pass
 
-def _starts(s, prefix): return isinstance(s, str) and s.startswith(prefix)
+def _cleanup_label(cid:int) -> str:
+    s = get_clean_deleted_settings(cid)
+    if not s["enabled"]:
+        return "🧹 Auto-Aufräumen: AUS"
+    hh = s["hh"] if s["hh"] is not None else 3
+    mm = s["mm"] if s["mm"] is not None else 0
+    w  = s["weekday"]
+    when = f"{hh:02d}:{mm:02d}" + ("" if w is None else f"  ·  {'Mo Di Mi Do Fr Sa So'.split()[int(w)]}")
+    return f"🧹 Auto-Aufräumen: AN ({when})"
 
 def _topics_keyboard(cid: int, page: int, cb_prefix: str):
     """
@@ -124,7 +133,7 @@ def build_group_menu(cid: int):
         [InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
          InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
         [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
-         InlineKeyboardButton(tr('🗑️ Bereinigen', lang), callback_data=f"{cid}_clean_delete")],
+         InlineKeyboardButton(_cleanup_label(cid), callback_data=f"group_{cid}:cleanup")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
     ]
@@ -391,6 +400,84 @@ async def _render_aimod_topic(query, cid, tid):
         f"Schwellen: tox={pol['tox_thresh']} hate={pol['hate_thresh']} sex={pol['sex_thresh']} ..."
     )
     return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def cleanup_menu(query: CallbackQuery, cid: int, context):
+    s = get_clean_deleted_settings(cid)
+    hh = s["hh"] if s["hh"] is not None else 3
+    mm = s["mm"] if s["mm"] is not None else 0
+    weekday = s["weekday"]  # None = täglich
+    demote = "✅" if s["demote"] else "❌"
+    enabled = "✅" if s["enabled"] else "❌"
+
+    kb = [
+        [InlineKeyboardButton(f"Status: {'AN' if s['enabled'] else 'AUS'}", callback_data=f"group_{cid}:cleanup:toggle")],
+        [InlineKeyboardButton(f"Zeit: {hh:02d}:{mm:02d}", callback_data=f"group_{cid}:cleanup:settime")],
+        [InlineKeyboardButton(f"Rhythmus: {'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}",
+                              callback_data=f"group_{cid}:cleanup:setfreq")],
+        [InlineKeyboardButton(f"Demote Admins: {demote}", callback_data=f"group_{cid}:cleanup:demote")],
+        [InlineKeyboardButton("▶️ Jetzt ausführen", callback_data=f"group_{cid}:cleanup:run")],
+        [InlineKeyboardButton("⬅️ Zurück", callback_data=f"group_{cid}")]
+    ]
+    await query.edit_message_text(
+        f"🧹 *Auto-Aufräumen gelöschter Accounts*\n\n"
+        f"Status: {enabled}\nZeit: {hh:02d}:{mm:02d}\nRhythmus: "
+        f"{'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}\n"
+        f"Admins demoten: {demote}",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )
+
+async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query: return
+    data = query.data
+    # group_-100123456789
+    if data.startswith("group_") and ":cleanup" not in data:
+        cid = int(data.split("_",1)[1])
+        context.user_data["selected_chat_id"] = cid
+        return await show_group_menu(query=query, cid=cid, context=context, dest_chat_id=query.message.chat_id)
+
+    if data.startswith("group_") and ":cleanup" in data:
+        parts = data.split(":")
+        cid = int(parts[0].split("_",1)[1])
+        action = parts[2] if len(parts) >= 3 else None
+
+        if action is None:
+            return await cleanup_menu(query, cid, context)
+
+        if action == "toggle":
+            s = get_clean_deleted_settings(cid)
+            set_clean_deleted_settings(cid, enabled=not s["enabled"])
+            schedule_cleanup_for_chat(context.application.job_queue, cid)   # << neu einplanen
+            return await cleanup_menu(query, cid, context)
+
+        if action == "settime":
+            # Beispiel: zyklisch auf +1 Stunde erhöhen (einfachste UI ohne freie Eingabe)
+            s = get_clean_deleted_settings(cid)
+            hh = ( (s["hh"] if s["hh"] is not None else 3) + 1 ) % 24
+            set_clean_deleted_settings(cid, hh=hh, mm=s["mm"] or 0)
+            schedule_cleanup_for_chat(context.application.job_queue, cid)
+            return await cleanup_menu(query, cid, context)
+
+        if action == "setfreq":
+            s = get_clean_deleted_settings(cid)
+            # Toggle: täglich -> Mo (0) -> Di (1) -> ... -> So (6) -> täglich
+            wd = s["weekday"]
+            new_wd = 0 if wd is None else (None if wd==6 else wd+1)
+            set_clean_deleted_settings(cid, weekday=new_wd)
+            schedule_cleanup_for_chat(context.application.job_queue, cid)
+            return await cleanup_menu(query, cid, context)
+
+        if action == "demote":
+            s = get_clean_deleted_settings(cid)
+            set_clean_deleted_settings(cid, demote=not s["demote"])
+            schedule_cleanup_for_chat(context.application.job_queue, cid)
+            return await cleanup_menu(query, cid, context)
+
+        if action == "run":
+            await query.answer("Job läuft …", show_alert=False)
+            await job_cleanup_deleted(context=type("Obj",(object,),{"job":type("J",(object,),{"chat_id":cid,"data":None})(), "bot":context.bot})())
+            return await cleanup_menu(query, cid, context)
 
 # =========================
 # Haupt-Callback-Controller
@@ -1537,7 +1624,9 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 def register_menu(app):
     # Callback-Handler (Gruppe 0 – hohe Priorität)
     app.add_handler(CallbackQueryHandler(menu_callback), group=0)
-
+    app.add_handler(CallbackQueryHandler(menu_button_handler,
+                                         pattern=r"^group_-?\d+:cleanup",  # nur Cleanup-Zweig
+                                         ), group=0)
     # Reply-Handler (Gruppe 1) – nur Replies, keine Commands
     app.add_handler(MessageHandler(
         filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND

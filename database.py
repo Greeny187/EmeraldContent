@@ -777,6 +777,32 @@ def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None)
 def prune_pending_inputs_older_than(cur, hours:int=48):
     cur.execute("DELETE FROM pending_inputs WHERE created_at < NOW() - (%s || ' hours')::interval;", (hours,))
 
+@_with_cursor
+def get_clean_deleted_settings(cur, chat_id:int) -> dict:
+    cur.execute("""
+        SELECT clean_deleted_enabled, clean_deleted_hour, clean_deleted_min,
+               clean_deleted_weekday, clean_deleted_demote
+          FROM group_settings
+         WHERE chat_id=%s
+    """, (chat_id,))
+    r = cur.fetchone()
+    if not r:
+        return dict(enabled=False, hh=None, mm=None, weekday=None, demote=False)
+    return dict(enabled=bool(r[0]), hh=r[1], mm=r[2], weekday=r[3], demote=bool(r[4]))
+
+@_with_cursor
+def set_clean_deleted_settings(cur, chat_id:int, *, enabled=None, hh=None, mm=None, weekday=None, demote=None):
+    cols, vals = [], []
+    if enabled is not None: cols.append("clean_deleted_enabled=%s"); vals.append(bool(enabled))
+    if hh is not None:      cols.append("clean_deleted_hour=%s");    vals.append(int(hh))
+    if mm is not None:      cols.append("clean_deleted_min=%s");     vals.append(int(mm))
+    if weekday is not None: cols.append("clean_deleted_weekday=%s"); vals.append(None if weekday is None else int(weekday))
+    if demote is not None:  cols.append("clean_deleted_demote=%s");  vals.append(bool(demote))
+    if not cols:
+        return
+    vals.extend([chat_id])
+    cur.execute(f"UPDATE group_settings SET {', '.join(cols)} WHERE chat_id=%s", vals)
+
 # --- Member Management ---
 @_with_cursor
 def add_member(cur, chat_id: int, user_id: int):
@@ -2215,8 +2241,13 @@ def migrate_db():
         ADD COLUMN IF NOT EXISTS link_warning_text       TEXT    NOT NULL DEFAULT '⚠️ Nur Admins dürfen Links posten.',
         ADD COLUMN IF NOT EXISTS link_exceptions_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS mood_topic_id BIGINT NOT NULL DEFAULT 0;
+        ADD COLUMN IF NOT EXISTS clean_deleted_enabled boolean DEFAULT false,
+        ADD COLUMN IF NOT EXISTS clean_deleted_hour smallint,
+        ADD COLUMN IF NOT EXISTS clean_deleted_min smallint,
+        ADD COLUMN IF NOT EXISTS clean_deleted_weekday smallint, -- 0=Mo ... 6=So; NULL = täglich
+        ADD COLUMN IF NOT EXISTS clean_deleted_demote boolean DEFAULT false;
         """)
-        
+    
         cur.execute("""
             ALTER TABLE night_mode
             ADD COLUMN IF NOT EXISTS hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
