@@ -14,7 +14,7 @@ from telegram.constants import ChatType
 from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic,
-add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy,
+add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
 toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
 effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_today, set_spam_policy_topic, 
 effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
@@ -407,8 +407,11 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     topic_id = getattr(msg, "message_thread_id", None)
+    # Pro-Gate: KI-Moderation nur in Pro-Gruppen
+    if not is_pro_chat(chat.id):
+        return
     policy = effective_ai_mod_policy(chat.id, topic_id)
-
+    
     if not policy.get("enabled"):
         return
 
@@ -601,7 +604,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # optionaler KI-Fallback
     ai_faq, _ = get_ai_settings(chat.id)
-    if not ai_faq:
+    if not ai_faq or not is_pro_chat(chat.id):
         return
 
     # sehr knapp, mit gruppenspezifischen Infos

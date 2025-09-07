@@ -9,6 +9,7 @@ from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
 from database import list_members, remove_member
 from translator import translate_hybrid
+from ai_core import ai_available, ai_summarize, ai_moderate_image, ai_moderate_text
 
 logger = logging.getLogger(__name__)
 
@@ -164,35 +165,6 @@ def is_deleted_account(member) -> bool:
         return True
     return False
 
-async def ai_summarize(text: str, lang: str = "de") -> str | None:
-    """
-    Sehr knapper TL;DR (1–2 Sätze) in 'lang'.
-    - Opt-in per group_settings.ai_rss_summary
-    - Falls OPENAI_API_KEY fehlt oder lib nicht installiert => None
-    """
-    key = os.getenv("OPENAI_API_KEY")
-    if not key or not text:
-        return None
-    try:
-        # lazy import (damit wir ohne openai laufen können)
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        prompt = (
-            f"Fasse die folgende News extrem knapp auf {lang} zusammen "
-            f"(max. 2 Sätze, keine Floskeln):\n\n{text}"
-        )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"system","content":"Du schreibst kurz, sachlich, deutsch."},
-                      {"role":"user","content":prompt}],
-            temperature=0.2,
-            max_tokens=120,
-        )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        logger.info(f"OpenAI unavailable: {e}")
-        return None
-
 def _extract_domains_from_text(text:str) -> list[str]:
     if not text: return []
     urls = re.findall(r'(https?://\S+|www\.\S+)', text, flags=re.I)
@@ -208,88 +180,6 @@ def _extract_domains_from_text(text:str) -> list[str]:
 
 def ai_available() -> bool:
     return bool(os.getenv("OPENAI_API_KEY"))
-
-async def ai_moderate_image(image_url:str) -> dict|None:
-    """
-    Liefert Scores 0..1 für: nudity, sexual_minors, violence, weapons, gore.
-    Nutzt gpt-4o-mini (Vision) per JSON-Ausgabe.
-    """
-    key = os.getenv("OPENAI_API_KEY")
-    if not key or not image_url:
-        return None
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        prompt = ("Bewerte das Bild. Antworte NUR mit JSON-Objekt: "
-                  '{"nudity":0..1,"sexual_minors":0..1,"violence":0..1,"weapons":0..1,"gore":0..1}')
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            max_tokens=120,
-            messages=[
-                {"role":"system","content":"Du antwortest ausschließlich mit JSON."},
-                {"role":"user","content":[
-                    {"type":"text","text":prompt},
-                    {"type":"image_url","image_url":{"url": image_url}}
-                ]}
-            ]
-        )
-        data = res.choices[0].message.content.strip()
-        out = json.loads(data)
-        # Normiere & sichere Keys
-        for k in ("nudity","sexual_minors","violence","weapons","gore"):
-            out[k] = float(out.get(k,0))
-        return out
-    except Exception as e:
-        logger.info(f"AI vision unavailable: {e}")
-        return None
-    
-async def ai_moderate_text(text:str, model:str="omni-moderation-latest") -> dict|None:
-    """
-    Rückgabe: {'categories': {'toxicity':score,...}, 'flagged': bool}
-    Versucht erst Moderation-API, fallback auf Chat-Classifier (gpt-4o-mini).
-    """
-    key = os.getenv("OPENAI_API_KEY")
-    if not key or not text:
-        return None
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key)
-        try:
-            # Moderations-Endpoint
-            res = client.moderations.create(model=model, input=text)
-            out = res.results[0]
-            scores = {}
-            # Map auf unsere Keys
-            cats = out.category_scores or {}
-            # heuristische Zuordnung (je nach API-Version)
-            scores["toxicity"]   = float(cats.get("harassment/threats", 0.0) or cats.get("harassment", 0.0))
-            scores["hate"]       = float(cats.get("hate", 0.0) or cats.get("hate/threatening", 0.0))
-            scores["sexual"]     = float(cats.get("sexual/minors", 0.0) or cats.get("sexual", 0.0))
-            scores["harassment"] = float(cats.get("harassment", 0.0))
-            scores["selfharm"]   = float(cats.get("self-harm", 0.0))
-            scores["violence"]   = float(cats.get("violence", 0.0) or cats.get("violence/graphic", 0.0))
-            return {"categories": scores, "flagged": bool(out.flagged)}
-        except Exception:
-            # Fallback via Chat-Classifier
-            prompt = (
-                "Klassifiziere den folgenden Text. Gib JSON zurück mit keys: "
-                "toxicity,hate,sexual,harassment,selfharm,violence (Werte 0..1). "
-                "Nur das JSON, keine Erklärungen.\n\n" + text[:6000]
-            )
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role":"system","content":"Du antwortest nur mit JSON."},
-                          {"role":"user","content":prompt}],
-                temperature=0, max_tokens=200
-            )
-            import json as _json
-            data = _json.loads(res.choices[0].message.content)
-            return {"categories": {k: float(data.get(k,0)) for k in ["toxicity","hate","sexual","harassment","selfharm","violence"]},
-                    "flagged": any(float(data.get(k,0))>=0.8 for k in data)}
-    except Exception as e:
-        logger.info(f"AI moderation unavailable: {e}")
-        return None
 
 def heuristic_link_risk(domains:list[str]) -> float:
     """
