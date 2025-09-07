@@ -21,7 +21,9 @@ effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_sett
 )
 from zoneinfo import ZoneInfo
 from patchnotes import __version__, PATCH_NOTES
-from utils import clean_delete_accounts_for_chat, ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
+from utils import (clean_delete_accounts_for_chat, ai_summarize, 
+    ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
+    heuristic_link_risk, _apply_hard_permissions)
 from user_manual import help_handler
 from menu import show_group_menu, menu_free_text_handler
 from statistic import log_spam_event, log_night_event
@@ -122,22 +124,6 @@ def _aimod_acquire(context, chat_id:int, max_per_min:int) -> bool:
         return False
     q.append(now); context.bot_data[key] = q
     return True
-
-async def _apply_hard_permissions(context, chat_id: int, active: bool):
-    try:
-        if active:
-            await context.bot.set_chat_permissions(
-                chat_id=chat_id,
-                permissions=ChatPermissions(can_send_messages=False)
-            )
-        else:
-            # vorsichtig nur Text wieder freigeben
-            await context.bot.set_chat_permissions(
-                chat_id=chat_id,
-                permissions=ChatPermissions(can_send_messages=True)
-            )
-    except Exception as e:
-        logger.warning(f"Nachtmodus (hard) set_chat_permissions fehlgeschlagen: {e}")
 
 def _parse_hhmm(txt: str) -> int | None:
     m = re.match(r'^\s*(\d{1,2}):(\d{2})\s*$', txt)

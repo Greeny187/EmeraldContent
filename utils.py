@@ -6,7 +6,7 @@ import json
 from urllib.parse import urlparse
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
-from telegram import ChatMember
+from telegram import ChatMember, ChatPermissions
 from database import list_members, remove_member
 from translator import translate_hybrid
 
@@ -36,6 +36,26 @@ def _looks_deleted(user) -> bool:
     if not getattr(user, "username", None) and _DELETED_NAME_RX.search(name or ""):
         return True
     return False
+
+async def _apply_hard_permissions(context, chat_id: int, active: bool):
+    """
+    Setzt für den Chat harte Schreibsperren (Nachtmodus) an/aus.
+    active=True  -> can_send_messages=False
+    active=False -> can_send_messages=True
+    """
+    try:
+        if active:
+            await context.bot.set_chat_permissions(
+                chat_id=chat_id,
+                permissions=ChatPermissions(can_send_messages=False)
+            )
+        else:
+            await context.bot.set_chat_permissions(
+                chat_id=chat_id,
+                permissions=ChatPermissions(can_send_messages=True)
+            )
+    except Exception as e:
+        logger.warning(f"Nachtmodus (hard) set_chat_permissions fehlgeschlagen: {e}")
 
 async def _get_member(bot: ExtBot, chat_id: int, user_id: int) -> ChatMember | None:
     try:
