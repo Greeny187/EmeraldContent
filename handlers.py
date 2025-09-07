@@ -1110,7 +1110,37 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if hit:
         _, ans = hit
         return await msg.reply_text(ans, parse_mode="HTML")
-    return await msg.reply_text("Keine passende FAQ gefunden.")
+   # --- KI-Fallback (nur wenn aktiviert & Pro & Key vorhanden) ---
+    from database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
+    from utils import ai_available, ai_summarize
+    ai_faq, _ = get_ai_settings(chat.id)
+    if not ai_faq:
+        logging.info("[FAQ_CMD] KI-Fallback aus (ai_faq_enabled=False)")
+        return await msg.reply_text("Keine passende FAQ gefunden.")
+    if not is_pro_chat(chat.id):
+        logging.info("[FAQ_CMD] KI-Fallback gesperrt (kein Pro)")
+        return await msg.reply_text("Keine passende FAQ gefunden.")
+    if not ai_available():
+        logging.info("[FAQ_CMD] KI-Fallback nicht verfügbar (kein OPENAI_API_KEY)")
+        return await msg.reply_text("Keine passende FAQ gefunden.")
+
+    lang = get_group_language(chat.id) or "de"
+    context_info = (
+        "Nützliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ • "
+        "Support: https://t.me/+DkUfIvjyej8zNGVi • "
+        "Spenden: PayPal greeny187@outlook.de"
+    )
+    prompt = f"Frage: {txt}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
+    try:
+        answer = await ai_summarize(prompt, lang=lang)
+        logging.info(f"[FAQ_CMD] KI-Fallback len={len(answer or '')}")
+    except Exception as e:
+        logging.exception(f"[FAQ_CMD] KI-Fallback Fehler: {e}")
+        answer = None
+    if answer:
+        log_auto_response(chat.id, "AI/faq_cmd", 0.5, answer[:200], 0, None)
+        return await msg.reply_text(answer, parse_mode="HTML")
+    return await msg.reply_text("Keine passende FAQ gefunden.") 
 
 async def show_rules_cmd(update, context):
     chat_id = update.effective_chat.id
