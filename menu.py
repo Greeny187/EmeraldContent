@@ -123,7 +123,7 @@ def build_group_menu(cid: int):
         [InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
          InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
         [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
-         InlineKeyboardButton(tr('Aufräumen', lang), callback_data=f"{cid}:clean")],
+         InlineKeyboardButton(tr('Aufräumen', lang), callback_data=f"{cid}_clean")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
     ]
@@ -185,23 +185,35 @@ async def _render_clean_menu(cid, query, context):
     weekday = s["weekday"]  # None = täglich
     demote = "✅" if s["demote"] else "❌"
     enabled = "✅" if s["enabled"] else "❌"
+    notify  = "✅" if s.get("notify") else "❌"   # ← NEU
 
     kb = [
-        [InlineKeyboardButton(f"Status: {'AN' if s['enabled'] else 'AUS'}", callback_data=f"{cid}_clean_toggle")],
-        [InlineKeyboardButton(f"Zeit: {hh:02d}:{mm:02d}", callback_data=f"{cid}_clean_settime")],
-        [InlineKeyboardButton(f"Rhythmus: {'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}",
-                              callback_data=f"{cid}_clean_setfreq")],
-        [InlineKeyboardButton(f"Demote Admins: {demote}", callback_data=f"{cid}_clean_demote")],
-        [InlineKeyboardButton("▶️ Jetzt ausführen", callback_data=f"{cid}_clean_run")],
-        [InlineKeyboardButton("↩️ Zurück", callback_data=f"group_{cid}")]
+        [InlineKeyboardButton(f"Status: {'AN' if s['enabled'] else 'AUS'}",
+                            callback_data=f"{cid}_clean_toggle")],
+        [InlineKeyboardButton(f"Zeit: {hh:02d}:{mm:02d}",
+                            callback_data=f"{cid}_clean_settime")],
+        [InlineKeyboardButton(
+            f"Rhythmus: {'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}",
+            callback_data=f"{cid}_clean_setfreq")],
+        [InlineKeyboardButton(f"Demote Admins: {demote}",
+                            callback_data=f"{cid}_clean_demote")],
+        [InlineKeyboardButton(f"Benachrichtigung: {notify}",
+                            callback_data=f"{cid}_clean_notify")],    # ← NEU
+        [InlineKeyboardButton("▶️ Jetzt ausführen",
+                            callback_data=f"group_{cid}:cleanup:run")],
+        [InlineKeyboardButton("⬅️ Zurück", callback_data=f"{cid}_clean_run")],
     ]
-    text = (
-        "🧹 <b>Auto-Aufräumen gelöschter Accounts</b>\n\n"
-        f"Status: {enabled}\nZeit: {hh:02d}:{mm:02d}\nRhythmus: "
-        f"{'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}\n"
-        f"Admins demoten: {demote}"
+
+    await query.edit_message_text(
+        "🧹 *Auto-Aufräumen gelöschter Accounts*\n\n"
+        f"Status: {enabled}\n"
+        f"Zeit: {hh:02d}:{mm:02d}\n"
+        f"Rhythmus: {'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}\n"
+        f"Admins demoten: {demote}\n"
+        f"Benachrichtigung: {notify}",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
     )
-    return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
 async def _render_ai_menu(cid, query, context):
     lang = get_group_language(cid) or 'de'
@@ -416,32 +428,6 @@ async def _render_aimod_topic(query, cid, tid):
     )
     return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-async def cleanup_menu(query: CallbackQuery, cid: int, context):
-    s = get_clean_deleted_settings(cid)
-    hh = s["hh"] if s["hh"] is not None else 3
-    mm = s["mm"] if s["mm"] is not None else 0
-    weekday = s["weekday"]  # None = täglich
-    demote = "✅" if s["demote"] else "❌"
-    enabled = "✅" if s["enabled"] else "❌"
-
-    kb = [
-        [InlineKeyboardButton(f"Status: {'AN' if s['enabled'] else 'AUS'}", callback_data=f"group_{cid}:cleanup:toggle")],
-        [InlineKeyboardButton(f"Zeit: {hh:02d}:{mm:02d}", callback_data=f"group_{cid}:cleanup:settime")],
-        [InlineKeyboardButton(f"Rhythmus: {'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}",
-                              callback_data=f"group_{cid}:cleanup:setfreq")],
-        [InlineKeyboardButton(f"Demote Admins: {demote}", callback_data=f"group_{cid}:cleanup:demote")],
-        [InlineKeyboardButton("▶️ Jetzt ausführen", callback_data=f"group_{cid}:cleanup:run")],
-        [InlineKeyboardButton("⬅️ Zurück", callback_data=f"group_{cid}")]
-    ]
-    await query.edit_message_text(
-        f"🧹 *Auto-Aufräumen gelöschter Accounts*\n\n"
-        f"Status: {enabled}\nZeit: {hh:02d}:{mm:02d}\nRhythmus: "
-        f"{'täglich' if weekday is None else ['Mo','Di','Mi','Do','Fr','Sa','So'][weekday]}\n"
-        f"Admins demoten: {demote}",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
-    )
-
 async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query: return
@@ -458,13 +444,13 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         action = parts[2] if len(parts) >= 3 else None
 
         if action is None:
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
         if action == "toggle":
             s = get_clean_deleted_settings(cid)
             set_clean_deleted_settings(cid, enabled=not s["enabled"])
             schedule_cleanup_for_chat(context.application.job_queue, cid)   # << neu einplanen
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
         if action == "settime":
             # Beispiel: zyklisch auf +1 Stunde erhöhen (einfachste UI ohne freie Eingabe)
@@ -472,7 +458,7 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             hh = ( (s["hh"] if s["hh"] is not None else 3) + 1 ) % 24
             set_clean_deleted_settings(cid, hh=hh, mm=s["mm"] or 0)
             schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
         if action == "setfreq":
             s = get_clean_deleted_settings(cid)
@@ -481,18 +467,18 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             new_wd = 0 if wd is None else (None if wd==6 else wd+1)
             set_clean_deleted_settings(cid, weekday=new_wd)
             schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
         if action == "demote":
             s = get_clean_deleted_settings(cid)
             set_clean_deleted_settings(cid, demote=not s["demote"])
             schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
         if action == "run":
             await query.answer("Job läuft …", show_alert=False)
             await job_cleanup_deleted(context=type("Obj",(object,),{"job":type("J",(object,),{"chat_id":cid,"data":None})(), "bot":context.bot})())
-            return await cleanup_menu(query, cid, context)
+            return await _render_clean_menu(query, cid, context)
 
 # =========================
 # Haupt-Callback-Controller
@@ -702,6 +688,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(cid, f"🧹 Auto-Aufräumen: {removed} gelöschte Accounts entfernt.")
             except Exception:
                 pass
+            return await _render_clean_menu(cid, query, context)
+    
+        if sub == "notify":
+            s = get_clean_deleted_settings(cid)
+            set_clean_deleted_settings(cid, notify=not s.get("notify", False))
+            # Termin bleibt identisch – nur Anzeige ändern
             return await _render_clean_menu(cid, query, context)
     
     if func == 'night' and sub:

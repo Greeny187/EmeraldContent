@@ -157,18 +157,17 @@ async def purge_members_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def job_cleanup_deleted(context):
     chat_id = context.job.chat_id
-    demote  = bool(getattr(context.job.data, "demote", False))
-    try:
-        count = await clean_delete_accounts_for_chat(chat_id, context.bot, dry_run=False)  # demote-Variante optional s.u.
-        if demote:
-            # Wenn du die demote-Variante aus meiner letzten Antwort eingebaut hast:
-            # count = await clean_delete_accounts_for_chat(chat_id, context.bot, dry_run=False, demote_admins=True)
+    s = get_clean_deleted_settings(chat_id) or {}
+    count = await clean_delete_accounts_for_chat(chat_id, context.bot)
+    # Nur wenn Notify aktiv:
+    if s.get("notify"):
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🧹 Auto-Aufräumen: {count} gelöschte Accounts entfernt."
+            )
+        except Exception:
             pass
-        # Optional kurze Admin-Logmeldung in die Gruppe:
-        # await context.bot.send_message(chat_id, f"🧹 Auto-Cleanup erledigt: {count} gelöschte Accounts.")
-    except Exception as e:
-        # still und robust – kein Crash
-        import logging; logging.getLogger(__name__).error(f"job_cleanup_deleted failed: {e}", exc_info=True)
 
 # 2.2 pro Gruppe (re)planen
 def schedule_cleanup_for_chat(job_queue, chat_id:int, tz_str:str="Europe/Berlin"):
