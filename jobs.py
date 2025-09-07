@@ -164,7 +164,7 @@ async def job_cleanup_deleted(context):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🧹 Auto-Aufräumen: {count} gelöschte Accounts entfernt."
+                text=f"🧹 {count} gelöschte Accounts entfernt."
             )
         except Exception:
             pass

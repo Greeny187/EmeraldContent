@@ -123,7 +123,7 @@ def build_group_menu(cid: int):
         [InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
          InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
         [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
-         InlineKeyboardButton(tr('Aufräumen', lang), callback_data=f"{cid}_clean")],
+         InlineKeyboardButton(tr('🧹 Aufräumen', lang), callback_data=f"{cid}_clean")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
     ]
@@ -201,7 +201,7 @@ async def _render_clean_menu(cid, query, context):
                             callback_data=f"{cid}_clean_notify")],    # ← NEU
         [InlineKeyboardButton("▶️ Jetzt ausführen",
                             callback_data=f"group_{cid}:cleanup:run")],
-        [InlineKeyboardButton("⬅️ Zurück", callback_data=f"{cid}_clean_run")],
+        [InlineKeyboardButton("⬅️ Zurück", callback_data=f"group_{cid}")]
     ]
 
     await query.edit_message_text(
@@ -685,7 +685,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Job läuft …", show_alert=False)
             removed = await clean_delete_accounts_for_chat(cid, context.bot)
             try:
-                await context.bot.send_message(cid, f"🧹 Auto-Aufräumen: {removed} gelöschte Accounts entfernt.")
+                await context.bot.send_message(cid, f"🧹 {removed} gelöschte Accounts entfernt.")
             except Exception:
                 pass
             return await _render_clean_menu(cid, query, context)
