@@ -2260,14 +2260,14 @@ def migrate_db():
         cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_notify BOOLEAN NOT NULL DEFAULT FALSE;")
 
         cur.execute("""
-        ALTER TABLE group_settings
-        ADD COLUMN IF NOT EXISTS clean_deleted_enabled  BOOLEAN  NOT NULL DEFAULT FALSE,
-        ADD COLUMN IF NOT EXISTS clean_deleted_hh       SMALLINT,
-        ADD COLUMN IF NOT EXISTS clean_deleted_mm       SMALLINT,
-        ADD COLUMN IF NOT EXISTS clean_deleted_weekday  SMALLINT,  -- 0=Mo ... 6=So, NULL = täglich
-        ADD COLUMN IF NOT EXISTS clean_deleted_demote   BOOLEAN  NOT NULL DEFAULT FALSE;
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_enabled  BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_hh       INT;
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_mm       INT;
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_weekday  INT;  -- 0=Mo … 6=So, NULL=täglich
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_demote   BOOLEAN NOT NULL DEFAULT FALSE; -- <— KORREKT
+        ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS clean_deleted_notify   BOOLEAN NOT NULL DEFAULT TRUE;  -- für „Benachrichtigung“
         """)
-    
+        
         cur.execute("""
             ALTER TABLE night_mode
             ADD COLUMN IF NOT EXISTS hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
