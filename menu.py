@@ -693,7 +693,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub == "notify":
             s = get_clean_deleted_settings(cid)
             set_clean_deleted_settings(cid, notify=not s.get("notify", False))
-            # Termin bleibt identisch – nur Anzeige ändern
+            # optional: Job neu einplanen, falls du den Notification-Text nur bei aktivem Job postest
+            schedule_cleanup_for_chat(context.application.job_queue, cid)
             return await _render_clean_menu(cid, query, context)
     
     if func == 'night' and sub:
