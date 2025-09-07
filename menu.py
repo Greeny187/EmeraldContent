@@ -133,7 +133,7 @@ def build_group_menu(cid: int):
         [InlineKeyboardButton(f"📊 Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
          InlineKeyboardButton(tr('🧠 Mood', lang), callback_data=f"{cid}_mood")],
         [InlineKeyboardButton(tr('🌐 Sprache', lang), callback_data=f"{cid}_language"),
-         InlineKeyboardButton(_cleanup_label(cid), callback_data=f"group_{cid}:cleanup")],
+         InlineKeyboardButton(tr('Aufräumen', lang), callback_data=f"{cid}:cleanup")],
         [InlineKeyboardButton(tr('📖 Handbuch', lang), callback_data=f"{cid}_help"),
          InlineKeyboardButton(tr('📝 Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
     ]
