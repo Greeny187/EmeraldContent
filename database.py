@@ -778,45 +778,50 @@ def prune_pending_inputs_older_than(cur, hours:int=48):
     cur.execute("DELETE FROM pending_inputs WHERE created_at < NOW() - (%s || ' hours')::interval;", (hours,))
 
 @_with_cursor
-def get_clean_deleted_settings(cur, chat_id:int):
+def get_clean_deleted_settings(cur, chat_id: int) -> dict:
     cur.execute("""
-        SELECT clean_deleted_enabled, clean_deleted_hh, clean_deleted_mm,
-               clean_deleted_weekday, clean_deleted_demote_admins, clean_deleted_notify
+        SELECT clean_deleted_enabled,
+               clean_deleted_hh,
+               clean_deleted_mm,
+               clean_deleted_weekday,
+               clean_deleted_demote,      -- <— NICHT *_admins
+               clean_deleted_notify
           FROM group_settings
-         WHERE chat_id=%s
+         WHERE chat_id=%s;
     """, (chat_id,))
-    row = cur.fetchone() or (False, 3, 0, None, False, False)
-    enabled, hh, mm, weekday, demote, notify = row
+    row = cur.fetchone()
+    if not row:
+        return {"enabled": False, "hh": 3, "mm": 0, "weekday": None, "demote": False, "notify": True}
+    en, hh, mm, wd, demote, notify = row
     return {
-        "enabled": bool(enabled),
-        "hh": hh,
-        "mm": mm,
-        "weekday": weekday,    # None = täglich
+        "enabled": bool(en),
+        "hh": hh if hh is not None else 3,
+        "mm": mm if mm is not None else 0,
+        "weekday": wd,            # None = täglich
         "demote": bool(demote),
         "notify": bool(notify),
     }
 
 @_with_cursor
-def set_clean_deleted_settings(cur, chat_id:int, **fields):
-    # erlaubte Keys → DB-Spalten
+def set_clean_deleted_settings(cur, chat_id: int, **kw):
     mapping = {
         "enabled": "clean_deleted_enabled",
-        "hh": "clean_deleted_hh",
-        "mm": "clean_deleted_mm",
+        "hh":      "clean_deleted_hh",
+        "mm":      "clean_deleted_mm",
         "weekday": "clean_deleted_weekday",
-        "demote": "clean_deleted_demote_admins",
-        "notify": "clean_deleted_notify",
+        "demote":  "clean_deleted_demote",
+        "notify":  "clean_deleted_notify",
     }
     sets, params = [], []
-    for k, v in fields.items():
-        if k in mapping:
-            sets.append(mapping[k] + "=%s")
+    for k, v in kw.items():
+        col = mapping.get(k)
+        if col is not None:
+            sets.append(f"{col}=%s")
             params.append(v)
-    if not sets:
-        return
-    params.append(chat_id)
-    cur.execute(f"UPDATE group_settings SET {', '.join(sets)} WHERE chat_id=%s", params)
-
+    if sets:
+        params.append(chat_id)
+        cur.execute(f"UPDATE group_settings SET {', '.join(sets)} WHERE chat_id=%s;", params)
+        
 # --- Member Management ---
 @_with_cursor
 def add_member(cur, chat_id: int, user_id: int):
