@@ -777,31 +777,55 @@ def clear_pending_input(cur, chat_id: int, user_id: int, key: str | None = None)
 def prune_pending_inputs_older_than(cur, hours:int=48):
     cur.execute("DELETE FROM pending_inputs WHERE created_at < NOW() - (%s || ' hours')::interval;", (hours,))
 
-@_with_cursor
-def get_clean_deleted_settings(cur, chat_id:int) -> dict:
+@_with_cursor  # dein vorhandener Decorator, z.B. wrapped/_with_cursor
+def get_clean_deleted_settings(cur, chat_id: int):
     cur.execute("""
-        SELECT clean_deleted_enabled, clean_deleted_hour, clean_deleted_min,
-               clean_deleted_weekday, clean_deleted_demote
-          FROM group_settings
-         WHERE chat_id=%s
+        INSERT INTO group_settings (chat_id) VALUES (%s)
+        ON CONFLICT (chat_id) DO NOTHING
     """, (chat_id,))
-    r = cur.fetchone()
-    if not r:
-        return dict(enabled=False, hh=None, mm=None, weekday=None, demote=False)
-    return dict(enabled=bool(r[0]), hh=r[1], mm=r[2], weekday=r[3], demote=bool(r[4]))
+    cur.execute("""
+        SELECT clean_deleted_enabled, clean_deleted_hh, clean_deleted_mm,
+               clean_deleted_weekday, clean_deleted_demote
+        FROM group_settings
+        WHERE chat_id = %s
+    """, (chat_id,))
+    row = cur.fetchone()
+    if not row:
+        return {"enabled": False, "hh": 3, "mm": 0, "weekday": None, "demote": False}
+    en, hh, mm, wd, dem = row
+    return {
+        "enabled": bool(en),
+        "hh": hh if hh is not None else 3,
+        "mm": mm if mm is not None else 0,
+        "weekday": wd,          # None = täglich, 0..6 = Mo..So
+        "demote": bool(dem),
+    }
 
 @_with_cursor
-def set_clean_deleted_settings(cur, chat_id:int, *, enabled=None, hh=None, mm=None, weekday=None, demote=None):
-    cols, vals = [], []
-    if enabled is not None: cols.append("clean_deleted_enabled=%s"); vals.append(bool(enabled))
-    if hh is not None:      cols.append("clean_deleted_hour=%s");    vals.append(int(hh))
-    if mm is not None:      cols.append("clean_deleted_min=%s");     vals.append(int(mm))
-    if weekday is not None: cols.append("clean_deleted_weekday=%s"); vals.append(None if weekday is None else int(weekday))
-    if demote is not None:  cols.append("clean_deleted_demote=%s");  vals.append(bool(demote))
-    if not cols:
+def set_clean_deleted_settings(cur, chat_id: int, enabled=None, hh=None, mm=None, weekday=None, demote=None):
+    # Stelle sicher, dass es eine Zeile gibt
+    cur.execute("""
+        INSERT INTO group_settings (chat_id) VALUES (%s)
+        ON CONFLICT (chat_id) DO NOTHING
+    """, (chat_id,))
+
+    sets, vals = [], []
+    if enabled is not None:
+        sets.append("clean_deleted_enabled = %s"); vals.append(bool(enabled))
+    if hh is not None:
+        sets.append("clean_deleted_hh = %s");     vals.append(int(hh))
+    if mm is not None:
+        sets.append("clean_deleted_mm = %s");     vals.append(int(mm))
+    if weekday is not None:  # None = täglich, 0..6 = Mo..So
+        sets.append("clean_deleted_weekday = %s"); vals.append(weekday)
+    if demote is not None:
+        sets.append("clean_deleted_demote = %s"); vals.append(bool(demote))
+
+    if not sets:
         return
-    vals.extend([chat_id])
-    cur.execute(f"UPDATE group_settings SET {', '.join(cols)} WHERE chat_id=%s", vals)
+
+    vals.append(chat_id)
+    cur.execute(f"UPDATE group_settings SET {', '.join(sets)} WHERE chat_id = %s", vals)
 
 # --- Member Management ---
 @_with_cursor
