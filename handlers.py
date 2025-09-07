@@ -582,13 +582,14 @@ async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.debug(f"[FAQ] enter chat={chat.id} mid={msg.message_id} has_text={bool(text)}")
     msg = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
     if not msg or not chat or chat.type not in ("group","supergroup") or not (msg.text or msg.caption):
         return
     text = msg.text or msg.caption
-
+    
     # nur kurze Fragen / Hinweise triggern (heuristisch)
     if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
         logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}…')")
@@ -1469,7 +1470,7 @@ def register_handlers(app):
 
     # --- Logging / leichte Helfer ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_logger), group=0)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, faq_autoresponder), group=0)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=0)
 
     # --- Moderation ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=1)
