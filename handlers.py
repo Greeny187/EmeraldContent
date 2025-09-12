@@ -1509,6 +1509,9 @@ def register_handlers(app):
     # --- Mitglieder-Events ---
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=0)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=0)
+    app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r"^-?\d+_captcha_button_\d+$"), group=-2)
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, math_captcha_handler), group=-2)
 
     # (Optional) Fallback-Text-Handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=3)
