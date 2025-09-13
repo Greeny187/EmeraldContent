@@ -3,7 +3,7 @@ import logging
 import os, time, re
 from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
-from database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
+from shared.database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic, get_rss_topic, 
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, 
 get_pending_input, clear_pending_input, _call_db_safe

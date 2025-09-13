@@ -6,7 +6,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from ads import register_ads
-from patchnotes import __version__
+from content.patchnotes import __version__
 from database import get_registered_groups, is_daily_stats_enabled, _db_pool, _with_cursor, add_campaign
 
 try:

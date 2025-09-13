@@ -1,123 +1,195 @@
 import os
-import datetime
-import logging
-import statistic
 import asyncio
-from telegram.ext import filters, MessageHandler, Application, PicklePersistence
-from telethon_client import telethon_client, start_telethon
-from telethon import TelegramClient
-from handlers import register_handlers, error_handler
-from menu import register_menu
-from rss import register_rss
-from database import init_all_schemas
-from logger import setup_logging
-from mood import register_mood
-from jobs import register_jobs
-from request_config import create_request_with_increased_pool
-from ads import init_ads_schema, register_ads, register_ads_jobs
-from devmenu import register_dev_handlers
-from statistic import register_statistics_handlers
+import logging
+from typing import Dict
+from importlib import import_module
 
-# Env-Variablen prüfen
-API_ID    = os.getenv("TG_API_ID")
-API_HASH  = os.getenv("TG_API_HASH")
-SESSION   = os.getenv("TELETHON_SESSION")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not all([API_ID, API_HASH, SESSION, BOT_TOKEN]):
-    raise RuntimeError(
-        "TG_API_ID, TG_API_HASH, TELETHON_SESSION und BOT_TOKEN müssen als Env-Vars gesetzt sein!"
-    )
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-if not WEBHOOK_URL:
-    raise ValueError("WEBHOOK_URL ist nicht gesetzt.")
-PORT = int(os.getenv("PORT", 8443))
+from aiohttp import web
+from telegram import Update
+from telegram.ext import Application, PicklePersistence
 
-async def log_update(update, context):
-    logging.debug(f"Update angekommen: {update}")
+DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
+APP_BASE_URL = os.getenv("APP_BASE_URL")
+PORT = int(os.getenv("PORT", "8443"))
+DEVELOPER_CHAT_ID = os.getenv("DEVELOPER_CHAT_ID", "5114518219")
 
-# Diese Funktionen hinzufügen:
-async def post_init(application: Application) -> None:
-    """
-    Wird nach der Initialisierung der Application aufgerufen.
-    Kann für zusätzliche Einrichtungsschritte verwendet werden.
-    """
-    logging.info("Bot wurde initialisiert und ist jetzt betriebsbereit.")
-    await application.bot.send_message(chat_id=os.getenv("DEVELOPER_CHAT_ID", "5114518219"),
-                              text=f"🤖 Der Bot wurde neu gestartet und ist jetzt online.")
+def load_bots_env():
+    bots = []
+    for idx, name in enumerate(DEFAULT_BOT_NAMES, start=1):
+        key = os.getenv(f"BOT{idx}_KEY", name)
+        token = os.getenv(f"BOT{idx}_TOKEN")
+        username = os.getenv(f"BOT{idx}_USERNAME")  # optional
+        bots.append({
+            "name": name,
+            "route_key": key,
+            "token": token,
+            "username": username,
+            "index": idx
+        })
+    return bots
 
-async def post_shutdown(application: Application) -> None:
-    """
-    Wird aufgerufen, bevor die Application vollständig heruntergefahren wird.
-    Kann für Aufräumarbeiten verwendet werden.
-    """
-    logging.info("Bot wird heruntergefahren.")
-    # Wenn nötig, hier zusätzliche Ressourcen freigeben
-    try:
-        await application.bot.send_message(chat_id=os.getenv("DEVELOPER_CHAT_ID", "5114518219"),
-                                  text="🛑 Der Bot wird heruntergefahren.")
-    except:
-        pass  # Beim Herunterfahren ignorieren wir Fehler beim Senden
+BOTS = load_bots_env()
 
-async def shutdown(signal, loop, client: TelegramClient, app: Application):
-    # Stoppe Telegram-Handlers
-    await app.stop()
-    # Trenne Telethon-Client
-    await client.disconnect()
-    # Alle übrigen Tasks abbrechen
-    tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task(loop)]
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    loop.stop()
+def mask(value: str, show: int = 6):
+    if not value:
+        return None
+    if len(value) <= show:
+        return "*" * len(value)
+    return "*" * (len(value) - show) + value[-show:]
 
-def main():
-    setup_logging()
-    init_all_schemas()
-    init_ads_schema()  # <- Hinzufügen
-    statistic.init_stats_db()
+def sanitize_env() -> Dict[str, str]:
+    env = {}
+    sensitive_markers = ("TOKEN","SECRET","KEY","PASS","PWD","HASH","API","ACCESS","PRIVATE")
+    whitelist_prefixes = ("APP_", "PORT", "BOT", "DATABASE_URL", "REDIS_URL", "TG_", "TELETHON", "PAYPAL_", "COINBASE_", "BINANCE_", "BYBIT_", "REVOLUT_", "OPENAI_", "ANTHROPIC_", "GEMINI_")
+    for k, v in os.environ.items():
+        if not any(k.startswith(p) for p in whitelist_prefixes):
+            continue
+        if any(m in k for m in sensitive_markers):
+            env[k] = mask(v or "", 6)
+        else:
+            env[k] = v
+    return env
 
-    # Telethon (User-Session) verbinden
-    asyncio.get_event_loop().run_until_complete(start_telethon())
+APPLICATIONS: Dict[str, Application] = {}
+ROUTEKEY_TO_NAME: Dict[str, str] = {}
+WEBHOOK_URLS: Dict[str, str] = {}
 
-    # Erstelle eine Application mit angepasstem Request-Objekt
-    persistence = PicklePersistence(filepath="state.pickle")
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .persistence(persistence)
-        .request(create_request_with_increased_pool())
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+async def build_application(bot_cfg: Dict, is_primary: bool) -> Application:
+    name = bot_cfg["name"]
+    route_key = bot_cfg["route_key"]
+    token = bot_cfg["token"]
 
-    app.add_error_handler(error_handler)
-    app.add_handler(MessageHandler(filters.ALL, log_update), group=-2)
+    persistence = PicklePersistence(filepath=f"state_{route_key}.pickle")
+    app_builder = Application.builder().token(token).arbitrary_callback_data(True).persistence(persistence)
+
+    request = None
+    if name == "content":
+        try:
+            req_mod = import_module("bots.content")
+            request = getattr(req_mod, "create_request_with_increased_pool")()
+        except Exception:
+            request = None
+    if request is not None:
+        app_builder = app_builder.request(request)
+
+    app = app_builder.build()
+
+    app.bot_data['bot_key'] = route_key        # z.B. "content", "trade_api", ...
+    app.bot_data['bot_name'] = name            # logischer Name
+    app.bot_data['bot_index'] = bot_cfg["index"]
     
-    # Handler-Reihenfolge korrigieren:
-    register_statistics_handlers(app)
-    register_handlers(app)  # group=0 (Commands)
-    register_mood(app)      # group=0 (Mood-Commands) - FRÜHER
-    register_menu(app)      # group=1 (Menu-Replies, keine Commands)
-    register_rss(app)       # group=3 (RSS-spezifisch)
-    register_dev_handlers(app)  # group=4 (Entwickler-Commands)
-    # Jobs registrieren
-    register_jobs(app)
-    register_ads_jobs(app)  # <- Hinzufügen
+    async def _on_error(update, context):
+        logging.exception("Unhandled error", exc_info=context.error)
+    app.add_error_handler(_on_error)
 
-    # Startzeit und Telethon-Client speichern
-    app.bot_data['start_time'] = datetime.datetime.now()
-    app.bot_data['telethon_client'] = telethon_client
+    if is_primary:
+        try:
+            import_module("bots.content").setup_logging()
+        except Exception:
+            pass
+        try:
+            import_module("bots.content").init_all_schemas()
+        except Exception as e:
+            logging.warning(f"init_all_schemas() skipped: {e}")
+        try:
+            import_module("bots.content").init_ads_schema()
+        except Exception:
+            pass
 
-    # Webhook starten
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=f"/webhook/{BOT_TOKEN}",
-        webhook_url=WEBHOOK_URL,
-        drop_pending_updates=False,
-        max_connections=40
-    )
+    pkg = import_module(f"bots.{name}")
+    if hasattr(pkg, "register"):
+        pkg.register(app)
+    if hasattr(pkg, "register_jobs"):
+        pkg.register_jobs(app)
+
+    if is_primary:
+        try:
+            tc, starter = import_module("bots.content").get_telethon_client_and_starter()
+        except Exception:
+            tc, starter = None, None
+        if tc is not None:
+            app.bot_data['telethon_client'] = tc
+        if starter is not None:
+            try:
+                await starter()
+            except Exception as e:
+                logging.warning(f"Telethon start failed: {e}")
+
+    async def _post_init(application: Application) -> None:
+        try:
+            await application.bot.send_message(chat_id=DEVELOPER_CHAT_ID,
+                text=f"🤖 Bot '{name}' ({route_key}) ist online.")
+        except Exception:
+            pass
+    app.post_init = _post_init
+
+    return app
+
+async def webhook_handler(request: web.Request):
+    route_key = request.match_info.get("route_key")
+    app = APPLICATIONS.get(route_key)
+    if not app:
+        return web.Response(status=404, text="Unknown bot route key.")
+    try:
+        data = await request.json()
+    except Exception:
+        return web.Response(status=400, text="Invalid JSON")
+
+    update = Update.de_json(data=data, bot=app.bot)
+    await app.process_update(update)
+    return web.json_response({"ok": True})
+
+async def health_handler(_: web.Request):
+    return web.json_response({
+        "status": "ok",
+        "bots": list(APPLICATIONS.keys()),
+        "webhook_urls": WEBHOOK_URLS
+    })
+
+async def env_handler(_: web.Request):
+    return web.json_response(sanitize_env())
+
+async def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+
+    if not BOTS or not BOTS[0]["token"]:
+        raise RuntimeError("BOT1_TOKEN (Emerald Content Bot) is required.")
+
+    if not APP_BASE_URL:
+        raise RuntimeError("APP_BASE_URL must be set (e.g. https://<app>.herokuapp.com)")
+
+    # Build + start apps
+    for idx, cfg in enumerate(BOTS):
+        if not cfg["token"]:
+            continue
+        app = await build_application(cfg, is_primary=(idx == 0))
+        await app.initialize()
+        await app.start()
+        APPLICATIONS[cfg["route_key"]] = app
+        ROUTEKEY_TO_NAME[cfg["route_key"]] = cfg["name"]
+        WEBHOOK_URLS[cfg["name"]] = f"{APP_BASE_URL}/webhook/{cfg['route_key']}"
+
+    if not APPLICATIONS:
+        raise RuntimeError("No bots configured (no tokens found).")
+
+    webapp = web.Application()
+    webapp.router.add_get("/health", health_handler)
+    webapp.router.add_get("/env", env_handler)
+    webapp.router.add_post("/webhook/{route_key}", webhook_handler)
+
+    runner = web.AppRunner(webapp)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    logging.info(f"Webhook server listening on 0.0.0.0:{PORT}")
+    await site.start()
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        for app in APPLICATIONS.values():
+            await app.stop()
+            await app.shutdown()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

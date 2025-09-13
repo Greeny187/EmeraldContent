@@ -17,7 +17,7 @@ from statistic import (
 )
 from telegram.constants import ParseMode
 from translator import translate_hybrid as tr
-from utils import clean_delete_accounts_for_chat, _apply_hard_permissions
+from content.utils import clean_delete_accounts_for_chat, _apply_hard_permissions
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
@@ -337,95 +337,55 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(dt.timezone.utc)
 
     for chat_id, _ in get_registered_groups():
-        enabled, start_minute, end_minute, del_non, _, tz_str, hard, override = get_night_mode(chat_id)
+        try:
+            enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = get_night_mode(chat_id)
+        except Exception:
+            continue
         if not enabled:
             continue
 
-        group_tz = ZoneInfo(tz_str or TIMEZONE)
-        now_local = now_utc.astimezone(group_tz)
-        
-        start_time = dt.time(hour=start_minute // 60, minute=start_minute % 60)
-        end_time = dt.time(hour=end_minute // 60, minute=end_minute % 60)
-        now_time = now_local.time()
+        tz = ZoneInfo(tz_str or TIMEZONE)
+        local = now_utc.astimezone(tz)
+        now_t = local.time()
+        start_t = dt.time(start_minute // 60, start_minute % 60)
+        end_t   = dt.time(end_minute // 60,   end_minute % 60)
 
-        is_active = False
-        if start_time < end_time:
-            is_active = start_time <= now_time < end_time
-        else:
-            is_active = now_time >= start_time or now_time < end_time
+        def _active(now_t):
+            if override_until:
+                return now_utc < override_until
+            return (start_t <= now_t < end_t) if start_t < end_t else (now_t >= start_t or now_t < end_t)
 
-        # KORREKTUR: start_dt und end_dt definieren
-        current_date = now_local.date()
-        start_dt = datetime.combine(current_date, start_time, tzinfo=group_tz)
-        end_dt = datetime.combine(current_date, end_time, tzinfo=group_tz)
+        active = _active(now_t)
+        state_key = ("nm_state", chat_id)
+        prev = context.application.bot_data.get(state_key)
 
-        # Korrektur für Zeiträume über Mitternacht
-        if start_time > end_time:
-            if now_local.time() < end_time:
-                # Wir sind nach Mitternacht, Start war am Vortag
-                start_dt -= timedelta(days=1)
-            else:
-                # Wir sind vor Mitternacht, Ende ist am nächsten Tag
-                end_dt += timedelta(days=1)
-
-        # Prüfen, ob der Status sich gerade geändert hat
-        # KORREKTUR: Direkter Zugriff auf das chat_data-Dictionary für die jeweilige ID.
-        nm_key = f"nm_status_{chat_id}"
-        last_status = context.bot_data.get(nm_key, is_active)  # default = aktueller Status (verhindert Boot-Spam)
-
-        if is_active and not last_status:
-            # gerade AKTIV geworden
-            lang = get_group_language(chat_id) or 'de'
-            end_local = dt.datetime.combine(now_local.date(), end_time, tzinfo=group_tz)
-            if start_time > end_time and now_local.time() >= start_time:
-                end_local += dt.timedelta(days=1)
-            await bot.send_message(chat_id, tr("🌙 Nachtmodus aktiv bis", lang) + f" {end_local.strftime('%H:%M')} ({group_tz.key}).")
-            context.bot_data[nm_key] = True
-
-            # Hard-Apply falls konfiguriert
-            flags = get_night_mode(chat_id) or {}
-            if flags.get("hard_applied"):
+        # Zustandswechsel?
+        if active and prev != "active":
+            context.application.bot_data[state_key] = "active"
+            if hard_mode:
+                await _apply_hard_permissions(context, chat_id, True)
+            if warn_once:
                 try:
-                    await _apply_hard_permissions(context, chat_id, True)
-                except Exception as e:
-                    logger.warning(f"Hard apply failed: {e}")
-
-        elif not is_active and last_status:
-            # gerade DEAKTIV geworden
-            lang = get_group_language(chat_id) or 'de'
-            await bot.send_message(chat_id, tr("☀️ Der Nachtmodus ist beendet. Alle können wieder schreiben.", lang))
-            context.bot_data[nm_key] = False
-
-            flags = get_night_mode(chat_id) or {}
-            if flags.get("hard_applied"):
+                    until_txt = (override_until.astimezone(tz).strftime("%H:%M") if override_until else end_t.strftime("%H:%M"))
+                except Exception:
+                    until_txt = end_t.strftime("%H:%M")
                 try:
-                    await _apply_hard_permissions(context, chat_id, False)
-                except Exception as e:
-                    logger.warning(f"Hard remove failed: {e}")
-            
-        # Nachrichten im Nachtmodus löschen, wenn aktiviert
-        if is_active and del_non:
-            # Diese Schleife ist konzeptionell fehlerhaft in einem Job,
-            # da sie keine neuen Nachrichten abfängt.
-            # Sie wird hier auskommentiert, um Fehler zu vermeiden.
-            # try:
-            #     # Annahme: Sie wollen Nachrichten von Nicht-Admins löschen.
-            #     # Dies erfordert einen MessageHandler, keinen Job.
-            #     pass
-            # except Exception as e:
-            #     logger.error(f"Fehler beim Löschen von Nachrichten in {chat_id}: {e}")
-            pass # Platzhalter, um den Block syntaktisch korrekt zu halten
+                    await bot.send_message(chat_id, f"🌙 Nachtmodus aktiv bis {until_txt} ({tz.key}).")
+                except Exception:
+                    pass
 
-        try:
-            # Pro Chat in einem eigenen Try-Block, damit ein Fehler
-            # nicht alle anderen Chats blockiert
-            # ...bestehender Code zur Statusprüfung...
-            
-            # Nach jedem Chat kurz warten, um API-Limits zu vermeiden
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"Fehler im Night-Mode für Chat {chat_id}: {e}")
-            continue
+        if (not active) and prev == "active":
+            context.application.bot_data[state_key] = "inactive"
+            if hard_mode:
+                await _apply_hard_permissions(context, chat_id, False)
+            if warn_once:
+                try:
+                    await bot.send_message(chat_id, "☀️ Nachtmodus beendet.")
+                except Exception:
+                    pass
+
+        # leichte Drosselung zwischen Chats
+        await asyncio.sleep(0.2)
 
 def register_jobs(app):
     jq = app.job_queue

@@ -11,7 +11,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType
-from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
+from shared.database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
 remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
 get_night_mode, set_night_mode, get_group_language, get_link_settings, has_topic, set_spam_policy_topic, get_spam_policy_topic,
 add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
@@ -26,9 +26,9 @@ from utils import (clean_delete_accounts_for_chat, ai_summarize,
     heuristic_link_risk, _apply_hard_permissions)
 from user_manual import help_handler
 from menu import show_group_menu, menu_free_text_handler
-from statistic import log_spam_event, log_night_event
+from shared.statistic import log_spam_event, log_night_event
 from access import get_visible_groups, resolve_privileged_flags
-from translator import translate_hybrid
+from shared.translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +197,11 @@ async def spam_enforcer(update, context):
     chat_id = chat.id
     text = msg.text or msg.caption or ""
     topic_id = getattr(msg, "message_thread_id", None)
+    is_topic_owner = is_topic_owner or (
+        bool(topic_id) and user and has_topic(chat.id, user.id, topic_id)
+    )
+    if is_topic_owner and policy.get("exempt_topic_owner", True):
+        return
 
     # Ausnahme: Admin / anonymer Admin / Topic-Owner
 
@@ -304,7 +309,7 @@ async def spam_enforcer(update, context):
 
             # Logging (best effort)
             try:
-                from statistic import log_spam_event
+                from shared.statistic import log_spam_event
                 log_spam_event(
                     chat_id, user.id, "limit_day", did_action,
                     {"limit": daily_lim, "used_before": used_before, "topic_id": topic_id}
@@ -733,7 +738,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
 
 async def menu_command(update, context):
-    from database import get_registered_groups
+    from shared.database import get_registered_groups
     from access import get_visible_groups
 
     user = update.effective_user
@@ -920,64 +925,40 @@ async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await message.reply_text(tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp)))
 
 async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
+    msg  = update.effective_message
     chat = update.effective_chat
-    lang = get_group_language(chat.id) or 'de'
-    user = update.effective_user
-    if not msg or not chat or chat.type not in ("group","supergroup") or not user:
+    if not msg or chat.type not in ("group","supergroup"):
         return
 
-    en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until = get_night_mode(chat.id)
-    now_local = datetime.datetime.now(ZoneInfo(tz))
-    now_min = now_local.hour*60 + now_local.minute
+    enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = get_night_mode(chat.id)
+    if not enabled:
+        return
 
-    quiet_scheduled = en and _is_quiet_now(s, e, now_min)
-    quiet_override  = bool(override_until and now_local < override_until)
-    is_quiet = quiet_scheduled or quiet_override
+    tz = ZoneInfo(tz_str or "Europe/Berlin")
+    now = datetime.datetime.now(tz)
+    start_t = datetime.time(start_minute//60, start_minute%60)
+    end_t   = datetime.time(end_minute//60, end_minute%60)
+    active = (now.time() >= start_t or now.time() < end_t) if start_t > end_t else (start_t <= now.time() < end_t)
+    if override_until:
+        active = now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None) < override_until.replace(tzinfo=None)
 
-    # Admins ausnehmen
+    if not active:
+        return
+    if not del_non:
+        return
+
+    # Nur Nicht-Admins löschen
     try:
-        admins = await context.bot.get_chat_administrators(chat.id)
+        m = await context.bot.get_chat_member(chat.id, msg.from_user.id)
+        if str(getattr(m, "status", "")).lower() in ("administrator","creator"):
+            return
     except Exception:
-        admins = []
-    is_admin = any(a.user.id == user.id for a in admins)
-    is_anon_admin = bool(getattr(msg, 'sender_chat', None) and msg.sender_chat.id == chat.id)
-    if is_admin or is_anon_admin:
-        # Falls harter Modus aktiv ist, Admins sind eh ausgenommen
-        return
+        pass
 
-    # Status-Flag im ChatContext (um set_chat_permissions nicht zu spammen)
-    flags = context.chat_data.setdefault("nm_flags", {"hard_applied": False})
-
-    if is_quiet:
-        if hard_mode:
-            if not flags["hard_applied"]:
-                await _apply_hard_permissions(context, chat.id, True)
-                flags["hard_applied"] = True
-            # Nichts weiter tun – Permissions kümmern sich um die Sperre
-            return
-        else:
-            # Weicher Modus: löschen und optional warnen
-            try:
-                if del_non_admin:
-                    await msg.delete()
-                if warn_once:
-                    key = (now_local.date().isoformat(), user.id)
-                    warned = context.chat_data.setdefault("nm_warned", set())
-                    if key not in warned:
-                        warned.add(key)
-                        await context.bot.send_message(chat.id, tr("🌙 Ruhezeit aktiv – bitte poste wieder nach Ende der Nachtphase.", lang))
-            except Exception as e:
-                logger.warning(f"Nachtmodus (soft) Eingriff fehlgeschlagen: {e}")
-            return
-    else:
-        # Ruhe vorbei: ggf. harte Sperre aufheben
-        if hard_mode and flags.get("hard_applied"):
-            await _apply_hard_permissions(context, chat.id, False)
-            flags["hard_applied"] = False
-        # Abgelaufene Overrides aufräumen (optional)
-        if override_until and now_local >= override_until:
-            set_night_mode(chat.id, override_until=None)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
 
 async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg   = update.effective_message
@@ -1111,7 +1092,7 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, ans = hit
         return await msg.reply_text(ans, parse_mode="HTML")
    # --- KI-Fallback (nur wenn aktiviert & Pro & Key vorhanden) ---
-    from database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
+    from shared.database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
     from utils import ai_available, ai_summarize
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq:
@@ -1155,71 +1136,47 @@ async def show_rules_cmd(update, context):
             await update.message.reply_text(text)
 
 async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 0) Service-Messages behandeln: new_chat_members / left_chat_member
-    msg = update.message
-    chat_id = update.effective_chat.id
+    msg = update.effective_message
+    cm  = update.chat_member or update.my_chat_member
 
+    # 1) Service-Messages (neue/gehende Mitglieder) per Message-Event
     if msg:
         chat_id = msg.chat.id
-        # a) Neue Mitglieder
+        # a) Neue Mitglieder (klassischer Service-Post)
         if msg.new_chat_members:
             for user in msg.new_chat_members:
-                # Willkommen wie unten
                 rec = get_welcome(chat_id)
                 if rec:
                     photo_id, text = rec
-                    text = (text or "").replace(
-                        "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-                    )
+                    text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
                     if photo_id:
                         await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                     else:
                         await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
                 add_member(chat_id, user.id)
 
-                # 2) Captcha zusätzlich anzeigen, falls aktiviert
+                # Captcha (optional)
                 enabled, ctype, behavior = get_captcha_settings(chat_id)
                 if enabled:
                     if ctype == 'button':
                         kb = InlineKeyboardMarkup([[
                             InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
                         ]])
-                        sent = await context.bot.send_message(
-                            chat_id,
-                            text=f"🔐 Bitte bestätige, dass du kein Bot bist, {user.first_name}.",
-                            reply_markup=kb
-                        )
-                        # Captcha-Message speichern (nur löschen bei Erfolg)
-                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
-                            "msg_id": sent.message_id,
-                            "behavior": behavior,
-                            "issued_at": datetime.datetime.utcnow()
-                        }
+                        sent = await context.bot.send_message(chat_id, f"🔐 Bitte bestätige, {user.first_name}.", reply_markup=kb)
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"msg_id": sent.message_id, "behavior": behavior, "issued_at": datetime.datetime.utcnow()}
                     elif ctype == 'math':
                         a, b = random.randint(1,9), random.randint(1,9)
-                        sent = await context.bot.send_message(
-                            chat_id,
-                            text=f"🔐 Bitte rechne: {a} + {b} = ?",
-                            reply_markup=ForceReply(selective=True)
-                        )
-                        # In bot_data statt user_data speichern
-                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
-                            "answer": a + b,
-                            "behavior": behavior,
-                            "issued_at": datetime.datetime.utcnow(),
-                            "msg_id": sent.message_id
-                        }
+                        sent = await context.bot.send_message(chat_id, f"🔐 Bitte rechne: {a} + {b} = ?", reply_markup=ForceReply(selective=True))
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"answer": a+b, "behavior": behavior, "issued_at": datetime.datetime.utcnow(), "msg_id": sent.message_id}
             return
+
         # b) Verlassene Mitglieder
         if msg.left_chat_member:
             user = msg.left_chat_member
             rec = get_farewell(chat_id)
             if rec:
                 photo_id, text = rec
-                text = (text or "").replace(
-                    "{user}", 
-                    f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-                )
+                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
                 if photo_id:
                     await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                 else:
@@ -1227,64 +1184,42 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             remove_member(chat_id, user.id)
             return
 
-    # 1) Willkommen verschicken
-    if status in ("member", "administrator", "creator"):
-        rec = get_welcome(chat_id)
-        if rec:
-            photo_id, text = rec
-            # Nutzer direkt ansprechen:
-            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_id,
-                    caption=text,
-                    parse_mode="HTML"
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode="HTML"
-                )
-  
-        try:
-            add_member(chat_id, user.id)
-            logger.info(f"✅ add_member in DB: chat={chat_id}, user={user.id}")
-        except Exception as e:
-            logger.error(f"❌ add_member fehlgeschlagen: {e}", exc_info=True)
-        return
+    # 2) ChatMember-Updates (Beitritt ohne Service-Post / via Einladungslink)
+    if cm:
+        chat_id = cm.chat.id
+        user    = cm.new_chat_member.user
+        old     = cm.old_chat_member.status
+        status  = cm.new_chat_member.status
 
-    # 2) Abschied verschicken
-    if status in ("left", "kicked"):
-        rec = get_farewell(chat_id)
-        if rec:
-            photo_id, text = rec
-            text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_id,
-                    caption=text,
-                    parse_mode="HTML"
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode="HTML"
-                )
-        remove_member(chat_id, user.id)
-        return
-    
-    cm = update.chat_member or update.my_chat_member
-    if not cm:
-        return
-    chat_id = cm.chat.id
-    user = cm.new_chat_member.user
-    status = cm.new_chat_member.status
-    logger.info(f"🔔 track_members aufgerufen: chat_id={update.effective_chat and update.effective_chat.id}, user={cm.new_chat_member.user.id}, status={cm.new_chat_member.status}")
+        # Join
+        if old in ("left","kicked") and status in ("member","administrator","creator"):
+            rec = get_welcome(chat_id)
+            if rec:
+                photo_id, text = rec
+                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+                if photo_id:
+                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
+                else:
+                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+            try:
+                add_member(chat_id, user.id)
+            except Exception:
+                pass
+            return
 
+        # Leave
+        if status in ("left","kicked"):
+            rec = get_farewell(chat_id)
+            if rec:
+                photo_id, text = rec
+                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+                if photo_id:
+                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
+                else:
+                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+            remove_member(chat_id, user.id)
+            return
+        
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     args = [a.lower() for a in (context.args or [])]

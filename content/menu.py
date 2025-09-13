@@ -16,7 +16,7 @@ import logging
 # -----------------------------
 # DB/Service-Importe (bereinigt)
 # -----------------------------
-from database import (
+from shared.database import (
     get_link_settings, set_link_settings, _call_db_safe,
     get_welcome, set_welcome, delete_welcome,
     get_rules, set_rules, delete_rules,
@@ -36,12 +36,12 @@ from database import (
     top_strike_users, list_topic_router_rules
 )
 from access import get_visible_groups
-from statistic import stats_command, export_stats_csv_command, log_feature_interaction
+from shared.statistic import stats_command, export_stats_csv_command, log_feature_interaction
 from utils import clean_delete_accounts_for_chat, tr
-from translator import translate_hybrid
+from shared.translator import translate_hybrid
 from patchnotes import PATCH_NOTES, __version__
 from user_manual import HELP_TEXT
-from jobs import schedule_cleanup_for_chat, job_cleanup_deleted
+from shared.jobs import schedule_cleanup_for_chat, job_cleanup_deleted
 
 logger = logging.getLogger(__name__)
 
@@ -901,7 +901,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith(f"{cid}_rss_img_toggle|"):
             url = data.split("|", 1)[1]
             try:
-                from database import get_rss_feed_options as _get_opts, set_rss_feed_options as _set_opts
+                from shared.database import get_rss_feed_options as _get_opts, set_rss_feed_options as _set_opts
                 cur = _get_opts(cid, url) or {}
                 new_val = not bool(cur.get("post_images", False))
                 _set_opts(cid, url, post_images=new_val)
@@ -915,7 +915,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url = data.split("|", 1)[1]
             try:
                 # Einzelnen Feed entfernen; falls deine DB-Funktion anders heißt → anpassen
-                from database import remove_single_rss_feed
+                from shared.database import remove_single_rss_feed
                 remove_single_rss_feed(cid, url)
                 await query.answer("🗑 Feed entfernt.", show_alert=True)
             except Exception:
@@ -1440,7 +1440,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         cid = context.user_data.pop('router_group_id', (pend.get('router_delete') or {}).get('chat_id'))
         if not text.isdigit():
             return await msg.reply_text("Bitte eine numerische Regel-ID senden.")
-        from database import delete_topic_router_rule
+        from shared.database import delete_topic_router_rule
         delete_topic_router_rule(cid, int(text))
         clear_pending_input(msg.chat.id, update.effective_user.id, 'router_delete')
         return await msg.reply_text("🗑 Regel gelöscht.")
@@ -1452,7 +1452,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
         if not m:
             return await msg.reply_text("Format: <regel_id> on|off")
         rid = int(m.group(1)); on = m.group(2).lower() == "on"
-        from database import toggle_topic_router_rule
+        from shared.database import toggle_topic_router_rule
         toggle_topic_router_rule(cid, rid, on)
         clear_pending_input(msg.chat.id, update.effective_user.id, 'router_toggle')
         return await msg.reply_text("🔁 Regel umgeschaltet.")

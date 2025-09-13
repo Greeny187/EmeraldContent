@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
-from translator import translate_hybrid
+from shared.translator import translate_hybrid
 
 # Basis-Handbuch in deutscher Sprache
 HELP_TEXT = '''

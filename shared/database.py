@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 # Logger setup
 logger = logging.getLogger(__name__)
 
+DEFAULT_BOT_KEY = os.getenv("BOT1_KEY", "content")
+
 # --- Connection Pool Setup ---
 
 def _init_pool(dsn: dict, minconn: int = 1, maxconn: int = 10) -> pool.ThreadedConnectionPool:
@@ -99,6 +101,110 @@ async def _call_db_safe(fn, *args, **kwargs):
     except Exception:
         logger.exception("DB-Fehler in %s", getattr(fn, "__name__", str(fn)))
         raise
+
+def load_group_settings(cur, chat_id, bot_key: str):
+    cur.execute("""
+        SELECT setting_key, setting_value
+        FROM settings
+        WHERE bot_key=%s AND chat_id=%s
+    """, (bot_key, chat_id))
+    return dict(cur.fetchall())
+
+def get_bot_key_from_context(context) -> str:
+    """
+    Holt den bot_key aus der PTB Application,
+    fällt auf DEFAULT_BOT_KEY zurück, wenn nicht vorhanden.
+    """
+    try:
+        return context.application.bot_data.get('bot_key') or DEFAULT_BOT_KEY
+    except Exception:
+        return DEFAULT_BOT_KEY
+
+def qualify_where(query_base: str) -> str:
+    """
+    Hilfsfunktion: hängt 'WHERE bot_key=%s AND ...' oder
+    '... AND bot_key=%s' sinnvoll an – je nachdem, ob schon ein WHERE existiert.
+    Nutze das optional beim Refactoring.
+    """
+    q = query_base.strip()
+    if " where " in q.lower():
+        return q + " AND bot_key = %s"
+    return q + " WHERE bot_key = %s"
+
+def ensure_bot_key_param(params: tuple, bot_key: str) -> tuple:
+    """
+    Hack-freie Art, am Ende den bot_key als zusätzliches %s anzuhängen,
+    wenn du qualify_where() genutzt hast.
+    """
+    return (*params, bot_key)
+
+def _alter_table_safe(cur, sql: str):
+    """
+    Führt ein ALTER/CREATE sicher aus.
+    - Ignoriert fehlende Tabellen (Relation does not exist)
+    - Loggt andere Fehler nur als Warning
+    """
+    try:
+        cur.execute(sql)
+    except Exception as e:
+        msg = str(e).lower()
+        if "does not exist" in msg or "relation" in msg and "does not exist" in msg:
+            logger.debug("Schema-Skip (Tabelle fehlt): %s", sql)
+        else:
+            logger.warning("Schema-Änderung fehlgeschlagen: %s  --  %s", sql, e)
+
+@_with_cursor
+def ensure_multi_bot_schema(cur):
+    """
+    Minimale Erweiterung für Multi-Bot: fügt `bot_key` + sinnvolle Indizes
+    auf stark genutzten Tabellen hinzu. Idempotent & sicher.
+    Nur Tabellen, die es bei dir gibt, werden verändert.
+    """
+    
+    stmts = [
+        # Kern: Gruppen & Settings
+        "ALTER TABLE groups          ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_groups_bot_chat ON groups (bot_key, chat_id)",
+        "ALTER TABLE group_settings  ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_group_settings_bot_chat ON group_settings (bot_key, chat_id)",
+
+        # Logs & Statistiken
+        "ALTER TABLE message_logs    ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_message_logs_bot_chat_ts ON message_logs (bot_key, chat_id, timestamp DESC)",
+        "ALTER TABLE daily_stats     ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_stats_bot_chat_date_user ON daily_stats (bot_key, chat_id, stat_date, user_id)",
+        "ALTER TABLE reply_times     ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_reply_times_bot_chat_ts ON reply_times (bot_key, chat_id, ts DESC)",
+        "ALTER TABLE auto_responses  ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_auto_responses_bot_chat_ts ON auto_responses (bot_key, chat_id, ts DESC)",
+
+        # RSS & zuletzt gepostet
+        "ALTER TABLE rss_feeds       ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_rss_feeds_bot_chat_url ON rss_feeds (bot_key, chat_id, url)",
+        "ALTER TABLE last_posts      ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_last_posts_bot_chat_feed ON last_posts (bot_key, chat_id, feed_url)",
+
+        # Mitglieder / Topics
+        "ALTER TABLE members         ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_members_bot_chat ON members (bot_key, chat_id)",
+        "ALTER TABLE forum_topics    ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_forum_topics_bot_chat_topic ON forum_topics (bot_key, chat_id, topic_id)",
+        "ALTER TABLE topic_router_rules ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_topic_router_bot_chat ON topic_router_rules (bot_key, chat_id)",
+
+        # Ads / Subscriptions
+        "ALTER TABLE adv_settings    ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_adv_settings_bot_chat ON adv_settings (bot_key, chat_id)",
+        "ALTER TABLE adv_campaigns   ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "ALTER TABLE adv_impressions ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE INDEX IF NOT EXISTS ix_adv_impr_bot_chat_ts ON adv_impressions (bot_key, chat_id, ts DESC)",
+        "ALTER TABLE group_subscriptions ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_group_subs_bot_chat ON group_subscriptions (bot_key, chat_id)",
+        "ALTER TABLE mood_topics     ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_mood_topics_bot_chat ON mood_topics (bot_key, chat_id)",
+    ]
+    for sql in stmts:
+        _alter_table_safe(cur, sql)
 
 # --- Schema Initialization & Migrations ---
 @_with_cursor
@@ -2142,6 +2248,46 @@ def init_ads_schema(cur):
         );
     """)
  
+@_with_cursor
+def ensure_payments_schema(cur):
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS payment_orders(
+        order_id TEXT PRIMARY KEY,
+        chat_id BIGINT NOT NULL,
+        provider TEXT NOT NULL,
+        plan_key TEXT NOT NULL,
+        price_eur NUMERIC NOT NULL,
+        months INT NOT NULL,
+        user_id BIGINT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        paid_at TIMESTAMPTZ
+      );
+    """)
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS payment_events(
+        id BIGSERIAL PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES payment_orders(order_id),
+        provider TEXT NOT NULL,
+        payload JSONB,
+        ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    """)
+
+@_with_cursor
+def create_payment_order(cur, order_id:str, chat_id:int, provider:str, plan_key:str, price_eur:str, months:int, user_id:int):
+    cur.execute("""
+      INSERT INTO payment_orders(order_id, chat_id, provider, plan_key, price_eur, months, user_id)
+      VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING;
+    """, (order_id, chat_id, provider, plan_key, price_eur, months, user_id))
+
+@_with_cursor
+def mark_payment_paid(cur, order_id:str, provider:str) -> tuple[bool,int,int]:
+    cur.execute("UPDATE payment_orders SET status='paid', paid_at=NOW() WHERE order_id=%s AND status<>'paid' RETURNING chat_id, months;", (order_id,))
+    row = cur.fetchone()
+    return (True, row[0], row[1]) if row else (False, 0, 0)
+
+
 # --- Legacy Migration Utility ---
 def migrate_db():
     import psycopg2
@@ -2306,6 +2452,7 @@ def init_all_schemas():
     """Initialize all database schemas including ads"""
     logger.info("Initializing all database schemas...")
     init_db()
+    ensure_multi_bot_schema()
     init_ads_schema()  # Hinzufügen
     migrate_db()
     migrate_stats_rollup()
