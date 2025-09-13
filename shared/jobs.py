@@ -17,7 +17,7 @@ from statistic import (
 )
 from telegram.constants import ParseMode
 from translator import translate_hybrid as tr
-from content.utils import clean_delete_accounts_for_chat, _apply_hard_permissions
+from bots.content.utils import clean_delete_accounts_for_chat, _apply_hard_permissions
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
