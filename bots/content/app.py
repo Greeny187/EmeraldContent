@@ -1,7 +1,7 @@
 from telegram.ext import CommandHandler, Application
 from . import handlers, menu, rss, mood
 import os
-
+from miniapp import register_miniapp
 try:
     from shared import statistic, ads
 except Exception:
@@ -31,6 +31,8 @@ def register(app):
     if hasattr(rss, "register_rss"):
         rss.register_rss(app)
 
+    register_miniapp(app)  # << Mini-App einhängen
+    
 def register_jobs(app: Application):
     if hasattr(ads, "register_ads_jobs"):
         ads.register_ads_jobs(app)
