@@ -130,7 +130,7 @@ def build_group_menu(cid: int):
 
 async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
     lang = get_group_language(cid) or 'de'
-    title = tr("?? Gruppenmenï¿½", lang)
+    title = "🛠️ " + tr("Gruppenmenü", lang)
     markup = build_group_menu(cid)
     if query:
         await _edit_or_send(query, title, markup)
@@ -427,58 +427,6 @@ async def _render_aimod_topic(query, cid, tid):
     )
     return await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query: return
-    data = query.data
-    # group_-100123456789
-    if data.startswith("group_") and ":cleanup" not in data:
-        cid = int(data.split("_",1)[1])
-        context.user_data["selected_chat_id"] = cid
-        return await show_group_menu(query=query, cid=cid, context=context, dest_chat_id=query.message.chat_id)
-
-    if data.startswith("group_") and ":cleanup" in data:
-        parts = data.split(":")
-        cid = int(parts[0].split("_",1)[1])
-        action = parts[2] if len(parts) >= 3 else None
-
-        if action is None:
-            return await _render_clean_menu(query, cid, context)
-
-        if action == "toggle":
-            s = get_clean_deleted_settings(cid)
-            set_clean_deleted_settings(cid, enabled=not s["enabled"])
-            schedule_cleanup_for_chat(context.application.job_queue, cid)   # << neu einplanen
-            return await _render_clean_menu(query, cid, context)
-
-        if action == "settime":
-            # Beispiel: zyklisch auf +1 Stunde erhÃ¶hen (einfachste UI ohne freie Eingabe)
-            s = get_clean_deleted_settings(cid)
-            hh = ( (s["hh"] if s["hh"] is not None else 3) + 1 ) % 24
-            set_clean_deleted_settings(cid, hh=hh, mm=s["mm"] or 0)
-            schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await _render_clean_menu(query, cid, context)
-
-        if action == "setfreq":
-            s = get_clean_deleted_settings(cid)
-            # Toggle: tÃ¤glich -> Mo (0) -> Di (1) -> ... -> So (6) -> tÃ¤glich
-            wd = s["weekday"]
-            new_wd = 0 if wd is None else (None if wd==6 else wd+1)
-            set_clean_deleted_settings(cid, weekday=new_wd)
-            schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await _render_clean_menu(query, cid, context)
-
-        if action == "demote":
-            s = get_clean_deleted_settings(cid)
-            set_clean_deleted_settings(cid, demote=not s["demote"])
-            schedule_cleanup_for_chat(context.application.job_queue, cid)
-            return await _render_clean_menu(query, cid, context)
-
-        if action == "run":
-            await query.answer("Job lÃ¤uft â€¦", show_alert=False)
-            await job_cleanup_deleted(context=type("Obj",(object,),{"job":type("J",(object,),{"chat_id":cid,"data":None})(), "bot":context.bot})())
-            return await _render_clean_menu(query, cid, context)
-
 # =========================
 # Haupt-Callback-Controller
 # =========================
@@ -504,7 +452,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # >>> WICHTIG: Auswahl persistieren
             context.user_data["selected_chat_id"] = cid
             # Optional: kleine Quittung vermeiden -> direkt MenÃ¼ zeichnen
-            return await show_group_menu(query=query, cid=cid, context=context)
+            return await show_group_menu(query=query, cid=cid, context=context, dest_chat_id=query.message.chat_id)
         else:
             return await query.answer("UngÃ¼ltige Gruppen-ID.", show_alert=True)
 
@@ -1686,12 +1634,10 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ============
 
 def register_menu(app):
-    logger.info("content: register_menu() installing handlers")
     app.add_handler(CallbackQueryHandler(menu_callback), group=-2)
     app.add_handler(MessageHandler(
         filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
-        menu_free_text_handler
-    ), group=-2)
+        menu_free_text_handler), group=-2)
 
 
