@@ -59,6 +59,12 @@ RSS = "📰"; AI = "🤖"; STATS = "📊"; FAQ = "❓"; CLEAN = "🧹"; HELP = "
 # Hilfsfunktionen (Senden/Edits, DB-Safe, Keyboard-Bausteine)
 # ============================================================
 
+def _log_info(msg):
+    try:
+        logger.info(msg)
+    except Exception:
+        print(msg)
+
 async def _edit_or_send(query, title, markup):
     """Versuche die vorhandene MenÃ¼-Nachricht zu ersetzen; bei Fehler neue senden."""
     try:
@@ -129,12 +135,47 @@ def build_group_menu(cid: int):
     return InlineKeyboardMarkup(buttons)
 
 async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
-    lang = get_group_language(cid) or 'de'
+    """Menü immer als NEUE Nachricht senden (keine Edits). Robust gegen DB/Encoding-Fehler."""
+    try:
+        lang = (get_group_language(cid) or 'de')
+    except Exception:
+        lang = 'de'
+
     title = "🛠️ " + tr("Gruppenmenü", lang)
-    markup = build_group_menu(cid)
-    target = dest_chat_id if dest_chat_id is not None else (query.message.chat_id if query else cid)
-    await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
-    return
+    try:
+        markup = build_group_menu(cid)
+    except Exception as e:
+        _log_info(f"[menu HOTFIX] build_group_menu({cid}) failed: {e}")
+        markup = None
+        title = "🛠️ Gruppenmenü (eingeschränkt)"
+
+    # Ziel: bevorzugt dest_chat_id (Privatchat), sonst Ursprung
+    try:
+        target = (
+            dest_chat_id if dest_chat_id is not None
+            else (query.message.chat_id if query and getattr(query, "message", None) else cid)
+        )
+    except Exception:
+        target = cid
+
+    _log_info(f"[menu HOTFIX] show_group_menu → send_message chat={target}, cid={cid}")
+    try:
+        await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
+    except Exception as e1:
+        _log_info(f"[menu HOTFIX] send_message failed: {e1}")
+        # letzter Fallback: versuch zu antworten oder zu editieren
+        try:
+            if query and getattr(query, "message", None):
+                await query.message.reply_text(title, reply_markup=markup)
+            else:
+                raise
+        except Exception as e2:
+            _log_info(f"[menu HOTFIX] reply_text failed: {e2}")
+            try:
+                if query:
+                    await query.edit_message_text(title, reply_markup=markup)
+            except Exception as e3:
+                _log_info(f"[menu HOTFIX] edit_message_text failed: {e3}")
 
 async def _render_faq_menu(cid, query, context):
     lang = get_group_language(cid) or 'de'
