@@ -1681,3 +1681,4 @@ def register_menu(app):
         menu_free_text_handler
     ), group=0)
 
+

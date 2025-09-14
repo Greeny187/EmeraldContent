@@ -157,3 +157,4 @@ def register_mood(app):
     app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=0)
     app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=0)
     app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_"), group=0)
+

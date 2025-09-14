@@ -194,3 +194,4 @@ def heuristic_link_risk(domains:list[str]) -> float:
         if any(d.endswith(t) for t in bad_tlds): score += 0.3
         if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', d): score += 0.5  # blanke IP
     return min(1.0, score)
+

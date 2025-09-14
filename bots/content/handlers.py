@@ -739,7 +739,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def menu_command(update, context):
     from shared.database import get_registered_groups
-    from access import get_visible_groups
+    from .access import get_visible_groups
 
     user = update.effective_user
     all_groups = get_registered_groups()
@@ -1093,7 +1093,7 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text(ans, parse_mode="HTML")
    # --- KI-Fallback (nur wenn aktiviert & Pro & Key vorhanden) ---
     from shared.database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
-    from utils import ai_available, ai_summarize
+    from .utils import ai_available, ai_summarize
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq:
         logging.info("[FAQ_CMD] KI-Fallback aus (ai_faq_enabled=False)")
@@ -1453,3 +1453,4 @@ def register_handlers(app):
 
     # Hilfe (wenn du einen help_handler als Conversation/Handler-Objekt hast)
     app.add_handler(help_handler, group=1)
+

@@ -6,7 +6,7 @@ from importlib import import_module
 
 from aiohttp import web
 from telegram import Update
-from telegram.ext import Application, PicklePersistence
+from telegram.ext import Application, PicklePersistence, CommandHandler
 
 DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")

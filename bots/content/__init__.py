@@ -134,3 +134,4 @@ def get_telethon_client_and_starter():
     tc = getattr(t, "telethon_client", None)
     starter = getattr(t, "start_telethon", None)
     return tc, starter
+

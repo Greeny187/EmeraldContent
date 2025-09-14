@@ -53,3 +53,4 @@ async def resolve_privileged_flags(message, context) -> Tuple[bool, bool, bool, 
         pass  # bei Fehler lieber keine Privilegien annehmen
 
     return (is_owner, is_admin, is_anon_admin, is_topic_owner, chat_id, user_id)
+

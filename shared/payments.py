@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from database import (
+from .database import (
     ensure_payments_schema, create_payment_order, mark_payment_paid,
     set_pro_until, get_subscription_info
 )

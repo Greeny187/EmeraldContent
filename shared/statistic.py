@@ -13,10 +13,10 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from database import (_with_cursor, _db_pool, record_reply_time, get_group_language, migrate_stats_rollup, compute_agg_group_day, 
+from .database import (_with_cursor, _db_pool, record_reply_time, get_group_language, migrate_stats_rollup, compute_agg_group_day, 
 upsert_agg_group_day, get_agg_summary, get_heatmap, get_agg_rows, get_group_stats, get_top_responders
 )
-from translator import translate_hybrid
+from .translator import translate_hybrid
 
 
 logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, 
 get_pending_input, clear_pending_input, _call_db_safe
 )
-from utils import ai_summarize
+from .utils import ai_summarize
 
 logger = logging.getLogger(__name__)
 
@@ -256,4 +256,5 @@ def register_rss(app):
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)
+
 

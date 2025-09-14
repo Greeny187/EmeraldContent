@@ -1,7 +1,7 @@
 import os
 import logging
 import openai
-from database import get_cached_translation, set_cached_translation
+from .database import get_cached_translation, set_cached_translation
 
 logger = logging.getLogger(__name__)
 

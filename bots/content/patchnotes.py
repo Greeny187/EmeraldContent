@@ -9,3 +9,4 @@ PATCH_NOTES = (
     "â€¢ KI Funktionen (Moderation, FAQ, Zusammenfassungen)\n"
 )
 
+
