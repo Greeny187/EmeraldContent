@@ -18,7 +18,7 @@ except Exception:
         await update.effective_message.reply_text("Hilfe ist aktuell nicht hinterlegt.")
 
 # Access-Helfer (Admin/Owner/Topic-Owner-Ermittlung)
-from .access import resolve_privileged_flags, get_visible_groups, cached_admins
+from .access import resolve_privileged_flags, get_visible_groups, cached_admins, is_admin_or_owner
 
 # DB-Import robust halten (Monorepo vs. Standalone)
 
@@ -66,11 +66,11 @@ def _bump_rate(context, chat_id:int, user_id:int):
 def tr(text: str, lang: str) -> str:
     return translate_hybrid(text, target_lang=lang)
 
-async def _is_admin(bot, chat_id: int, user_id: int) -> bool:
-    """True, wenn user_id in chat_id Admin/Owner ist."""
+async def _is_admin(context, chat_id: int, user_id: int) -> bool:
+    """True, wenn user_id Admin/Owner ist – nutzt den CM-Cache."""
     try:
-        m = await bot.get_chat_member(chat_id, user_id)
-        return str(getattr(m, "status", "")).lower() in ("administrator", "creator")
+        is_admin, is_owner = await is_admin_or_owner(context.bot, chat_id, user_id, context=context)
+        return bool(is_admin or is_owner)
     except Exception:
         return False
 
@@ -197,28 +197,28 @@ async def spam_enforcer(update, context):
     chat = update.effective_chat
     user = update.effective_user
     chat_id = chat.id
-    topic_id = getattr(msg, "message_thread_id", None)
     text = msg.text or msg.caption or ""
+    topic_id = getattr(msg, "message_thread_id", None)
 
-    # Doppelt? (Edits/Forwards)
     if _already_seen(context, chat_id, msg.message_id):
         return
 
-    # Privilegien zuerst klären
+    # Privilegien zuerst ermitteln (mit Cache)
     is_owner, is_admin, is_anon_admin, is_topic_owner, chat_id, user_id = \
         await resolve_privileged_flags(msg, context)
-    privileged = bool(is_owner or is_admin or is_anon_admin)
 
-    # Effektive Link-/Spam-Policy (topic-aware)
+    # Effektive Policy NACH Privilegien laden
     policy = get_effective_link_policy(chat_id, topic_id) or {}
 
-    # Topic-Owner-Exempt (spät möglich, weil Policy jetzt existiert)
+    # Topic-Owner aus DB ggf. verifizieren (fallback)
     if not is_topic_owner and topic_id and user:
         try:
             is_topic_owner = has_topic(chat.id, user.id, topic_id)
         except Exception:
             is_topic_owner = False
-    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or (privileged and policy.get("exempt_admins", True)):
+
+    # Exemptions
+    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or ((is_owner or is_admin or is_anon_admin) and policy.get("exempt_admins", True)):
         return
 
     # --- LINKREGELN ---
@@ -361,7 +361,7 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Privilegien
-    is_admin = await _is_admin(context.bot, chat.id, user.id if user else 0)
+    is_admin = await _is_admin(context, chat.id, user.id if user else 0)
     is_topic_owner = False  # falls du Topic-Owner-Check hast: hier einsetzen
     if (is_admin and policy.get("exempt_admins", True)) or (is_topic_owner and policy.get("exempt_topic_owner", True)):
         return

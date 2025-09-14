@@ -433,6 +433,10 @@ async def _render_aimod_topic(query, cid, tid):
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    last_q = context.user_data.get("_last_cb_qid")
+    if last_q == query.id:
+        return
+    context.user_data["_last_cb_qid"] = query.id
     await query.answer()
     data = (query.data or "").strip()
 
