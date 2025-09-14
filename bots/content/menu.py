@@ -35,12 +35,12 @@ from shared.database import (
     effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings,
     top_strike_users, list_topic_router_rules
 )
-from access import get_visible_groups
+from .access import get_visible_groups
 from shared.statistic import stats_command, export_stats_csv_command, log_feature_interaction
-from utils import clean_delete_accounts_for_chat, tr
+from .utils import clean_delete_accounts_for_chat, tr
 from shared.translator import translate_hybrid
-from patchnotes import PATCH_NOTES, __version__
-from user_manual import HELP_TEXT
+from .patchnotes import PATCH_NOTES, __version__
+from .user_manual import HELP_TEXT
 from shared.jobs import schedule_cleanup_for_chat, job_cleanup_deleted
 
 logger = logging.getLogger(__name__)
@@ -1671,6 +1671,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ============
 
 def register_menu(app):
+    logger.info("content: register_menu() installing handlers …")
     # Callback-Handler (Gruppe 0 â€“ hohe PrioritÃ¤t)
     app.add_handler(CallbackQueryHandler(menu_callback), group=0)
     # Reply-Handler (Gruppe 1) â€“ nur Replies, keine Commands

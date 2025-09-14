@@ -20,14 +20,14 @@ effective_spam_policy, get_link_settings, has_topic, count_topic_user_messages_t
 effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
 )
 from zoneinfo import ZoneInfo
-from patchnotes import __version__, PATCH_NOTES
-from utils import (clean_delete_accounts_for_chat, ai_summarize, 
+from .patchnotes import __version__, PATCH_NOTES
+from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
     ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
     heuristic_link_risk, _apply_hard_permissions)
-from user_manual import help_handler
-from menu import show_group_menu, menu_free_text_handler
+from .user_manual import help_handler
+from .menu import show_group_menu, menu_free_text_handler
 from shared.statistic import log_spam_event, log_night_event
-from access import get_visible_groups, resolve_privileged_flags
+from .access import get_visible_groups, resolve_privileged_flags
 from shared.translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
