@@ -132,11 +132,9 @@ async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None)
     lang = get_group_language(cid) or 'de'
     title = "🛠️ " + tr("Gruppenmenü", lang)
     markup = build_group_menu(cid)
-    if query:
-        await _edit_or_send(query, title, markup)
-        return
-    target = dest_chat_id if dest_chat_id is not None else cid
+    target = dest_chat_id if dest_chat_id is not None else (query.message.chat_id if query else cid)
     await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
+    return
 
 async def _render_faq_menu(cid, query, context):
     lang = get_group_language(cid) or 'de'
