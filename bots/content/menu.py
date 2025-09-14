@@ -102,10 +102,27 @@ def _topics_keyboard(cid: int, page: int, cb_prefix: str):
     return InlineKeyboardMarkup(kb)
 
 def build_group_menu(cid: int):
-    lang = get_group_language(cid) or 'de'
-    status = tr('Aktiv', lang) if is_daily_stats_enabled(cid) else tr('Inaktiv', lang)
-    ai_faq, ai_rss = get_ai_settings(cid)
-    ai_status = "âœ…" if (ai_faq or ai_rss) else "ï¿½?ï¿½"
+    # Alles robust abrufen, damit das Menü NIE an einem DB-Fehler scheitert
+    try:
+        lang = get_group_language(cid) or 'de'
+    except Exception as e:
+        logger.warning(f"[menu] get_group_language({cid}) failed: {e}")
+        lang = 'de'
+
+    try:
+        stats_on = bool(is_daily_stats_enabled(cid))
+    except Exception as e:
+        logger.warning(f"[menu] is_daily_stats_enabled({cid}) failed: {e}")
+        stats_on = False
+
+    try:
+        ai_faq, ai_rss = get_ai_settings(cid)
+    except Exception as e:
+        logger.warning(f"[menu] get_ai_settings({cid}) failed: {e}")
+        ai_faq, ai_rss = False, False
+
+    status = tr('Aktiv', lang) if stats_on else tr('Inaktiv', lang)
+    ai_status = "✅" if (ai_faq or ai_rss) else "❌"
 
     buttons = [
         [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{cid}_welcome"),
@@ -129,12 +146,50 @@ def build_group_menu(cid: int):
     return InlineKeyboardMarkup(buttons)
 
 async def show_group_menu(query=None, cid=None, context=None, dest_chat_id=None):
-    lang = get_group_language(cid) or 'de'
+    # Titel/Markup robust erzeugen
+    try:
+        lang = get_group_language(cid) or 'de'
+    except Exception:
+        lang = 'de'
     title = "🛠️ " + tr("Gruppenmenü", lang)
-    markup = build_group_menu(cid)
-    target = dest_chat_id if dest_chat_id is not None else (query.message.chat_id if query else cid)
-    await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
-    return
+
+    try:
+        markup = build_group_menu(cid)
+    except Exception as e:
+        # Wenn das Bauen der Buttons scheitert, wenigstens eine Fehlermeldung zeigen
+        logger.exception(f"[menu] build_group_menu({cid}) crashed: {e}")
+        markup = None
+        title = "🛠️ Gruppenmenü (eingeschränkter Modus)"
+
+    # Ziel ermitteln (immer sichtbar senden – keine Edits)
+    target = None
+    try:
+        target = (
+            dest_chat_id
+            if dest_chat_id is not None
+            else (query.message.chat_id if query else cid)
+        )
+    except Exception:
+        target = cid
+
+    # Senden mit Fallbacks
+    try:
+        await context.bot.send_message(chat_id=target, text=title, reply_markup=markup)
+        return
+    except Exception as e1:
+        logger.warning(f"[menu] send_message to {target} failed: {e1}")
+        try:
+            if query and getattr(query, "message", None):
+                await query.message.reply_text(title, reply_markup=markup)
+                return
+        except Exception as e2:
+            logger.error(f"[menu] reply_text fallback failed: {e2}")
+            # Letzter Notnagel: wenigstens die Buttons noch versuchen
+            if query:
+                try:
+                    await query.edit_message_text(title, reply_markup=markup)
+                except Exception:
+                    pass
 
 async def _render_faq_menu(cid, query, context):
     lang = get_group_language(cid) or 'de'
