@@ -438,6 +438,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = (query.data or "").strip()
 
+    # 1) Captcha-Callbacks ignorieren (die gehören einem anderen Handler)
+    if re.match(r"^-?\d+_captcha_button_\d+$", data):
+        return
+
+    # 2) Doppelklicks entprellen
+    last_q = context.user_data.get("_last_cb_qid")
+    if last_q == query.id:
+        return
+    context.user_data["_last_cb_qid"] = query.id
+
+    # 3) Sofortige Antwort an Telegram (spinner weg)
+    await query.answer()
+    
     # A) GRUPPENAUSWAHL (muss vor Regex passieren)
     if data == "group_select":
         from shared.database import get_registered_groups
