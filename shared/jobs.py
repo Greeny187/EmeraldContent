@@ -421,7 +421,7 @@ def register_jobs(app):
     # NEU: night_mode_job registrieren, damit er jede Minute läuft
     jq.run_repeating(night_mode_job, interval=60, first=10, name="night_mode_job")
     # Pending-Inputs aufräumen (alle 24h)
-    from database import prune_pending_inputs_older_than
+    from .database import prune_pending_inputs_older_than
     async def _prune(_):
         try:
             prune_pending_inputs_older_than(48)
