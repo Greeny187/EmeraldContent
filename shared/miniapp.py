@@ -55,11 +55,11 @@ def _webapp_url(cid: int, title: Optional[str]) -> str:
 
 # --- /miniapp Befehl ---------------------------------------------------------
 async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Zeigt Buttons zum Öffnen der Mini-App:
-    - Admin/Owner-Gruppen zuerst (normale Buttons)
-    - Danach alle übrigen Gruppen (⚠️ markiert). Öffnen ist erlaubt, Speichern verhindert der Handler.
-    """
+    """Zeigt die Mini-App nur für Gruppen, in denen der Aufrufer Admin/Owner ist."""
+    # Nur im Privatchat
+    if update.effective_chat and update.effective_chat.type != "private":
+        return  # leise ignorieren oder: await update.message.reply_text("Bitte im Privatchat nutzen.")
+
     if not update.effective_user or not update.effective_message:
         return
     user = update.effective_user
@@ -72,29 +72,22 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"[miniapp] get_registered_groups failed: {e}")
         all_groups = []
 
-    admin_rows, other_rows = [], []
-
-    # Prüfe Admin-Status je Gruppe (ein Call pro Gruppe)
+    # Nur Gruppen, in denen der Nutzer Admin/Owner ist
+    rows: List[List[InlineKeyboardButton]] = []
     for cid, title in all_groups:
         try:
             cid = int(cid)
         except Exception:
             continue
-        is_admin = await _is_admin_or_owner(context, cid, user.id)
+        if not await _is_admin_or_owner(context, cid, user.id):
+            continue
         url = _webapp_url(cid, title)
-        if is_admin:
-            admin_rows.append([InlineKeyboardButton(f"{title or cid} – Mini-App öffnen", web_app=WebAppInfo(url=url))])
-        else:
-            # Öffnen erlauben (Speichern wird später geblockt) – klar markieren
-            admin_rows.append([InlineKeyboardButton(f"⚠️ {title or cid} – (kein Admin) – öffnen", web_app=WebAppInfo(url=url))])
+        rows.append([InlineKeyboardButton(f"{title or cid} – Mini-App öffnen", web_app=WebAppInfo(url=url))])
 
-    if not admin_rows and not other_rows:
-        return await msg.reply_text("Keine Gruppen gefunden.")
+    if not rows:
+        return await msg.reply_text("❌ Du bist in keiner registrierten Gruppe Admin/Owner.")
 
-    kb: List[List[InlineKeyboardButton]] = []
-    kb.extend(admin_rows)
-    kb.extend(other_rows)  # aktuell ungenutzt; Struktur gelassen für spätere Varianten
-    await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
+    await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(rows))
 
 # --- Rückkanal der Mini-App --------------------------------------------------
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -364,8 +357,11 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- Öffentliche Registrierung ------------------------------------------------
 def register_miniapp(app: Application):
-    """Von app.register(...) oder deiner main.py aufrufen."""
-    app.add_handler(CommandHandler("miniapp", miniapp_cmd), group=-3)
-    # WebApp-Daten kommen als Message im Privat-Chat; im Handler wird auf web_app_data geprüft.
+    # /miniapp nur im Privatchat
+    app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE), group=-3)
+
+    # WebApp-Daten kommen im Privatchat – Handler darf breit filtern;
+    # im Code prüfen wir zusätzlich auf msg.web_app_data.
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler), group=0)
+
     logger.info("miniapp: handlers registered")
