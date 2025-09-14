@@ -9,7 +9,7 @@ from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
 from shared.database import list_members, remove_member
 from shared.translator import translate_hybrid
-from ai_core import ai_available, ai_summarize, ai_moderate_image, ai_moderate_text
+from .ai_core import ai_available, ai_summarize, ai_moderate_image, ai_moderate_text
 
 logger = logging.getLogger(__name__)
 
