@@ -132,6 +132,7 @@ async def webhook_handler(request: web.Request):
         return web.Response(status=404, text="Unknown bot route key.")
     try:
         data = await request.json()
+        logging.info("Update %s keys=%s", route_key, list(data.keys()))
     except Exception:
         return web.Response(status=400, text="Invalid JSON")
 

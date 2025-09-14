@@ -1,10 +1,11 @@
-__version__ = "0.91"
+﻿__version__ = "0.91"
 
 PATCH_NOTES = (
-    "• verbesserter Spamfilter für einzelne Topics oder gesamte Gruppe\n"
-    "• Nachtmodus\n"
-    "• FAQ Funktion\n"
-    "• Verbesserungen im RSS-Feed\n"
-    "• Topic-Router\n"
-    "• KI Funktionen (Moderation, FAQ, Zusammenfassungen)\n"
+    "â€¢ verbesserter Spamfilter fÃ¼r einzelne Topics oder gesamte Gruppe\n"
+    "â€¢ Nachtmodus\n"
+    "â€¢ FAQ Funktion\n"
+    "â€¢ Verbesserungen im RSS-Feed\n"
+    "â€¢ Topic-Router\n"
+    "â€¢ KI Funktionen (Moderation, FAQ, Zusammenfassungen)\n"
 )
+

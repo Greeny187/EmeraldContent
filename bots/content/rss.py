@@ -1,4 +1,4 @@
-import feedparser
+﻿import feedparser
 import logging
 import os, time, re
 from telegram import Update, ForceReply
@@ -18,9 +18,9 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Nur in Gruppen/Supergruppen zulassen
     if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("❌ `/settopicrss` nur in Gruppen möglich.")
+        return await msg.reply_text("âŒ `/settopicrss` nur in Gruppen mÃ¶glich.")
 
-    # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
+    # 1) Wenn im Thema ausgefÃ¼hrt, nimmt message_thread_id
     topic_id = msg.message_thread_id or None
     # 2) Oder, falls als Reply in einem Thema
     if not topic_id and msg.reply_to_message:
@@ -28,24 +28,24 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not topic_id:
         return await msg.reply_text(
-            "⚠️ Bitte führe `/settopicrss` in dem gewünschten Forum-Thema aus "
+            "âš ï¸ Bitte fÃ¼hre `/settopicrss` in dem gewÃ¼nschten Forum-Thema aus "
             "oder antworte auf eine Nachricht darin."
         )
 
     # In DB speichern
     set_rss_topic(chat.id, topic_id)
-    await msg.reply_text(f"✅ RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
+    await msg.reply_text(f"âœ… RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
 
 async def set_rss_feed(update: Update, context: CallbackContext):
     """
     /setrss <URL> [images=on|off]
-    oder via Menü-Flow (ForceReply), dann nur URL.
+    oder via MenÃ¼-Flow (ForceReply), dann nur URL.
     """
     chat_id = update.effective_chat.id
     topic_id = get_rss_topic(chat_id)
     if not topic_id:
         return await update.message.reply_text(
-            "❗ Kein RSS-Topic gesetzt. Bitte erst mit /settopicrss im gewünschten Thread ausführen."
+            "â— Kein RSS-Topic gesetzt. Bitte erst mit /settopicrss im gewÃ¼nschten Thread ausfÃ¼hren."
         )
 
     url = None
@@ -63,12 +63,12 @@ async def set_rss_feed(update: Update, context: CallbackContext):
         context.user_data["rss_group_id"] = chat_id
         set_pending_input(update.effective_chat.id, update.effective_user.id, "rss_url",
                           {"target_chat_id": chat_id})
-        return await update.message.reply_text("➡ Bitte sende jetzt die RSS-URL:", reply_markup=ForceReply(selective=True))
+        return await update.message.reply_text("âž¡ Bitte sende jetzt die RSS-URL:", reply_markup=ForceReply(selective=True))
 
     add_rss_feed(chat_id, url, topic_id)
     if post_images is not None:
         set_rss_feed_options(chat_id, url, post_images=post_images)
-    return await update.message.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
+    return await update.message.reply_text(f"âœ… RSS-Feed hinzugefÃ¼gt (Topic {topic_id}):\n{url}")
 
 async def list_rss_feeds(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
@@ -93,7 +93,7 @@ async def fetch_rss_feed(context: CallbackContext):
     """
     Optimiert:
     - If-Modified-Since / ETag (via feedparser)
-    - postet bis zu 3 neue Einträge pro Durchlauf (älteste zuerst)
+    - postet bis zu 3 neue EintrÃ¤ge pro Durchlauf (Ã¤lteste zuerst)
     - optional: Bild-Vorschau (enclosure/media/erste <img>)
     - optional: KI-Zusammenfassung (kurzer TL;DR in Gruppen-Sprache)
     """
@@ -145,7 +145,7 @@ async def fetch_rss_feed(context: CallbackContext):
                 continue
             to_post.append(entry)
 
-        # poste maximal 3 (älteste zuerst, um Reihenfolge zu halten)
+        # poste maximal 3 (Ã¤lteste zuerst, um Reihenfolge zu halten)
         to_post = to_post[-3:] if to_post else ([] if last_link else [entries[-1]])
         fail_streak = 0
         for entry in to_post:
@@ -154,7 +154,7 @@ async def fetch_rss_feed(context: CallbackContext):
             if not link:
                 continue
 
-            # Bild extrahieren (falls gewünscht)
+            # Bild extrahieren (falls gewÃ¼nscht)
             img_url = None
             if post_images:
                 try:
@@ -182,7 +182,7 @@ async def fetch_rss_feed(context: CallbackContext):
                     logger.info(f"AI summary skipped: {e}")
 
             # Nachricht senden
-            caption = f"📰 <b>{title}</b>\n{link}"
+            caption = f"ðŸ“° <b>{title}</b>\n{link}"
             if summary:
                 caption += f"\n\n<b>TL;DR</b> {summary}"
 
@@ -229,23 +229,23 @@ async def rss_url_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pend = get_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
     cid  = (ud.get('rss_group_id') or (pend.get('chat_id') if isinstance(pend, dict) else None))
     if not cid:
-        # Kein RSS-Flow aktiv → einfach NICHT antworten, damit der menu_free_text_handler dran ist
+        # Kein RSS-Flow aktiv â†’ einfach NICHT antworten, damit der menu_free_text_handler dran ist
         return
 
-    # (Optional) prüfen, ob wirklich auf Bot-Prompt geantwortet wurde:
+    # (Optional) prÃ¼fen, ob wirklich auf Bot-Prompt geantwortet wurde:
     rep = msg.reply_to_message
     if not (rep and rep.from_user and rep.from_user.id == context.bot.id):
-        # Wir könnten eine freundliche Anleitung senden – besser: still zurückkehren
+        # Wir kÃ¶nnten eine freundliche Anleitung senden â€“ besser: still zurÃ¼ckkehren
         pass
 
     try:
         await _call_db_safe(add_rss_feed, cid, text)
         clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
         ud.pop('awaiting_rss_url', None)
-        return await msg.reply_text("✅ RSS-Feed hinzugefügt.")
+        return await msg.reply_text("âœ… RSS-Feed hinzugefÃ¼gt.")
     except Exception:
         logger.exception("RSS-URL speichern fehlgeschlagen")
-        return await msg.reply_text("❌ Konnte den RSS-Feed nicht speichern.")
+        return await msg.reply_text("âŒ Konnte den RSS-Feed nicht speichern.")
 
 def register_rss(app):
     # RSS-Befehle
@@ -256,3 +256,4 @@ def register_rss(app):
     
     # Job zum Einlesen
     app.job_queue.run_repeating(fetch_rss_feed, interval=300, first=1)
+

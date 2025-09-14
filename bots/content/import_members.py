@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import argparse
 from telethon import TelegramClient
@@ -12,13 +12,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 async def list_chats():
     client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
-    print("Verfügbare Chats (Gruppen/Kanäle):")
+    print("VerfÃ¼gbare Chats (Gruppen/KanÃ¤le):")
     async for dialog in client.iter_dialogs():
         entity = dialog.entity
         if getattr(entity, 'megagroup', False) or getattr(entity, 'broadcast', False) or getattr(entity, 'gigagroup', False):
             title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
             username = f"@{entity.username}" if getattr(entity, 'username', None) else "-"
-            print(f" • {title:30} | ID: {entity.id:>15} | Username: {username}")
+            print(f" â€¢ {title:30} | ID: {entity.id:>15} | Username: {username}")
     await client.disconnect()
 
 async def import_members(group_identifier: str):
@@ -38,7 +38,7 @@ async def import_members(group_identifier: str):
         await client.disconnect()
         return
 
-    # Bestimme die richtige chat_id für die DB
+    # Bestimme die richtige chat_id fÃ¼r die DB
     if isinstance(entity, Channel):
         chat_id_db = int(f"-100{entity.id}")
     else:
@@ -48,7 +48,7 @@ async def import_members(group_identifier: str):
     count = 0
     async for user in client.iter_participants(entity):
         add_member(chat_id_db, user.id)
-        print(f"✅ {user.id:<10} {user.username or '-':<20} wurde gespeichert (chat_id={chat_id_db}).")
+        print(f"âœ… {user.id:<10} {user.username or '-':<20} wurde gespeichert (chat_id={chat_id_db}).")
         count += 1
 
     print(f"\nFertig! Insgesamt {count} Mitglieder gespeichert.")
@@ -58,9 +58,9 @@ async def main():
     parser = argparse.ArgumentParser(
         description="Importiere Telegram-Mitglieder und speichere sie in der vorhandenen Datenbank"
     )
-    parser.add_argument("--list", action="store_true", help="Liste alle verfügbaren Gruppen/Kanäle auf")
+    parser.add_argument("--list", action="store_true", help="Liste alle verfÃ¼gbaren Gruppen/KanÃ¤le auf")
     parser.add_argument("--group", "-g", help="ID oder Username (z.B. @channel) der Gruppe")
-    parser.add_argument("--yes", action="store_true", help="Bestätigt den Import automatisch (für nicht-interaktive Umgebungen)")
+    parser.add_argument("--yes", action="store_true", help="BestÃ¤tigt den Import automatisch (fÃ¼r nicht-interaktive Umgebungen)")
     args = parser.parse_args()
 
     if args.list:
@@ -72,7 +72,7 @@ async def main():
         return
 
     if not args.yes:
-        confirm = input(f"Möchtest du die Mitglieder der Gruppe '{args.group}' importieren und in der DB speichern? [j/N] ")
+        confirm = input(f"MÃ¶chtest du die Mitglieder der Gruppe '{args.group}' importieren und in der DB speichern? [j/N] ")
         if confirm.lower() != 'j':
             print("Abgebrochen.")
             return

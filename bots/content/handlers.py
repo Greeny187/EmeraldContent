@@ -1,4 +1,4 @@
-import os
+﻿import os
 import datetime
 import re
 import logging
@@ -79,8 +79,8 @@ def _is_anon_admin_message(msg) -> bool:
 
 async def _resolve_username_to_user(context, chat_id: int, username: str):
     """
-    Versucht @username → telegram.User aufzulösen:
-    1) Aus context.chat_data['username_map'] (gefüllt durch message_logger)
+    Versucht @username â†’ telegram.User aufzulÃ¶sen:
+    1) Aus context.chat_data['username_map'] (gefÃ¼llt durch message_logger)
     2) Fallback: unter aktuellen Admins suchen
     """
     name = username.lstrip("@").lower()
@@ -107,9 +107,9 @@ async def _resolve_username_to_user(context, chat_id: int, username: str):
     return None
 
 def _is_quiet_now(start_min: int, end_min: int, now_min: int) -> bool:
-    # Fenster über Mitternacht: start > end -> quiet wenn now >= start oder now < end
+    # Fenster Ã¼ber Mitternacht: start > end -> quiet wenn now >= start oder now < end
     if start_min == end_min:
-        return False  # 0-Länge Fenster
+        return False  # 0-LÃ¤nge Fenster
     if start_min < end_min:
         return start_min <= now_min < end_min
     else:
@@ -166,10 +166,10 @@ async def _safe_delete(msg):
 
 async def _hard_delete_message(context, chat_id: int, msg) -> bool:
     """
-    Löscht eine Nachricht robust:
+    LÃ¶scht eine Nachricht robust:
     1) msg.delete()
     2) bot.delete_message(chat_id, message_id)
-    Gibt True zurück, wenn gelöscht; sonst False (loggt Ursache).
+    Gibt True zurÃ¼ck, wenn gelÃ¶scht; sonst False (loggt Ursache).
     """
     try:
         await msg.delete()
@@ -210,7 +210,7 @@ async def spam_enforcer(update, context):
 
     privileged = is_owner or is_admin or is_anon_admin or is_topic_owner
     if privileged:
-        return  # Admins/Owner/Anonyme überspringen
+        return  # Admins/Owner/Anonyme Ã¼berspringen
 
     policy = get_effective_link_policy(chat_id, topic_id)
     domains_in_msg = _extract_domains(text)
@@ -254,7 +254,7 @@ async def spam_enforcer(update, context):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=msg.message_thread_id,
-                    text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
+                    text=policy.get("warning_text") or "ðŸš« Nur Admins dÃ¼rfen Links posten."
                 )
             except Exception:
                 pass
@@ -276,17 +276,17 @@ async def spam_enforcer(update, context):
     notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
 
     if topic_id and daily_lim > 0 and user and not privileged:
-        # Zähle Nachrichten bis JETZT (vor dieser Nachricht)
+        # ZÃ¤hle Nachrichten bis JETZT (vor dieser Nachricht)
         used_before = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
 
-        # Überschreitet diese Nachricht das Limit?
+        # Ãœberschreitet diese Nachricht das Limit?
         if used_before >= daily_lim:
             deleted = await _hard_delete_message(context, chat_id, msg)
 
             did_action = "delete" if deleted else "none"
             primary = (spam_pol.get("action_primary") or "delete").lower()
 
-            # Optional zusätzlich stumm schalten, wenn so konfiguriert
+            # Optional zusÃ¤tzlich stumm schalten, wenn so konfiguriert
             if primary in ("mute", "stumm"):
                 try:
                     until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
@@ -297,12 +297,12 @@ async def spam_enforcer(update, context):
                 except Exception as e:
                     logger.warning(f"Limit mute failed in {chat_id}: {e}")
 
-            # Hinweis ins Topic (du wolltest beides: löschen + warnen)
+            # Hinweis ins Topic (du wolltest beides: lÃ¶schen + warnen)
             try:
-                extra = " — Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
+                extra = " â€” Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
                 await context.bot.send_message(
                     chat_id=chat_id, message_thread_id=topic_id,
-                    text=f"🚦 Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
+                    text=f"ðŸš¦ Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
                 )
             except Exception:
                 pass
@@ -317,7 +317,7 @@ async def spam_enforcer(update, context):
             except Exception:
                 pass
 
-            return  # WICHTIG: nichts Weiteres mehr prüfen
+            return  # WICHTIG: nichts Weiteres mehr prÃ¼fen
 
         # Noch innerhalb des Limits: Rest nach dieser Nachricht anzeigen
         remaining_after = daily_lim - (used_before + 1)
@@ -327,7 +327,7 @@ async def spam_enforcer(update, context):
                     chat_id=chat_id,
                     message_thread_id=topic_id,
                     reply_to_message_id=msg.message_id,
-                    text=f"🧮 Rest heute: {max(remaining_after,0)}/{daily_lim}"
+                    text=f"ðŸ§® Rest heute: {max(remaining_after,0)}/{daily_lim}"
                 )
             except Exception:
                 pass
@@ -349,9 +349,9 @@ async def spam_enforcer(update, context):
                 await context.bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=topic_id,
-                    text="↪️ Bitte ins passende Thema, habe deinen Beitrag verschoben."
+                    text="â†ªï¸ Bitte ins passende Thema, habe deinen Beitrag verschoben."
                 )
-            # kein weiterer Spamcheck nötig – wir haben geroutet
+            # kein weiterer Spamcheck nÃ¶tig â€“ wir haben geroutet
             return
         except Exception as e:
             logger.warning(f"Router copy failed: {e}")
@@ -408,7 +408,7 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
     user = update.effective_user
     if not msg or not chat or chat.type not in ("group","supergroup"): return
     text = msg.text or msg.caption or ""
-    if not text:  # (optional) Medien/OCR könntest du später ergänzen
+    if not text:  # (optional) Medien/OCR kÃ¶nntest du spÃ¤ter ergÃ¤nzen
         return
 
     topic_id = getattr(msg, "message_thread_id", None)
@@ -510,7 +510,7 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
                           {"text_scores":scores, "media_scores":media_scores, "domains":domains, "link_score":link_score})
         return
 
-    # Primäraktion + Eskalation (heutige Treffer)
+    # PrimÃ¤raktion + Eskalation (heutige Treffer)
     action = policy.get("action_primary","delete")
     hits_today = count_ai_hits_today(chat.id, user.id if user else 0)
     if hits_today + 1 >= int(policy.get("escalate_after",3)):
@@ -538,11 +538,11 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
     elif strikes >= int(policy.get("strike_mute_threshold",3)) and action != "ban":
         action = "mute"
 
-    warn_text = policy.get("warn_text") or "⚠️ Inhalt entfernt (KI-Moderation)."
+    warn_text = policy.get("warn_text") or "âš ï¸ Inhalt entfernt (KI-Moderation)."
     appeal_url = policy.get("appeal_url")
 
     try:
-        # Delete (falls sinnvoll für alle Aktionsarten)
+        # Delete (falls sinnvoll fÃ¼r alle Aktionsarten)
         try: await msg.delete()
         except: pass
 
@@ -583,7 +583,7 @@ async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.effective_message.reply_text("Keine Strikes vorhanden.")
     lines = []
     for uid, pts in rows:
-        lines.append(f"• {uid}: {pts} Pkt")
+        lines.append(f"â€¢ {uid}: {pts} Pkt")
     await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -597,7 +597,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # nur kurze Fragen / Hinweise triggern (heuristisch)
     if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
-        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}…')")
+        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}â€¦')")
         return
 
     t0 = time.time()
@@ -619,11 +619,11 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # sehr knapp, mit gruppenspezifischen Infos
     lang = get_group_language(chat.id) or "de"
     context_info = (
-        "Nützliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ • "
-        "Support: https://t.me/+DkUfIvjyej8zNGVi • "
+        "NÃ¼tzliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ â€¢ "
+        "Support: https://t.me/+DkUfIvjyej8zNGVi â€¢ "
         "Spenden: PayPal greeny187@outlook.de"
     )
-    prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
+    prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2â€“3 SÃ¤tze) auf {lang}."
 
     try:
         # wir nutzen denselben Wrapper und 'missbrauchen' ai_summarize hier kurz
@@ -646,13 +646,13 @@ async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYP
     txt = (update.effective_message.text or "").strip()
     val = _parse_hhmm(txt)
     if val is None:
-        return await update.effective_message.reply_text(tr("⚠️ Bitte im Format HH:MM senden, z. B. 22:00.", lang))
+        return await update.effective_message.reply_text(tr("âš ï¸ Bitte im Format HH:MM senden, z. B. 22:00.", lang))
     if kind == 'start':
         set_night_mode(cid, start_minute=val)
-        await update.effective_message.reply_text(tr("✅ Startzeit gespeichert:", lang) + f" {txt}")
+        await update.effective_message.reply_text(tr("âœ… Startzeit gespeichert:", lang) + f" {txt}")
     else:
         set_night_mode(cid, end_minute=val)
-        await update.effective_message.reply_text(tr("✅ Endzeit gespeichert:", lang) + f" {txt}")
+        await update.effective_message.reply_text(tr("âœ… Endzeit gespeichert:", lang) + f" {txt}")
     context.user_data.pop('awaiting_nm_time', None)
 
 def _parse_duration(s: str) -> datetime.timedelta | None:
@@ -676,7 +676,7 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
         if update.effective_user.id not in {a.user.id for a in admins}:
-            return await update.message.reply_text(tr("Nur Admins dürfen die Ruhephase starten.", lang))
+            return await update.message.reply_text(tr("Nur Admins dÃ¼rfen die Ruhephase starten.", lang))
     except Exception:
         pass
 
@@ -700,10 +700,10 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data.setdefault("nm_flags", {})["hard_applied"] = True
 
     human = until.strftime("%H:%M")
-    await update.message.reply_text(tr("🌙 Sofortige Ruhephase aktiv bis", lang) + f" {human} ({tz}).")
+    await update.message.reply_text(tr("ðŸŒ™ Sofortige Ruhephase aktiv bis", lang) + f" {human} ({tz}).")
 
 async def error_handler(update, context):
-    """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
+    """FÃ¤ngt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -713,15 +713,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
         return await update.message.reply_text(
-            "👋 Willkommen bei *Greeny Group Manager*!\n\n"
-            "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten – "
+            "ðŸ‘‹ Willkommen bei *Greeny Group Manager*!\n\n"
+            "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten â€“ "
             "inklusive Schutz, Statistiken, Rollenverwaltung, Captcha u.v.m.\n\n"
-            "🌐 Mehr Infos: [Zur Website](https://greeny187.github.io/GreenyManagementBots/)\n\n"
-            "💚 *Unterstütze das Projekt:*\n"
-            "• TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
-            "• PayPal: greeny187@outlook.de\n\n"
-            "ℹ️ Tippe /help für alle Funktionen.\n\n"
-            "✅ Gruppe registriert! Geh privat auf /menu.")
+            "ðŸŒ Mehr Infos: [Zur Website](https://greeny187.github.io/GreenyManagementBots/)\n\n"
+            "ðŸ’š *UnterstÃ¼tze das Projekt:*\n"
+            "â€¢ TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
+            "â€¢ PayPal: greeny187@outlook.de\n\n"
+            "â„¹ï¸ Tippe /help fÃ¼r alle Funktionen.\n\n"
+            "âœ… Gruppe registriert! Geh privat auf /menu.")
 
     if chat.type == "private":
         all_groups = get_registered_groups()
@@ -729,13 +729,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not visible_groups:
             return await update.message.reply_text(
-                "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-                "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+                "ðŸš« Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+                "âž• FÃ¼ge den Bot in eine Gruppe ein und gib ihm Adminrechte."
             )
 
         keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
         markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=markup)
+        await update.message.reply_text("ðŸ”§ WÃ¤hle eine Gruppe:", reply_markup=markup)
 
 async def menu_command(update, context):
     from shared.database import get_registered_groups
@@ -747,19 +747,19 @@ async def menu_command(update, context):
 
     if not visible_groups:
         return await update.message.reply_text(
-            "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-            "➕ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
+            "ðŸš« Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
+            "âž• FÃ¼ge den Bot in eine Gruppe ein und gib ihm Adminrechte."
         )
 
-    # Wenn nur eine Gruppe → direkt Menü zeigen
+    # Wenn nur eine Gruppe â†’ direkt MenÃ¼ zeigen
     if len(visible_groups) == 1:
         chat_id = visible_groups[0][0]
         context.user_data["selected_chat_id"] = chat_id
         return await show_group_menu(query=None, cid=chat_id, context=context, dest_chat_id=update.effective_chat.id)
 
-    # Mehrere Gruppen → Auswahl anzeigen
+    # Mehrere Gruppen â†’ Auswahl anzeigen
     keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-    await update.message.reply_text("🔧 Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("ðŸ”§ WÃ¤hle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 
@@ -787,18 +787,18 @@ async def version(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Version {__version__}\n\nPatchnotes:\n{PATCH_NOTES}")
 
 async def message_logger(update, context):
-    logger.info(f"💬 message_logger aufgerufen in Chat {update.effective_chat.id}")
+    logger.info(f"ðŸ’¬ message_logger aufgerufen in Chat {update.effective_chat.id}")
     msg = update.effective_message
     if msg.chat.type in ("group", "supergroup") and msg.from_user:
         inc_message_count(msg.chat.id, msg.from_user.id, date.today())
         # neu: stelle sicher, dass jeder Schreiber in die members-Tabelle kommt
         try:
             add_member(msg.chat.id, msg.from_user.id)
-            logger.info(f"➕ add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
+            logger.info(f"âž• add_member via message_logger: chat={msg.chat.id}, user={msg.from_user.id}")
         except Exception as e:
             logger.info(f"Fehler add_member in message_logger: {e}", exc_info=True)
 
-        # 🔹 NEU: Username→ID Map im Chat pflegen (für @username-Auflösung)
+        # ðŸ”¹ NEU: Usernameâ†’ID Map im Chat pflegen (fÃ¼r @username-AuflÃ¶sung)
         try:
             if msg.from_user.username:
                 m = context.chat_data.get("username_map") or {}
@@ -810,16 +810,16 @@ async def message_logger(update, context):
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Schlanker Fallback:
-    - Niemals in Kanälen laufen
+    - Niemals in KanÃ¤len laufen
     - Mood-Frage beantworten
-    - Bei irgendeinem offenen Menü-Flow (awaiting_*) an menu_free_text_handler delegieren
+    - Bei irgendeinem offenen MenÃ¼-Flow (awaiting_*) an menu_free_text_handler delegieren
     - Sonst: nichts tun
     """
     msg   = update.effective_message
     chat  = update.effective_chat
     ud    = context.user_data or {}
 
-    # Nur Privat/Gruppe/Supergruppe – Kanäle explizit ausschließen
+    # Nur Privat/Gruppe/Supergruppe â€“ KanÃ¤le explizit ausschlieÃŸen
     if chat.type not in (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP):
         return
 
@@ -827,17 +827,17 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ud.get("awaiting_mood_question"):
         return await mood_question_handler(update, context)
 
-    # 2) Zentrale Menü-Reply-Fallbacks
+    # 2) Zentrale MenÃ¼-Reply-Fallbacks
     #    Wenn irgendein Awaiting-Flag (oder last_edit) gesetzt ist,
     #    gib die Nachricht an den zentralen menu_free_text_handler ab.
     if any(k.startswith("awaiting_") for k in ud.keys()) or ("last_edit" in ud):
         return await menu_free_text_handler(update, context)
 
-    # 3) Sonst: nichts – andere Aufgaben haben eigene Handler
+    # 3) Sonst: nichts â€“ andere Aufgaben haben eigene Handler
     return
 
 async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Nur aktiv, wenn zuvor im Menü „Bearbeiten“ gedrückt wurde
+    # Nur aktiv, wenn zuvor im MenÃ¼ â€žBearbeitenâ€œ gedrÃ¼ckt wurde
     if "last_edit" not in context.user_data:
         return
 
@@ -855,7 +855,7 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # In DB schreiben
     if action == "welcome_edit":
         set_welcome(chat_id, photo_id, text)
-        label = "Begrüßung"
+        label = "BegrÃ¼ÃŸung"
     elif action == "rules_edit":
         set_rules(chat_id, photo_id, text)
         label = "Regeln"
@@ -865,35 +865,35 @@ async def edit_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    # Bestätigung mit Zurück-Button ins Menü
+    # BestÃ¤tigung mit ZurÃ¼ck-Button ins MenÃ¼
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅ Zurück", callback_data=f"{chat_id}_{action.split('_')[0]}")
+        InlineKeyboardButton("â¬… ZurÃ¼ck", callback_data=f"{chat_id}_{action.split('_')[0]}")
     ]])
-    await msg.reply_text(f"✅ {label} gesetzt.", reply_markup=kb)
+    await msg.reply_text(f"âœ… {label} gesetzt.", reply_markup=kb)
 
 async def topiclimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     msg  = update.effective_message
     args = context.args or []
 
-    # auch ohne topic_id nutzbar, wenn im Thread ausgeführt
+    # auch ohne topic_id nutzbar, wenn im Thread ausgefÃ¼hrt
     tid = getattr(msg, "message_thread_id", None)
     if len(args) >= 2 and args[0].isdigit():
         tid = int(args[0])
         try:
             limit = int(args[1])
         except:
-            return await msg.reply_text("Bitte eine Zahl für das Limit angeben.")
+            return await msg.reply_text("Bitte eine Zahl fÃ¼r das Limit angeben.")
     elif tid is not None and len(args) >= 1:
         try:
             limit = int(args[0])
         except:
-            return await msg.reply_text("Bitte eine Zahl für das Limit angeben.")
+            return await msg.reply_text("Bitte eine Zahl fÃ¼r das Limit angeben.")
     else:
         return await msg.reply_text("Nutzung: /topiclimit <topic_id> <anzahl>\nOder im Ziel-Topic: /topiclimit <anzahl>")
 
     set_spam_policy_topic(chat.id, tid, per_user_daily_limit=max(0, limit))
-    return await msg.reply_text(f"✅ Limit für Topic {tid} gesetzt: {limit}/Tag/User (0 = aus).")
+    return await msg.reply_text(f"âœ… Limit fÃ¼r Topic {tid} gesetzt: {limit}/Tag/User (0 = aus).")
 
 async def myquota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -901,14 +901,14 @@ async def myquota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     tid = getattr(msg, "message_thread_id", None)
     if tid is None:
-        return await msg.reply_text("Bitte im gewünschten Topic ausführen (Thread öffnen) oder: /myquota <topic_id>")
+        return await msg.reply_text("Bitte im gewÃ¼nschten Topic ausfÃ¼hren (Thread Ã¶ffnen) oder: /myquota <topic_id>")
 
     # Policy ermitteln (inkl. Topic-Override)
     link_settings = get_link_settings(chat.id)
     policy = effective_spam_policy(chat.id, tid, link_settings)
     daily_lim = int(policy.get("per_user_daily_limit") or 0)
     if daily_lim <= 0:
-        return await msg.reply_text("Für dieses Topic ist kein Tageslimit gesetzt.")
+        return await msg.reply_text("FÃ¼r dieses Topic ist kein Tageslimit gesetzt.")
 
     used = count_topic_user_messages_today(chat.id, tid, user.id, tz="Europe/Berlin")
     remaining = max(daily_lim - used, 0)
@@ -922,7 +922,7 @@ async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TY
         new_question = message.text
         set_mood_question(grp, new_question)
         context.user_data.pop('awaiting_mood_question', None)
-        await message.reply_text(tr('✅ Neue Mood-Frage gespeichert.', get_group_language(grp)))
+        await message.reply_text(tr('âœ… Neue Mood-Frage gespeichert.', get_group_language(grp)))
 
 async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
@@ -947,7 +947,7 @@ async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not del_non:
         return
 
-    # Nur Nicht-Admins löschen
+    # Nur Nicht-Admins lÃ¶schen
     try:
         m = await context.bot.get_chat_member(chat.id, msg.from_user.id)
         if str(getattr(m, "status", "")).lower() in ("administrator","creator"):
@@ -970,12 +970,12 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Admin-Check (korrekte Helper-Funktion!)
     if not await _is_admin(context.bot, chat.id, user.id):
-        return await update.message.reply_text("Nur Admins dürfen das.")
+        return await update.message.reply_text("Nur Admins dÃ¼rfen das.")
 
     # Topic ermitteln (Thread)
     topic_id = getattr(msg, "message_thread_id", None)
 
-    # Ziel-User suchen: 1) Reply  2) TEXT_MENTION  3) MENTION (@username)  4) Arg @username  5) Fallback: Ausführender im Topic
+    # Ziel-User suchen: 1) Reply  2) TEXT_MENTION  3) MENTION (@username)  4) Arg @username  5) Fallback: AusfÃ¼hrender im Topic
     target_user = None
 
     # 1) Reply bevorzugt
@@ -1005,24 +1005,24 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if args and args[0].startswith("@"):
             target_user = await _resolve_username_to_user(context, chat.id, args[0])
 
-    # 5) Fallback: im Thread ohne Ziel → den Ausführenden nehmen
+    # 5) Fallback: im Thread ohne Ziel â†’ den AusfÃ¼hrenden nehmen
     if not target_user and topic_id:
         target_user = user
 
     if not topic_id:
-        return await update.message.reply_text("Bitte im gewünschten Topic ausführen oder auf eine Nachricht im Ziel-Topic antworten.")
+        return await update.message.reply_text("Bitte im gewÃ¼nschten Topic ausfÃ¼hren oder auf eine Nachricht im Ziel-Topic antworten.")
     if not target_user:
         return await update.message.reply_text("Kein Nutzer erkannt. Antworte auf eine Nachricht oder nutze @username.")
 
     try:
         assign_topic(chat.id, target_user.id, topic_id, None)
         return await update.message.reply_text(
-            f"✅ Ausnahme gesetzt: {target_user.mention_html()} → Topic {topic_id}",
+            f"âœ… Ausnahme gesetzt: {target_user.mention_html()} â†’ Topic {topic_id}",
             parse_mode="HTML"
         )
     except Exception as e:
         logger.error(f"/settopic failed: {e}", exc_info=True)
-        return await update.message.reply_text("❌ Konnte nicht speichern.")
+        return await update.message.reply_text("âŒ Konnte nicht speichern.")
 
     
 async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1030,30 +1030,30 @@ async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat   = update.effective_chat
     sender = update.effective_user
 
-    # 0) Nur Admins dürfen
+    # 0) Nur Admins dÃ¼rfen
     admins = await context.bot.get_chat_administrators(chat.id)
     if sender.id not in [admin.user.id for admin in admins]:
-        return await msg.reply_text("❌ Nur Admins dürfen Themen entfernen.")
+        return await msg.reply_text("âŒ Nur Admins dÃ¼rfen Themen entfernen.")
     
     # 1) Reply-Fallback (wenn per Reply getippt wird):
     target = None
     if msg.reply_to_message and msg.reply_to_message.from_user and not msg.reply_to_message.from_user.is_bot:
         target = msg.reply_to_message.from_user
 
-    # 2) Text-Mention aus Menü (ent.user ist direkt verfügbar):
+    # 2) Text-Mention aus MenÃ¼ (ent.user ist direkt verfÃ¼gbar):
     if not target and msg.entities:
         for ent in msg.entities:
             if ent.type == MessageEntity.TEXT_MENTION and getattr(ent, 'user', None):
                 target = ent.user
                 break
-            # Inline-Link-Mention: tg://user?id=…
+            # Inline-Link-Mention: tg://user?id=â€¦
             if ent.type == MessageEntity.TEXT_LINK and ent.url.startswith("tg://user?id="):
                 uid = int(ent.url.split("tg://user?id=")[1])
                 target = await context.bot.get_chat_member(chat.id, uid)
                 target = target.user
                 break
 
-    # 3) @username-Mention (für alle, nicht nur Admins):
+    # 3) @username-Mention (fÃ¼r alle, nicht nur Admins):
     if not target and context.args:
         text = context.args[0]
         name = text.lstrip('@')
@@ -1064,17 +1064,17 @@ async def remove_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except BadRequest:
             target = None
 
-    # 4) Wenn immer noch kein Ziel → Usage-Hinweis
+    # 4) Wenn immer noch kein Ziel â†’ Usage-Hinweis
     if not target:
         return await msg.reply_text(
-            "⚠️ Ich konnte keinen User finden. Bitte antworte auf seine Nachricht "
-            "oder nutze eine Mention (z.B. aus dem Menü)."
+            "âš ï¸ Ich konnte keinen User finden. Bitte antworte auf seine Nachricht "
+            "oder nutze eine Mention (z.B. aus dem MenÃ¼)."
         )
 
-    # 5) In DB löschen und Bestätigung
+    # 5) In DB lÃ¶schen und BestÃ¤tigung
     remove_topic(chat.id, target.id)
     display = f"@{target.username}" if target.username else target.first_name
-    await msg.reply_text(f"🚫 {display} wurde als Themenbesitzer entfernt.")
+    await msg.reply_text(f"ðŸš« {display} wurde als Themenbesitzer entfernt.")
 
 async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -1102,16 +1102,16 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("[FAQ_CMD] KI-Fallback gesperrt (kein Pro)")
         return await msg.reply_text("Keine passende FAQ gefunden.")
     if not ai_available():
-        logging.info("[FAQ_CMD] KI-Fallback nicht verfügbar (kein OPENAI_API_KEY)")
+        logging.info("[FAQ_CMD] KI-Fallback nicht verfÃ¼gbar (kein OPENAI_API_KEY)")
         return await msg.reply_text("Keine passende FAQ gefunden.")
 
     lang = get_group_language(chat.id) or "de"
     context_info = (
-        "Nützliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ • "
-        "Support: https://t.me/+DkUfIvjyej8zNGVi • "
+        "NÃ¼tzliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ â€¢ "
+        "Support: https://t.me/+DkUfIvjyej8zNGVi â€¢ "
         "Spenden: PayPal greeny187@outlook.de"
     )
-    prompt = f"Frage: {txt}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
+    prompt = f"Frage: {txt}\n\n{context_info}\n\nAntworte knapp (2â€“3 SÃ¤tze) auf {lang}."
     try:
         answer = await ai_summarize(prompt, lang=lang)
         logging.info(f"[FAQ_CMD] KI-Fallback len={len(answer or '')}")
@@ -1160,13 +1160,13 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if enabled:
                     if ctype == 'button':
                         kb = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
+                            InlineKeyboardButton("âœ… Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
                         ]])
-                        sent = await context.bot.send_message(chat_id, f"🔐 Bitte bestätige, {user.first_name}.", reply_markup=kb)
+                        sent = await context.bot.send_message(chat_id, f"ðŸ” Bitte bestÃ¤tige, {user.first_name}.", reply_markup=kb)
                         context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"msg_id": sent.message_id, "behavior": behavior, "issued_at": datetime.datetime.utcnow()}
                     elif ctype == 'math':
                         a, b = random.randint(1,9), random.randint(1,9)
-                        sent = await context.bot.send_message(chat_id, f"🔐 Bitte rechne: {a} + {b} = ?", reply_markup=ForceReply(selective=True))
+                        sent = await context.bot.send_message(chat_id, f"ðŸ” Bitte rechne: {a} + {b} = ?", reply_markup=ForceReply(selective=True))
                         context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"answer": a+b, "behavior": behavior, "issued_at": datetime.datetime.utcnow(), "msg_id": sent.message_id}
             return
 
@@ -1228,9 +1228,9 @@ async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     count = await clean_delete_accounts_for_chat(chat_id, context.bot,
                                                  dry_run=dry, demote_admins=demote)
-    prefix = "🔎 Vorschau" if dry else "✅ Entfernt"
+    prefix = "ðŸ”Ž Vorschau" if dry else "âœ… Entfernt"
     suffix = " (inkl. Admin-Demote)" if demote else ""
-    await update.message.reply_text(f"{prefix}: {count} gelöschte Accounts{suffix}.")
+    await update.message.reply_text(f"{prefix}: {count} gelÃ¶schte Accounts{suffix}.")
 
 
 async def spamlevel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1262,7 +1262,7 @@ async def spamlevel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif k=="blacklist": fields["domain_blacklist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
     if level: fields["level"] = level
     set_spam_policy_topic(chat.id, topic_id or 0, **fields)
-    await msg.reply_text(f"✅ Spam-Policy gesetzt (Topic {topic_id or 0}).")
+    await msg.reply_text(f"âœ… Spam-Policy gesetzt (Topic {topic_id or 0}).")
 
 async def router_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -1273,7 +1273,7 @@ async def router_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rules = list_topic_router_rules(chat.id)
         if not rules:
             return await msg.reply_text("Keine Router-Regeln. Beispiel:\n/router add 12345 keywords=kaufen,verkaufen")
-        lines = [f"#{rid} → topic {tgt} | {'ON' if en else 'OFF'} | del={do} warn={wn} | kw={kws or []} dom={doms or []}"
+        lines = [f"#{rid} â†’ topic {tgt} | {'ON' if en else 'OFF'} | del={do} warn={wn} | kw={kws or []} dom={doms or []}"
                  for (rid,tgt,en,do,wn,kws,doms) in rules]
         return await msg.reply_text("Regeln:\n" + "\n".join(lines))
 
@@ -1287,24 +1287,24 @@ async def router_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if a.startswith("keywords="): kws = [x.strip() for x in a.split("=",1)[1].split(",") if x.strip()]
             if a.startswith("domains="):  doms = [x.strip().lower() for x in a.split("=",1)[1].split(",") if x.strip()]
         if not kws and not doms:
-            return await msg.reply_text("Bitte keywords=… oder domains=… angeben.")
+            return await msg.reply_text("Bitte keywords=â€¦ oder domains=â€¦ angeben.")
         rid = add_topic_router_rule(chat.id, tgt, kws or None, doms or None)
-        return await msg.reply_text(f"✅ Regel #{rid} → Topic {tgt} angelegt.")
+        return await msg.reply_text(f"âœ… Regel #{rid} â†’ Topic {tgt} angelegt.")
 
     if sub == "del" and len(args) >= 2 and args[1].isdigit():
         delete_topic_router_rule(chat.id, int(args[1]))
-        return await msg.reply_text("🗑 Regel gelöscht.")
+        return await msg.reply_text("ðŸ—‘ Regel gelÃ¶scht.")
 
     if sub == "toggle" and len(args) >= 3 and args[1].isdigit():
         toggle_topic_router_rule(chat.id, int(args[1]), args[2].lower() in ("on","true","1"))
-        return await msg.reply_text("🔁 Regel umgeschaltet.")
+        return await msg.reply_text("ðŸ” Regel umgeschaltet.")
 
     return await msg.reply_text("Unbekannter Router-Befehl.")
 
 async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dev = os.getenv("DEVELOPER_CHAT_ID")
     if str(update.effective_user.id) != dev:
-        return await update.message.reply_text("❌ Nur Entwickler darf das tun.")
+        return await update.message.reply_text("âŒ Nur Entwickler darf das tun.")
     total = 0
     for chat_id, _ in get_registered_groups():
         try:
@@ -1313,10 +1313,10 @@ async def sync_admins_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 add_member(chat_id, adm.user.id)
                 total += 1
         except Exception as e:
-            logger.error(f"Fehler bei Sync Admins für {chat_id}: {e}")
-    await update.message.reply_text(f"✅ {total} Admin-Einträge in der DB angelegt.")
+            logger.error(f"Fehler bei Sync Admins fÃ¼r {chat_id}: {e}")
+    await update.message.reply_text(f"âœ… {total} Admin-EintrÃ¤ge in der DB angelegt.")
 
-# Callback-Handler für Button-Captcha
+# Callback-Handler fÃ¼r Button-Captcha
 async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id_str, _, _, user_id_str = query.data.split("_")
@@ -1324,23 +1324,23 @@ async def button_captcha_handler(update: Update, context: ContextTypes.DEFAULT_T
     clicker = update.effective_user.id if update.effective_user else None
 
     if clicker != target_uid:
-        await query.answer("❌ Dieses Captcha ist nicht für dich.", show_alert=True)
+        await query.answer("âŒ Dieses Captcha ist nicht fÃ¼r dich.", show_alert=True)
         return
 
     key = f"captcha:{chat_id}:{target_uid}"
     data = context.bot_data.pop(key, None)
     
-    # Captcha-Nachricht löschen
+    # Captcha-Nachricht lÃ¶schen
     if data and data.get("msg_id"):
         try:
             await context.bot.delete_message(chat_id, data["msg_id"])
         except Exception:
             pass
 
-    # NUR kurze Bestätigung, KEIN Menü
-    await query.answer("✅ Verifiziert! Willkommen in der Gruppe.", show_alert=False)
+    # NUR kurze BestÃ¤tigung, KEIN MenÃ¼
+    await query.answer("âœ… Verifiziert! Willkommen in der Gruppe.", show_alert=False)
 
-# Message-Handler für Mathe-Antworten
+# Message-Handler fÃ¼r Mathe-Antworten
 async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat_id = update.effective_chat.id
@@ -1350,7 +1350,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not data:
         return
 
-    # Timeout prüfen (60s)
+    # Timeout prÃ¼fen (60s)
     if (datetime.datetime.utcnow() - data['issued_at']).seconds > 60:
         # Fehlverhalten wie gehabt (kick oder stumm), nur Beispiel:
         try:
@@ -1362,7 +1362,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False))
         except Exception:
             pass
-        # Captcha-Message wegräumen
+        # Captcha-Message wegrÃ¤umen
         mid = data.get("msg_id")
         if mid:
             try:
@@ -1372,10 +1372,10 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         context.bot_data.pop(key, None)
         return
 
-    # Antwort prüfen
+    # Antwort prÃ¼fen
     try:
         if int((msg.text or "").strip()) == int(data.get("answer", -1)):
-            # Erfolg: Captcha-Nachricht löschen, keinen weiteren Text senden
+            # Erfolg: Captcha-Nachricht lÃ¶schen, keinen weiteren Text senden
             mid = data.get("msg_id")
             if mid:
                 try:
@@ -1383,7 +1383,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 except Exception as e:
                     logger.debug(f"Captcha-Message delete failed ({chat_id}/{mid}): {e}")
             context.bot_data.pop(key, None)
-            # Optional: Entmute aufheben, falls ihr beim Join einschränkt
+            # Optional: Entmute aufheben, falls ihr beim Join einschrÃ¤nkt
             # await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=True))
         else:
             # Falsch: wie gehabt (kick/stumm) umsetzen
@@ -1396,7 +1396,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False))
             except Exception:
                 pass
-            # Captcha-Message wegräumen
+            # Captcha-Message wegrÃ¤umen
             mid = data.get("msg_id")
             if mid:
                 try:
@@ -1405,7 +1405,7 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     pass
             context.bot_data.pop(key, None)
     except ValueError:
-        # Ungültige Eingabe ignorieren
+        # UngÃ¼ltige Eingabe ignorieren
         pass
 
 def register_handlers(app):
@@ -1429,7 +1429,7 @@ def register_handlers(app):
     # --- Callbacks / spezielle Replies ---
     # ggf. weitere CallbackQueryHandler hier
 
-    # --- Frühe Message-Guards (keine Commands!) ---
+    # --- FrÃ¼he Message-Guards (keine Commands!) ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forum_topic_registry_tracker), group=-1)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, nightmode_enforcer), group=-1)
 

@@ -1,6 +1,6 @@
-async def get_visible_groups(user_id: int, bot, all_groups):
+﻿async def get_visible_groups(user_id: int, bot, all_groups):
     """
-    Gibt nur Gruppen zurück, in denen der Bot aktiv ist und der Nutzer Admin ist.
+    Gibt nur Gruppen zurÃ¼ck, in denen der Bot aktiv ist und der Nutzer Admin ist.
     """
     visible = []
     for chat_id, title in all_groups:
@@ -25,7 +25,7 @@ async def resolve_privileged_flags(message, context) -> Tuple[bool, bool, bool, 
     is_owner = False
     is_admin = False
     is_anon_admin = False
-    is_topic_owner = False  # kann später erweitert werden
+    is_topic_owner = False  # kann spÃ¤ter erweitert werden
     chat_id = message.chat.id
     user_id = None
 
@@ -41,7 +41,7 @@ async def resolve_privileged_flags(message, context) -> Tuple[bool, bool, bool, 
 
     user_id = from_user.id
 
-    # 3) ChatMember-Status prüfen
+    # 3) ChatMember-Status prÃ¼fen
     try:
         cm = await context.bot.get_chat_member(chat_id, user_id)
         status = getattr(cm, "status", None)

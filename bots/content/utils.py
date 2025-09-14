@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import asyncio
 import logging
@@ -15,21 +15,21 @@ logger = logging.getLogger(__name__)
 
 # Heuristik: "Deleted Account" in verschiedenen Sprachen/Varianten
 _DELETED_NAME_RX = re.compile(
-    r"(deleted\s+account|gelösch(tes|ter)\s+(konto|account)|"
-    r"(аккаунт\s+удалён|удалённый\s+аккаунт)|"
-    r"(حساب\s+محذوف)|"
-    r"(compte\s+supprimé)|"
+    r"(deleted\s+account|gelÃ¶sch(tes|ter)\s+(konto|account)|"
+    r"(Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚\s+ÑƒÐ´Ð°Ð»Ñ‘Ð½|ÑƒÐ´Ð°Ð»Ñ‘Ð½Ð½Ñ‹Ð¹\s+Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚)|"
+    r"(Ø­Ø³Ø§Ø¨\s+Ù…Ø­Ø°ÙˆÙ)|"
+    r"(compte\s+supprimÃ©)|"
     r"(cuenta\s+eliminada)|"
-    r"(konto\s+gelöscht|konto\s+usunięte)|"
+    r"(konto\s+gelÃ¶scht|konto\s+usuniÄ™te)|"
     r"(account\s+cancellato)|"
-    r"(已删除的帐户|已刪除的帳號)|"
-    r"(cont\s+șters)|"
-    r"(счет\s+удален))",
+    r"(å·²åˆ é™¤çš„å¸æˆ·|å·²åˆªé™¤çš„å¸³è™Ÿ)|"
+    r"(cont\s+È™ters)|"
+    r"(ÑÑ‡ÐµÑ‚\s+ÑƒÐ´Ð°Ð»ÐµÐ½))",
     re.IGNORECASE
 )
 
 def _looks_deleted(user) -> bool:
-    """Erkennt gelöschte Konten anhand Bot-API-Daten (Heuristik)."""
+    """Erkennt gelÃ¶schte Konten anhand Bot-API-Daten (Heuristik)."""
     if not user or getattr(user, "is_bot", False):
         return False
     name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
@@ -40,7 +40,7 @@ def _looks_deleted(user) -> bool:
 
 async def _apply_hard_permissions(context, chat_id: int, active: bool):
     """
-    Setzt für den Chat harte Schreibsperren (Nachtmodus) an/aus.
+    Setzt fÃ¼r den Chat harte Schreibsperren (Nachtmodus) an/aus.
     active=True  -> can_send_messages=False
     active=False -> can_send_messages=True
     """
@@ -65,7 +65,7 @@ async def _get_member(bot: ExtBot, chat_id: int, user_id: int) -> ChatMember | N
         await asyncio.sleep(getattr(e, "retry_after", 1))
         return await bot.get_chat_member(chat_id, user_id)
     except BadRequest as e:
-        # z. B. "Chat member not found" → nicht (mehr) Mitglied
+        # z. B. "Chat member not found" â†’ nicht (mehr) Mitglied
         logger.debug(f"get_chat_member({chat_id},{user_id}) -> {e}")
         return None
 
@@ -73,9 +73,9 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
                                          dry_run: bool = False,
                                          demote_admins: bool = False) -> int:
     """
-    Entfernt gelöschte Accounts per ban+unban.
+    Entfernt gelÃ¶schte Accounts per ban+unban.
     - Entfernt DB-Eintrag NUR, wenn Kick erfolgreich war ODER der User nicht (mehr) im Chat ist.
-    - Optional: demote_admins=True versucht gelöschte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
+    - Optional: demote_admins=True versucht gelÃ¶schte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
     """
     user_ids = list_members(chat_id)
     removed = 0
@@ -83,12 +83,12 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
     for uid in user_ids:
         member = await _get_member(bot, chat_id, uid)
         if member is None:
-            # Nicht (mehr) im Chat -> DB aufräumen
+            # Nicht (mehr) im Chat -> DB aufrÃ¤umen
             try: remove_member(chat_id, uid)
             except Exception: pass
             continue
 
-        # Gelöschten Status erkennen (robuster)
+        # GelÃ¶schten Status erkennen (robuster)
         looks_del = _looks_deleted(member.user) or is_deleted_account(member)
 
         # Admin/Owner-Handhabung
@@ -109,7 +109,7 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
                 member = await _get_member(bot, chat_id, uid)
             except Exception as e:
                 logger.warning(f"Demote admin {uid} in {chat_id} fehlgeschlagen: {e}")
-                continue  # ohne Demote kein Kick möglich
+                continue  # ohne Demote kein Kick mÃ¶glich
 
         if not looks_del:
             continue
@@ -130,9 +130,9 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
         except Forbidden as e:
             logger.warning(f"Keine Rechte um {uid} zu entfernen in {chat_id}: {e}")
         except BadRequest as e:
-            logger.warning(f"Ban/Unban fehlgeschlagen für {uid} in {chat_id}: {e}")
+            logger.warning(f"Ban/Unban fehlgeschlagen fÃ¼r {uid} in {chat_id}: {e}")
 
-        # DB nur dann aufräumen, wenn wirklich draußen
+        # DB nur dann aufrÃ¤umen, wenn wirklich drauÃŸen
         try:
             member_after = await _get_member(bot, chat_id, uid)
             if kicked or member_after is None or getattr(member_after, "status", "") in ("left", "kicked"):
@@ -151,7 +151,7 @@ def tr(text: str, lang: str) -> str:
 
 def is_deleted_account(member) -> bool:
     """
-    Erkenne gelöschte Accounts nur über Namensprüfung:
+    Erkenne gelÃ¶schte Accounts nur Ã¼ber NamensprÃ¼fung:
     - Telegram ersetzt first_name durch 'Deleted Account'
     - oder entfernt alle Namen/Username
     """
@@ -183,7 +183,7 @@ def ai_available() -> bool:
 
 def heuristic_link_risk(domains:list[str]) -> float:
     """
-    Grobe Risikobewertung für Links ohne AI: Shortener/Suspicious TLDs etc.
+    Grobe Risikobewertung fÃ¼r Links ohne AI: Shortener/Suspicious TLDs etc.
     """
     if not domains: return 0.0
     shorteners = {"bit.ly","tinyurl.com","goo.gl","t.co","ow.ly","buff.ly","shorturl.at","is.gd","rb.gy","cutt.ly"}
