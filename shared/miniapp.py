@@ -1,5 +1,5 @@
 import os, json, urllib.parse, logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 )
@@ -9,15 +9,15 @@ from telegram.ext import (
 
 logger = logging.getLogger(__name__)
 
-# URL deiner gehosteten index.html (Canvas-Version) – per ENV überschreibbar
+# URL deiner gehosteten index.html – per ENV überschreibbar
 MINIAPP_URL = os.getenv(
     "MINIAPP_URL",
-    "https://greeny187.github.io/GreenyManagementBots/index.html"
+    "https://greeny187.github.io/EmeraldContentBots/miniapp/index.html"
 )
 
-# --- DB-Fallback-Imports ------------------------------------------------------
+# --- DB-Brücke ---------------------------------------------------------------
 def _db():
-    """Liefert die DB-Funktionen, egal ob shared.* vorhanden ist oder lokale .database."""
+    """Liefert DB-Funktionen – shared.* bevorzugt, sonst lokale .database."""
     try:
         from shared.database import (
             get_registered_groups,
@@ -26,7 +26,7 @@ def _db():
             get_ai_settings, set_ai_settings,
         )
     except Exception:
-        from shared.database import (
+        from .database import (
             get_registered_groups,
             set_welcome, delete_welcome,
             get_link_settings, set_link_settings,
@@ -39,9 +39,9 @@ def _db():
         "get_ai_settings": get_ai_settings, "set_ai_settings": set_ai_settings,
     }
 
-# --- Helper -------------------------------------------------------------------
+# --- Helpers -----------------------------------------------------------------
 async def _is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
-    """True, wenn der Nutzer in chat_id Admin/Owner ist (ein get_chat_member-Call)."""
+    """True, wenn user_id in chat_id Admin/Owner ist (ein get_chat_member-Call)."""
     try:
         cm = await context.bot.get_chat_member(chat_id, user_id)
         status = (getattr(cm, "status", "") or "").lower()
@@ -50,9 +50,16 @@ async def _is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, u
         logger.debug(f"[miniapp] get_chat_member({chat_id},{user_id}) failed: {e}")
         return False
 
-# --- /miniapp Befehl ----------------------------------------------------------
+def _webapp_url(cid: int, title: Optional[str]) -> str:
+    return f"{MINIAPP_URL}?cid={cid}&title={urllib.parse.quote(title or str(cid))}"
+
+# --- /miniapp Befehl ---------------------------------------------------------
 async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Zeigt Buttons, um die Mini-App pro Gruppe zu öffnen."""
+    """
+    Zeigt Buttons zum Öffnen der Mini-App:
+    - Admin/Owner-Gruppen zuerst (normale Buttons)
+    - Danach alle übrigen Gruppen (⚠️ markiert). Öffnen ist erlaubt, Speichern verhindert der Handler.
+    """
     if not update.effective_user or not update.effective_message:
         return
     user = update.effective_user
@@ -65,42 +72,49 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"[miniapp] get_registered_groups failed: {e}")
         all_groups = []
 
-    visible: List[Tuple[int, str]] = []
+    admin_rows, other_rows = [], []
+
+    # Prüfe Admin-Status je Gruppe (ein Call pro Gruppe)
     for cid, title in all_groups:
-        if not isinstance(cid, int):
-            # falls DB (cid, title) anders liefert
-            try:
-                cid = int(cid)
-            except Exception:
-                continue
-        if await _is_admin_or_owner(context, cid, user.id):
-            visible.append((cid, title))
+        try:
+            cid = int(cid)
+        except Exception:
+            continue
+        is_admin = await _is_admin_or_owner(context, cid, user.id)
+        url = _webapp_url(cid, title)
+        if is_admin:
+            admin_rows.append([InlineKeyboardButton(f"{title or cid} – Mini-App öffnen", web_app=WebAppInfo(url=url))])
+        else:
+            # Öffnen erlauben (Speichern wird später geblockt) – klar markieren
+            admin_rows.append([InlineKeyboardButton(f"⚠️ {title or cid} – (kein Admin) – öffnen", web_app=WebAppInfo(url=url))])
 
-    if not visible:
-        return await msg.reply_text("Keine Gruppe gefunden, in der du Admin bist.")
+    if not admin_rows and not other_rows:
+        return await msg.reply_text("Keine Gruppen gefunden.")
 
-    rows = []
-    for cid, title in visible:
-        url = f"{MINIAPP_URL}?cid={cid}&title={urllib.parse.quote(title or str(cid))}"
-        rows.append([InlineKeyboardButton(f"{title or cid} – Mini-App öffnen", web_app=WebAppInfo(url=url))])
+    kb: List[List[InlineKeyboardButton]] = []
+    kb.extend(admin_rows)
+    kb.extend(other_rows)  # aktuell ungenutzt; Struktur gelassen für spätere Varianten
+    await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
-    await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(rows))
-
-# --- Rückkanal der Mini-App ---------------------------------------------------
+# --- Rückkanal der Mini-App --------------------------------------------------
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Empfängt JSON von der Mini-App (update.message.web_app_data.data) und speichert Settings.
+    Alle Abschnitte sind robust gegen fehlende DB-Funktionen (try/except).
+    """
     msg = update.message
     if not msg or not getattr(msg, "web_app_data", None):
         return
 
+    # JSON parsen
     try:
         data = json.loads(msg.web_app_data.data or "{}")
     except Exception:
         return await msg.reply_text("❌ Ungültige Daten von der Mini-App.")
 
-    # --- Basics ---
-    cid_raw = data.get("cid")
+    # Gruppen-ID
     try:
-        cid = int(cid_raw)
+        cid = int(data.get("cid"))
     except Exception:
         return await msg.reply_text("❌ Gruppen-ID fehlt oder ist ungültig.")
 
@@ -109,25 +123,27 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
     db = _db()
-    errors = []
+    errors: List[str] = []
 
     # --- Begrüßung / Abschied ---
     try:
         if data.get("welcome_on"):
-            db["set_welcome"](cid, (data.get("welcome_text") or "Willkommen {user} 👋").strip())
+            text = (data.get("welcome_text") or "Willkommen {user} 👋").strip()
+            db["set_welcome"](cid, text)
         else:
             db["delete_welcome"](cid)
     except Exception as e:
         errors.append(f"Welcome: {e}")
 
+    # Farewell
+    set_farewell = delete_farewell = None
     try:
-        # Farewell optional: gleiche Funktion wie Welcome, sofern vorhanden
-        from shared.database import set_farewell, delete_farewell  # prefer shared
+        from shared.database import set_farewell, delete_farewell
     except Exception:
         try:
-            from shared.database import set_farewell, delete_farewell
+            from .database import set_farewell, delete_farewell
         except Exception:
-            set_farewell = delete_farewell = None
+            pass
     if set_farewell and delete_farewell:
         try:
             if data.get("farewell_on"):
@@ -138,13 +154,14 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             errors.append(f"Farewell: {e}")
 
     # --- Regeln & Clean Deleted ---
+    set_rules = delete_rules = set_clean_deleted_settings = None
     try:
         from shared.database import set_rules, delete_rules, set_clean_deleted_settings
     except Exception:
         try:
-            from shared.database import set_rules, delete_rules, set_clean_deleted_settings
+            from .database import set_rules, delete_rules, set_clean_deleted_settings
         except Exception:
-            set_rules = delete_rules = set_clean_deleted_settings = None
+            pass
     if set_rules and delete_rules:
         try:
             if data.get("rules_on") and (data.get("rules_text") or "").strip():
@@ -162,10 +179,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # --- Spam / Links ---
     try:
         cfg = db["get_link_settings"](cid) or {}
-        # grobe Felder; dein DB-Schema kann mehr können – wir lassen Unbekanntes unangetastet
         cfg["spam_level"] = data.get("spam_level", "mid")
         cfg["admins_only"] = bool(data.get("links_admins_only"))
-        # Whitelist/Blacklist als Listen
         wl = [x.strip() for x in (data.get("whitelist") or "").splitlines() if x.strip()]
         bl = [x.strip() for x in (data.get("blacklist") or "").splitlines() if x.strip()]
         if wl: cfg["whitelist"] = wl
@@ -174,16 +189,17 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         errors.append(f"Spam/Links: {e}")
 
-    # Optional: Topic-spezifisch (wenn deine DB-API das kann)
+    # Topic-spezifische Listen (falls vorhanden)
     topic_id = (data.get("topic_id") or "").strip()
     if topic_id.isdigit():
+        set_spam_policy_topic = None
         try:
             from shared.database import set_spam_policy_topic
         except Exception:
             try:
-                from shared.database import set_spam_policy_topic
+                from .database import set_spam_policy_topic
             except Exception:
-                set_spam_policy_topic = None
+                pass
         if set_spam_policy_topic:
             try:
                 set_spam_policy_topic(cid, int(topic_id), {"whitelist": wl, "blacklist": bl})
@@ -191,13 +207,14 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 errors.append(f"Spam Topic {topic_id}: {e}")
 
     # --- RSS ---
+    add_rss_feed = remove_rss_feed = set_rss_feed_options = None
     try:
         from shared.database import add_rss_feed, remove_rss_feed, set_rss_feed_options
     except Exception:
         try:
-            from shared.database import add_rss_feed, remove_rss_feed, set_rss_feed_options
+            from .database import add_rss_feed, remove_rss_feed, set_rss_feed_options
         except Exception:
-            add_rss_feed = remove_rss_feed = set_rss_feed_options = None
+            pass
     if set_rss_feed_options:
         try:
             set_rss_feed_options(cid, {"images": bool(data.get("rss_images"))})
@@ -221,95 +238,134 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         ai_faq_old, ai_rss_old = db["get_ai_settings"](cid)
         db["set_ai_settings"](cid, bool(data.get("ai_faq")), bool(data.get("ai_rss")))
     except Exception as e:
-        errors.append(f\"KI: {e}\")
+        errors.append(f"KI: {e}")
 
     # --- FAQ Verwaltung ---
+    upsert_faq = delete_faq = None
     try:
         from shared.database import upsert_faq, delete_faq
     except Exception:
         try:
             from .database import upsert_faq, delete_faq
         except Exception:
-            upsert_faq = delete_faq = None
-    faq_add = data.get(\"faq_add\") or None
-    if upsert_faq and faq_add and (faq_add.get(\"q\") or \"\").strip():
+            pass
+    faq_add = data.get("faq_add") or None
+    if upsert_faq and faq_add and (faq_add.get("q") or "").strip():
         try:
-            upsert_faq(cid, faq_add[\"q\"].strip(), (faq_add.get(\"a\") or \"\").strip())
+            upsert_faq(cid, faq_add["q"].strip(), (faq_add.get("a") or "").strip())
         except Exception as e:
-            errors.append(f\"FAQ add: {e}\")
-    faq_del = data.get(\"faq_del\") or None
-    if delete_faq and faq_del and (faq_del.get(\"q\") or \"\").strip():
+            errors.append(f"FAQ add: {e}")
+    faq_del = data.get("faq_del") or None
+    if delete_faq and faq_del and (faq_del.get("q") or "").strip():
         try:
-            delete_faq(cid, faq_del[\"q\"].strip())
+            delete_faq(cid, faq_del["q"].strip())
         except Exception as e:
-            errors.append(f\"FAQ del: {e}\")
+            errors.append(f"FAQ del: {e}")
 
     # --- Report / Statistiken ---
+    set_daily_stats = None
     try:
         from shared.database import set_daily_stats
     except Exception:
         try:
             from .database import set_daily_stats
         except Exception:
-            set_daily_stats = None
+            pass
     if set_daily_stats:
         try:
-            set_daily_stats(cid, bool(data.get(\"daily_stats\")))
+            set_daily_stats(cid, bool(data.get("daily_stats")))
         except Exception as e:
-            errors.append(f\"Report: {e}\")
+            errors.append(f"Report: {e}")
 
     # --- Mood ---
+    set_mood_question = set_mood_topic = None
     try:
         from shared.database import set_mood_question, set_mood_topic
     except Exception:
         try:
             from .database import set_mood_question, set_mood_topic
         except Exception:
-            set_mood_question = set_mood_topic = None
+            pass
     if set_mood_question:
         try:
-            if (data.get(\"mood_question\") or \"\").strip(): set_mood_question(cid, data[\"mood_question\"].strip())
-            if (data.get(\"mood_topic\") or \"\").strip().isdigit(): set_mood_topic(cid, int(data[\"mood_topic\"].strip()))
+            if (data.get("mood_question") or "").strip():
+                set_mood_question(cid, data["mood_question"].strip())
+            if (data.get("mood_topic") or "").strip().isdigit():
+                set_mood_topic(cid, int(data["mood_topic"].strip()))
         except Exception as e:
-            errors.append(f\"Mood: {e}\")
+            errors.append(f"Mood: {e}")
 
     # --- Sprache ---
+    set_group_language = None
     try:
         from shared.database import set_group_language
     except Exception:
         try:
             from .database import set_group_language
         except Exception:
-            set_group_language = None
+            pass
     if set_group_language:
         try:
-            lang = (data.get(\"language\") or \"de\").strip()[:5]
+            lang = (data.get("language") or "de").strip()[:5]
             set_group_language(cid, lang)
         except Exception as e:
-            errors.append(f\"Sprache: {e}\")
+            errors.append(f"Sprache: {e}")
 
     # --- Nachtmodus ---
+    set_night_mode = None
     try:
         from shared.database import set_night_mode
     except Exception:
         try:
             from .database import set_night_mode
         except Exception:
-            set_night_mode = None
-    night = data.get(\"night\") or {}
+            pass
+    night = data.get("night") or {}
     if set_night_mode:
         try:
-            nm = {\n                \"enabled\": bool(night.get(\"on\")),\n                \"start\": (night.get(\"start\") or \"22:00\"),\n                \"end\":   (night.get(\"end\")   or \"07:00\"),\n                \"days\":  (night.get(\"days\")  or \"\").strip(),\n            }\n            set_night_mode(cid, nm)\n        except Exception as e:\n            errors.append(f\"Nachtmodus: {e}\")\n\n    # --- Router-Regel (einfaches Format \"pattern → topic\") ---\n    try:\n        from shared.database import add_topic_router_rule\n    except Exception:\n        try:\n            from .database import add_topic_router_rule\n        except Exception:\n            add_topic_router_rule = None\n    if add_topic_router_rule:\n        try:\n            rule = (data.get(\"router_rule\") or \"\").strip()\n            if rule:\n                for line in rule.splitlines():\n                    if \"→\" in line:\n                        patt, tid = [x.strip() for x in line.split(\"→\",1)]\n                    elif \"->\" in line:\n                        patt, tid = [x.strip() for x in line.split(\"->\",1)]\n                    else:\n                        continue\n                    if patt and tid.lstrip(\"-\").isdigit():\n                        add_topic_router_rule(cid, patt, int(tid))\n        except Exception as e:\n            errors.append(f\"Router: {e}\")\n\n    # --- Antwort ---\n    if errors:\n        return await msg.reply_text(\"⚠️ Teilweise gespeichert:\\n• \" + \"\\n• \".join(errors))\n    return await msg.reply_text(\"✅ Einstellungen gespeichert.\")\n```
+            nm = {
+                "enabled": bool(night.get("on")),
+                "start": (night.get("start") or "22:00"),
+                "end":   (night.get("end")   or "07:00"),
+                "days":  (night.get("days")  or "").strip(),
+            }
+            set_night_mode(cid, nm)
+        except Exception as e:
+            errors.append(f"Nachtmodus: {e}")
 
+    # --- Router-Regel ---
+    add_topic_router_rule = None
+    try:
+        from shared.database import add_topic_router_rule
+    except Exception:
+        try:
+            from .database import add_topic_router_rule
+        except Exception:
+            pass
+    rule_text = (data.get("router_rule") or "").strip()
+    if add_topic_router_rule and rule_text:
+        try:
+            for line in rule_text.splitlines():
+                if "→" in line:
+                    patt, tid = [x.strip() for x in line.split("→", 1)]
+                elif "->" in line:
+                    patt, tid = [x.strip() for x in line.split("->", 1)]
+                else:
+                    continue
+                if patt and tid.lstrip("-").isdigit():
+                    add_topic_router_rule(cid, patt, int(tid))
+        except Exception as e:
+            errors.append(f"Router: {e}")
+
+    # --- Antwort ---
+    if errors:
+        return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
+    return await msg.reply_text("✅ Einstellungen gespeichert.")
 
 # --- Öffentliche Registrierung ------------------------------------------------
 def register_miniapp(app: Application):
     """Von app.register(...) oder deiner main.py aufrufen."""
-    # /miniapp sehr früh, damit Nutzer sie leicht finden
     app.add_handler(CommandHandler("miniapp", miniapp_cmd), group=-3)
-
-    # WebApp-Daten kommen als Message im Privat-Chat.
-    # Wir filtern locker und prüfen im Handler selbst auf msg.web_app_data.
+    # WebApp-Daten kommen als Message im Privat-Chat; im Handler wird auf web_app_data geprüft.
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler), group=0)
-
     logger.info("miniapp: handlers registered")
