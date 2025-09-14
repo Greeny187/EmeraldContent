@@ -1,4 +1,7 @@
-﻿import logging
+﻿from telegram.ext import CommandHandler
+from . import menu, handlers, rss, mood   # <- relative Imports!
+from shared import statistic, ads
+import logging
 logger = logging.getLogger("shared.content")
 
 def _imp_rel(mod):
@@ -83,45 +86,37 @@ def init_ads_schema():
         ads.init_ads_schema()
 
 def register(app):
-    # shared zuerst
-    _safe_register(_shared.get("statistic"), "register_statistics_handlers", app, "statistic")
-    _safe_register(_shared.get("devmenu"),   "register_dev_handlers",       app, "devmenu")
+    # Reihenfolge: shared zuerst, dann content
+    if hasattr(statistic, "register_statistics_handlers"):
+        statistic.register_statistics_handlers(app)
 
-    # content module
-    _safe_register(_mods.get("handlers"), "register_handlers", app, "handlers")
-    _safe_register(_mods.get("mood"),     "register_mood",     app, "mood")
-    _safe_register(_mods.get("menu"),     "register_menu",     app, "menu")
-    _safe_register(_mods.get("rss"),      "register_rss",      app, "rss")
+    if hasattr(handlers, "register_handlers"):
+        handlers.register_handlers(app)
 
-    # ads (shared)
-    _safe_register(_shared.get("ads"),    "register_ads",      app, "ads")
+    # 👉 Dein /menu direkt mit deinem echten Handler verbinden
+    if hasattr(handlers, "menu_command"):
+        app.add_handler(CommandHandler("menu", handlers.menu_command), group=-3)
+        logger.info("content: /menu CommandHandler registriert (group=-3)")
+    else:
+        logger.warning("content: handlers.menu_command fehlt")
 
-    # --- Fallback & Diagnose ---
-    try:
-        from telegram.ext import CommandHandler, MessageHandler, filters
+    if hasattr(mood, "register_mood"):
+        mood.register_mood(app)
 
-        async def _fallback_start(update, ctx):
-            await update.message.reply_text("âœ… Emerald Content Bot ist online. (Fallback)")
+    if hasattr(menu, "register_menu"):
+        menu.register_menu(app)
+        logger.info("content: register_menu() installiert")
+    else:
+        logger.warning("content: menu.register_menu fehlt")
 
-        async def _ping(update, ctx):
-            await update.message.reply_text("pong")
-
-        async def _echo(update, ctx):
-            if update.message and update.message.text:
-                await update.message.reply_text(f"ðŸ‘€ {update.message.text}")
-
-        app.add_handler(CommandHandler("start", _fallback_start), group=99)
-        app.add_handler(CommandHandler("ping", _ping), group=99)
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _echo), group=99)
-    except Exception as e:
-        logger.warning("Fallback/Diagnose-Handler nicht registriert: %s", e)
- 
+    if hasattr(rss, "register_rss"):
+        rss.register_rss(app)
 
 def register_jobs(app):
+    if hasattr(ads, "register_ads_jobs"):
+        ads.register_ads_jobs(app)
     if _mods.get('jobs') and hasattr(_mods['jobs'], 'register_jobs'):
         _mods['jobs'].register_jobs(app)
-    if _mods.get('ads') and hasattr(_mods['ads'], 'register_ads_jobs'):
-        _mods['ads'].register_ads_jobs(app)
     if _shared.get("jobs") and hasattr(_shared["jobs"], "register_jobs"):
         _shared["jobs"].register_jobs(app)
     if _shared.get("ads") and hasattr(_shared["ads"], "register_ads_jobs"):
