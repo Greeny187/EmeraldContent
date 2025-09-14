@@ -68,19 +68,15 @@ async def build_application(bot_cfg: Dict, is_primary: bool) -> Application:
 
     persistence = PicklePersistence(filepath=f"state_{route_key}.pickle")
     app_builder = (Application.builder().token(token).arbitrary_callback_data(True).persistence(persistence))
-    # Optional: HTTPX-Request aus shared.network (oder fallback request_config)
+    
+    # Optional: HTTPX-Request aus shared.network (empfohlen)
     if name == "content" and os.getenv("SKIP_CUSTOM_REQUEST", "0") != "1":
         try:
             from shared.network import create_httpx_request
             app_builder = app_builder.request(create_httpx_request(pool_size=100))
             logging.info("content: custom HTTPXRequest aktiv")
         except Exception as e:
-            try:
-                import request_config
-                app_builder = app_builder.request(request_config.create_request_with_increased_pool())
-                logging.info("content: request_config HTTPXRequest aktiv")
-            except Exception:
-                logging.warning("content: HTTPXRequest nicht gesetzt: %s", e)
+            logging.warning("content: HTTPXRequest nicht gesetzt: %s", e)
 
     app = app_builder.build()
 
