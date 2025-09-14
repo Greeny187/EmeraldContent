@@ -5,29 +5,34 @@ from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextT
 from telegram.error import BadRequest
 import re
 import logging
-
-from shared.database import (
-    get_link_settings, set_link_settings, _call_db_safe,
-    get_welcome, set_welcome, delete_welcome,
-    get_rules, set_rules, delete_rules,
-    get_captcha_settings, set_captcha_settings,
-    get_farewell, set_farewell, delete_farewell,
-    get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
-    get_ai_settings, set_ai_settings, add_topic_router_rule,
-    is_daily_stats_enabled, set_daily_stats,
-    get_mood_question, set_mood_question, get_mood_topic,
-    list_faqs, upsert_faq, delete_faq, set_clean_deleted_settings, 
-    get_group_language, set_group_language,
-    list_forum_topics, count_forum_topics, get_topic_owners,
-    get_night_mode, set_night_mode, add_rss_feed, get_clean_deleted_settings,
-    set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
-    get_rss_feed_options, set_spam_policy_topic, get_spam_policy_topic,
-    effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings,
-    top_strike_users, list_topic_router_rules
-)
+try:
+    from shared.database import (
+        get_link_settings, set_link_settings, _call_db_safe,
+        get_welcome, set_welcome, delete_welcome,
+        get_rules, set_rules, delete_rules,
+        get_captcha_settings, set_captcha_settings,
+        get_farewell, set_farewell, delete_farewell,
+        get_rss_topic, list_rss_feeds as db_list_rss_feeds, remove_rss_feed,
+        get_ai_settings, set_ai_settings, add_topic_router_rule,
+        is_daily_stats_enabled, set_daily_stats,
+        get_mood_question, set_mood_question, get_mood_topic,
+        list_faqs, upsert_faq, delete_faq, set_clean_deleted_settings, 
+        get_group_language, set_group_language,
+        list_forum_topics, count_forum_topics, get_topic_owners,
+        get_night_mode, set_night_mode, add_rss_feed, get_clean_deleted_settings,
+        set_pending_input, get_pending_inputs, get_pending_input, clear_pending_input,
+        get_rss_feed_options, set_spam_policy_topic, get_spam_policy_topic,
+        effective_ai_mod_policy, get_ai_mod_settings, set_ai_mod_settings,
+        top_strike_users, list_topic_router_rules
+    )
+except Exception:
+    from .database import (
+        get_effective_link_policy, effective_spam_policy, count_topic_user_messages_today,
+        log_spam_event, get_link_settings, has_topic,
+    )
 from .access import get_visible_groups
 from shared.statistic import stats_command, export_stats_csv_command, log_feature_interaction
-from .utils import clean_delete_accounts_for_chat, tr
+from .utils import clean_delete_accounts_for_chat, tr, _extract_domains_from_text
 from shared.translator import translate_hybrid
 from .patchnotes import PATCH_NOTES, __version__
 from .user_manual import HELP_TEXT
@@ -1681,10 +1686,8 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ============
 
 def register_menu(app):
-    logger.info("content: register_menu() installing handlers ï¿½")
-    # Callback-Handler (Gruppe 0 â€“ hohe PrioritÃ¤t)
-    app.add_handler(CallbackQueryHandler(menu_callback), group=0)
-    # Reply-Handler (Gruppe 1) â€“ nur Replies, keine Commands
+    logger.info("content: register_menu() installing handlers")
+    app.add_handler(CallbackQueryHandler(menu_callback), group=-2)
     app.add_handler(MessageHandler(
         filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),

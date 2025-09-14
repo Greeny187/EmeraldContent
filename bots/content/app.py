@@ -1,6 +1,13 @@
 from telegram.ext import CommandHandler
 from . import handlers, menu, rss, mood
-from shared import statistic, ads
+
+try:
+    from shared import statistic, ads
+except Exception:
+    class _Noop:  # Fallback ohne Seiteneffekte
+        def __getattr__(self, _): 
+            return lambda *a, **k: None
+    statistic, ads = _Noop(), _Noop()
 
 def register(app):
     if hasattr(statistic, "register_statistics_handlers"):
