@@ -1,21 +1,9 @@
-﻿# menu.py â€“ Greeny Group Manager
-# ------------------------------------------------------------
-# Zweck:
-# - Zentrales Inline-MenÃ¼ fÃ¼r Gruppenverwaltung (Willkommen/Regeln/Abschied,
-#   Captcha, Spamfilter, Nachtmodus, Topic-Router, RSS, FAQ, KI, Stats, etc.)
-# - Einheitliche, robuste Callback-Logik
-# - Klare Abschnitts-Kommentare und konsistentes Error-Handling
-# ------------------------------------------------------------
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
+﻿from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
 from telegram.error import BadRequest
 import re
 import logging
 
-# -----------------------------
-# DB/Service-Importe (bereinigt)
-# -----------------------------
 from shared.database import (
     get_link_settings, set_link_settings, _call_db_safe,
     get_welcome, set_welcome, delete_welcome,
