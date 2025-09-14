@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
 from telegram.error import BadRequest
@@ -43,6 +45,10 @@ LANGUAGES = {
 }
 
 TOPICS_PAGE_SIZE = 25
+
+OK = "✅"; NO = "❌"; BACK = "↩️"; PREV = "⬅️"; NEXT = "➡️"; WARN = "⚠️"
+MOOD = "🧠"; CAPTCHA = "🧩"; SPAM = "🛡️"; NIGHT = "🌙"; ROUTER = "🧭"; REPORT = "🧾"
+RSS = "📰"; AI = "🤖"; STATS = "📊"; FAQ = "❓"; CLEAN = "🧹"; HELP = "📖"; PATCH = "📝"; IMG = "🖼️"
 
 # ============================================================
 # Hilfsfunktionen (Senden/Edits, DB-Safe, Keyboard-Bausteine)
@@ -97,23 +103,23 @@ def build_group_menu(cid: int):
     ai_status = "âœ…" if (ai_faq or ai_rss) else "ï¿½?ï¿½"
 
     buttons = [
-        [InlineKeyboardButton(tr('BegrÃ¼ÃŸung', lang), callback_data=f"{cid}_welcome"),
-         InlineKeyboardButton(tr('?? Captcha', lang), callback_data=f"{cid}_captcha")],
+        [InlineKeyboardButton(tr('Begrüßung', lang), callback_data=f"{cid}_welcome"),
+         InlineKeyboardButton(f"{CAPTCHA} " + tr('Captcha', lang), callback_data=f"{cid}_captcha")],
         [InlineKeyboardButton(tr('Regeln', lang), callback_data=f"{cid}_rules"),
          InlineKeyboardButton(tr('Abschied', lang), callback_data=f"{cid}_farewell")],
-        [InlineKeyboardButton(tr('?? Spamfilter', lang), callback_data=f"{cid}_spam")],
-        [InlineKeyboardButton(tr('?? Nachtmodus', lang), callback_data=f"{cid}_night"),
-         InlineKeyboardButton(tr('??ï¿½ Topic-Router', lang), callback_data=f"{cid}_router")],
-        [InlineKeyboardButton(tr('?? RSS', lang), callback_data=f"{cid}_rss"),
-         InlineKeyboardButton(f"?? KI {ai_status}", callback_data=f"{cid}_ai")],
-        [InlineKeyboardButton(tr('?? Statistiken', lang), callback_data=f"{cid}_stats"),
-         InlineKeyboardButton(tr('? FAQ', lang), callback_data=f"{cid}_faq")],
-        [InlineKeyboardButton(f"?? Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
-         InlineKeyboardButton(tr('ðŸ§  Mood', lang), callback_data=f"{cid}_mood")],
-        [InlineKeyboardButton(tr('ï¿½? Sprache', lang), callback_data=f"{cid}_language"),
-         InlineKeyboardButton(tr('?? AufrÃ¤umen', lang), callback_data=f"{cid}_clean")],
-        [InlineKeyboardButton(tr('?? Handbuch', lang), callback_data=f"{cid}_help"),
-         InlineKeyboardButton(tr('?? Patchnotes', lang), callback_data=f"{cid}_patchnotes")]
+        [InlineKeyboardButton(f"{SPAM} " + tr('Spamfilter', lang), callback_data=f"{cid}_spam")],
+        [InlineKeyboardButton(f"{NIGHT} " + tr('Nachtmodus', lang), callback_data=f"{cid}_night"),
+         InlineKeyboardButton(f"{ROUTER} Topic-Router", callback_data=f"{cid}_router")],
+        [InlineKeyboardButton(f"{RSS} RSS", callback_data=f"{cid}_rss"),
+         InlineKeyboardButton(f"{AI} KI {ai_status}", callback_data=f"{cid}_ai")],
+        [InlineKeyboardButton(f"{STATS} " + tr('Statistiken', lang), callback_data=f"{cid}_stats"),
+         InlineKeyboardButton(f"{FAQ} FAQ", callback_data=f"{cid}_faq")],
+        [InlineKeyboardButton(f"{REPORT} Tagesreport {status}", callback_data=f"{cid}_toggle_stats"),
+         InlineKeyboardButton(f"{MOOD} Mood", callback_data=f"{cid}_mood")],
+        [InlineKeyboardButton(tr('Sprache', lang), callback_data=f"{cid}_language"),
+         InlineKeyboardButton(f"{CLEAN} " + tr('Aufräumen', lang), callback_data=f"{cid}_clean")],
+        [InlineKeyboardButton(f"{HELP} " + tr('Handbuch', lang), callback_data=f"{cid}_help"),
+         InlineKeyboardButton(f"{PATCH} Patchnotes", callback_data=f"{cid}_patchnotes")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -479,7 +485,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # A) GRUPPENAUSWAHL (muss vor Regex passieren)
     if data == "group_select":
-        groups = await get_visible_groups(update.effective_user.id)
+        from shared.database import get_registered_groups
+        groups = await get_visible_groups(update.effective_user.id, context.bot, get_registered_groups())
         if not groups:
             return await query.edit_message_text("âš ï¿½? Keine Gruppen verfÃ¼gbar.")
         kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in groups]
@@ -514,7 +521,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 3) Privatchat: sichtbare Gruppen holen
         try:
-            groups = await get_visible_groups(update.effective_user.id)
+            from shared.database import get_registered_groups
+            groups = await get_visible_groups(update.effective_user.id, context.bot, get_registered_groups())
         except Exception:
             groups = []
         if groups:
@@ -525,10 +533,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Mehrere: Auswahl anzeigen
             kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")]
                 for cid, title in groups]
-            return await query.edit_message_text("Wï¿½hle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
+            return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
         # 4) Nichts auffindbar ? klare Meldung
-        return await query.edit_message_text("?? Keine Gruppe ausgewï¿½hlt.")
+        return await query.edit_message_text("?? Keine Gruppe ausgewählt.")
     
     cid  = int(m.group(1))
     func = m.group(2)
