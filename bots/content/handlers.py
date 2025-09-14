@@ -30,8 +30,6 @@ from shared.database import (register_group, get_registered_groups, get_rules, s
     effective_spam_policy, count_topic_user_messages_today, set_spam_policy_topic, 
     effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
     )
-
-from .utils import _extract_domains_from_text
 from zoneinfo import ZoneInfo
 from .patchnotes import __version__, PATCH_NOTES
 from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
@@ -919,8 +917,8 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Nur in Gruppen nutzbar.")
 
     # Admin-Check (korrekte Helper-Funktion!)
-    if not await _is_admin(context.bot, chat.id, user.id):
-        return await update.message.reply_text("Nur Admins dÃ¼rfen das.")
+    if not await _is_admin(context, chat.id, user.id):
+        return await update.message.reply_text("Nur Admins dürfen das.")
 
     # Topic ermitteln (Thread)
     topic_id = getattr(msg, "message_thread_id", None)

@@ -490,7 +490,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Mehrere: Auswahl anzeigen
             kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")]
                 for cid, title in groups]
-            return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
+            return await query.edit_message_text("🛠️ Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
         # 4) Nichts auffindbar ? klare Meldung
         return await query.edit_message_text("?? Keine Gruppe ausgewählt.")
@@ -1492,7 +1492,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             new_wl = sorted(set((cur["link_whitelist"] or []) + doms))
             set_spam_policy_topic(cid, topic_id, link_whitelist=new_wl)
             await msg.reply_text(f"âœ… Whitelist gespeichert ({len(new_wl)} EintrÃ¤ge) fÃ¼r Topic {topic_id}.")
-            return await _render_spam_topic(query=None, cid=cid, topic_id=topic_id)
+            return await show_group_menu(query=None, cid=cid, context=context, dest_chat_id=msg.chat.id)
         else:
             # global â†’ im Topic-Override â€ž0â€œ persistieren
             cur = get_spam_policy_topic(cid, 0) or {}
@@ -1500,7 +1500,7 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             new_wl = sorted(set((cur["link_whitelist"] or []) + doms))
             set_spam_policy_topic(cid, 0, link_whitelist=new_wl)
             await msg.reply_text(f"âœ… Whitelist (global) gespeichert ({len(new_wl)} EintrÃ¤ge).")
-            return await _render_spam_root(query=None, cid=cid)
+            return await show_group_menu(query=None, cid=cid, context=context, dest_chat_id=msg.chat.id)
 
     # Spam: Blacklist
     if ud.pop("awaiting_spam_blacklist", False):
@@ -1515,14 +1515,14 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
             new_bl = sorted(set((cur["domain_blacklist"] or []) + doms))
             set_spam_policy_topic(cid, topic_id, domain_blacklist=new_bl)
             await msg.reply_text(f"âœ… Blacklist gespeichert ({len(new_bl)} EintrÃ¤ge) fÃ¼r Topic {topic_id}.")
-            return await _render_spam_topic(query=None, cid=cid, topic_id=topic_id)
+            return await show_group_menu(query=None, cid=cid, context=context, dest_chat_id=msg.chat.id)
         else:
             cur = get_spam_policy_topic(cid, 0) or {}
             cur.setdefault("domain_blacklist", [])
             new_bl = sorted(set((cur["domain_blacklist"] or []) + doms))
             set_spam_policy_topic(cid, 0, domain_blacklist=new_bl)
             await msg.reply_text(f"âœ… Blacklist (global) gespeichert ({len(new_bl)} EintrÃ¤ge).")
-            return await _render_spam_root(query=None, cid=cid)
+            return await show_group_menu(query=None, cid=cid, context=context, dest_chat_id=msg.chat.id)
 
     # Router: Keywords / Domains (ohne Topic-Angabe â†’ einfache Regeln)
     if context.user_data.pop('awaiting_router_add_keywords', False) or ('router_add_kw' in (pend or {})):
