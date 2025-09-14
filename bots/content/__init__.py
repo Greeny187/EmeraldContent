@@ -57,6 +57,16 @@ def setup_logging():
     if lg and hasattr(lg, 'setup_logging'):
         lg.setup_logging()
 
+def _safe_register(mod, func_name, app, label):
+    try:
+        if mod and hasattr(mod, func_name):
+            getattr(mod, func_name)(app)
+            logger.info("content.register %-12s -> OK", label)
+        else:
+            logger.warning("content.register %-12s -> SKIP (missing)", label)
+    except Exception:
+        logger.exception("content.register %-12s -> FAILED", label)
+
 def create_request_with_increased_pool():
     if _reqcfg and hasattr(_reqcfg, "create_request_with_increased_pool"):
         return _reqcfg.create_request_with_increased_pool()
@@ -73,22 +83,18 @@ def init_ads_schema():
         ads.init_ads_schema()
 
 def register(app):
-    # shared statistic/devmenu zuerst (falls vorhanden)
-    if _shared.get("statistic") and hasattr(_shared["statistic"], "register_statistics_handlers"):
-        _shared["statistic"].register_statistics_handlers(app)
-    if _shared.get("devmenu") and hasattr(_shared["devmenu"], "register_dev_handlers"):
-        _shared["devmenu"].register_dev_handlers(app)
-    # content handlers/menu/rss/mood
-    if _mods.get('handlers') and hasattr(_mods['handlers'], 'register_handlers'):
-        _mods['handlers'].register_handlers(app)
-    if _mods.get('mood') and hasattr(_mods['mood'], 'register_mood'):
-        _mods['mood'].register_mood(app)
-    if _mods.get('menu') and hasattr(_mods['menu'], 'register_menu'):
-        _mods['menu'].register_menu(app)
-    if _mods.get('rss') and hasattr(_mods['rss'], 'register_rss'):
-        _mods['rss'].register_rss(app)
-    if _shared.get('ads') and hasattr(_shared['ads'], 'register_ads'):
-        _shared['ads'].register_ads(app)
+    # shared zuerst
+    _safe_register(_shared.get("statistic"), "register_statistics_handlers", app, "statistic")
+    _safe_register(_shared.get("devmenu"),   "register_dev_handlers",       app, "devmenu")
+
+    # content module
+    _safe_register(_mods.get("handlers"), "register_handlers", app, "handlers")
+    _safe_register(_mods.get("mood"),     "register_mood",     app, "mood")
+    _safe_register(_mods.get("menu"),     "register_menu",     app, "menu")
+    _safe_register(_mods.get("rss"),      "register_rss",      app, "rss")
+
+    # ads (shared)
+    _safe_register(_shared.get("ads"),    "register_ads",      app, "ads")
 
     # --- Fallback & Diagnose ---
     try:

@@ -7,7 +7,7 @@
 # - Klare Abschnitts-Kommentare und konsistentes Error-Handling
 # ------------------------------------------------------------
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update, CallbackQuery
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, Update
 from telegram.ext import CallbackQueryHandler, filters, MessageHandler, ContextTypes
 from telegram.error import BadRequest
 import re
