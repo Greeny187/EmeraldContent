@@ -4,7 +4,7 @@ import datetime as dt
 from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
-from telethon_client import telethon_client, start_telethon
+from .telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
 from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     prune_pending_inputs_older_than, get_clean_deleted_settings,
