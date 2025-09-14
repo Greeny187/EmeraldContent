@@ -157,29 +157,60 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         errors.append(f"Aufräumen: {e}")
 
-    # --- Links/Spam: Gruppen-Flags + (optional) Topic-Overrides -------------
+    # --- Spam / Links (GLOBAL + optional Topic-Override) ---------------------
     try:
+        # === GLOBAL (group_settings) =========================================
+        # Nur-Admin-Links + Warnung + Ausnahmen (wie in menu.py)
+        admins_only   = bool(data.get("admins_only"))        # Toggle
+        warning_on    = bool(data.get("warning_on"))         # Toggle
+        warning_text  = (data.get("warning_text") or "").strip() or None
+        exceptions_on = bool(data.get("exceptions_on"))      # Toggle
+
         db["set_link_settings"](
             cid,
-            admins_only=bool(data.get("links_admins_only")),
-            # optionale Warnung/Text aus UI ergänzbar:
-            # warning_on=..., warning_text=..., exceptions_on=...
-        )  # schreibt group_settings (admins_only==link_protection_enabled) :contentReference[oaicite:3]{index=3}
-    except Exception as e:
-        errors.append(f"Links: {e}")
+            admins_only=admins_only,          # Alias für protection
+            warning_on=warning_on,
+            warning_text=warning_text,
+            exceptions_on=exceptions_on,
+        )  # schreibt group_settings inkl. warning/exceptions, siehe DB. :contentReference[oaicite:0]{index=0}
 
-    wl = [x.strip() for x in (data.get("whitelist") or "").splitlines() if x.strip()]
-    bl = [x.strip() for x in (data.get("blacklist") or "").splitlines() if x.strip()]
-    topic_id_raw = (data.get("topic_id") or "").strip()
-    if topic_id_raw.isdigit():
+        # === TOPIC-OVERRIDE (spam_policy_topic) ==============================
+        # Wenn topic_id angegeben (oder 0 für "global Override"), dann diese Felder setzen
+        topic_id_raw = (data.get("topic_id") or "").strip()
+        topic_id     = int(topic_id_raw) if topic_id_raw.isdigit() else None
+
+        # Whitelist/Blacklist aus Textareas (Zeilen -> Domains)
+        wl = [x.strip().lower().lstrip(".") for x in (data.get("whitelist") or "").splitlines() if x.strip()]
+        bl = [x.strip().lower().lstrip(".") for x in (data.get("blacklist") or "").splitlines() if x.strip()]
+
+        # Aktion bei Verstoß (delete|mute) – wirkt z.B. in QUOTA/Limit-Flow und (bei Topic) auch für Links
+        spam_action = (data.get("spam_action") or "").strip().lower()
+        if spam_action not in ("delete", "mute"):
+            spam_action = None
+
+        # Tageslimit & Quota-Notify
+        per_day = data.get("topic_limit")
         try:
-            db["set_spam_policy_topic"](
-                cid, int(topic_id_raw),
-                link_whitelist=wl or None,
-                domain_blacklist=bl or None
-            )  # Topic-Override-Setter :contentReference[oaicite:4]{index=4}
-        except Exception as e:
-            errors.append(f"Spam Topic {topic_id_raw}: {e}")
+            per_day = int(per_day) if per_day is not None and str(per_day).strip() != "" else None
+        except Exception:
+            per_day = None
+
+        quota_notify = (data.get("quota_notify") or "").strip().lower()
+        if quota_notify not in ("off", "smart", "always"):
+            quota_notify = None
+
+        if topic_id is not None:
+            fields = {}
+            if wl:            fields["link_whitelist"] = wl
+            if bl:            fields["domain_blacklist"] = bl
+            if spam_action:   fields["action_primary"] = spam_action
+            if per_day is not None: fields["per_user_daily_limit"] = per_day
+            if quota_notify:  fields["quota_notify"] = quota_notify
+
+            if fields:
+                db["set_spam_policy_topic"](cid, topic_id, **fields)  # dynamischer Upsert. :contentReference[oaicite:1]{index=1}
+    except Exception as e:
+        errors.append(f"Spam/Links: {e}")
 
     # --- RSS: Topic + Feeds + Optionen pro Feed -----------------------------
     try:
