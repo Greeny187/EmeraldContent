@@ -194,6 +194,7 @@ async def spam_enforcer(update, context):
     msg = update.effective_message
     if not msg:
         return
+
     chat = update.effective_chat
     user = update.effective_user
     chat_id = chat.id
@@ -203,26 +204,35 @@ async def spam_enforcer(update, context):
     if _already_seen(context, chat_id, msg.message_id):
         return
 
-    # Privilegien zuerst ermitteln (mit Cache)
-    is_owner, is_admin, is_anon_admin, is_topic_owner, chat_id, user_id = \
+    # --- FIX: Variablen deterministisch initialisieren ---
+    privileged = False
+    is_topic_owner = False
+
+    # Privilegien ermitteln (Admin/Owner/anon)
+    is_owner, is_admin, is_anon_admin, is_topic_owner_flag, _, _ = \
         await resolve_privileged_flags(msg, context)
 
-    # Effektive Policy NACH Privilegien laden
+    # Topic-Owner (DB) ergänzen
+    if topic_id and user:
+        try:
+            is_topic_owner = is_topic_owner_flag or has_topic(chat.id, user.id, topic_id)
+        except Exception:
+            is_topic_owner = is_topic_owner_flag
+
+    # Ab jetzt ist privileged IMMER definiert
+    privileged = bool(is_owner or is_admin or is_anon_admin or is_topic_owner)
+
+    # Policy JETZT laden (vor jeglicher Nutzung)
     policy = get_effective_link_policy(chat_id, topic_id) or {}
 
-    # Topic-Owner aus DB ggf. verifizieren (fallback)
-    if not is_topic_owner and topic_id and user:
-        try:
-            is_topic_owner = has_topic(chat.id, user.id, topic_id)
-        except Exception:
-            is_topic_owner = False
-
     # Exemptions
-    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or ((is_owner or is_admin or is_anon_admin) and policy.get("exempt_admins", True)):
+    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or (privileged and policy.get("exempt_admins", True)):
         return
 
-    # --- LINKREGELN ---
+    # Domains zuverlässig extrahieren (richtige Utils-Funktion!)
     domains_in_msg = _extract_domains_from_text(text)
+    violation = False
+    reason = None
     if domains_in_msg:
         bl = set((policy.get("blacklist") or []))
         wl = set((policy.get("whitelist") or []))
