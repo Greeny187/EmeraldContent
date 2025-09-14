@@ -501,21 +501,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 1) Einheitliches Pattern: {cid}_{func}[_sub]
     if not m:
-        # Versuche zuerst die gemerkte Auswahl
+        # 1) Bereits gemerkte Auswahl nutzen
         cid_saved = context.user_data.get("selected_chat_id")
         if cid_saved:
             return await show_group_menu(query=query, cid=cid_saved, context=context)
 
-        # Als Notnagel: Wenn die Nachricht in einer Gruppe gedrÃ¼ckt wurde,
-        # nutze deren Chat-ID (verhindert "Keine Gruppe ausgewÃ¤hlt" in Gruppen)
+        # 2) Wenn der Klick in einer Gruppe erfolgt ist: diese Gruppe nehmen
         msg_chat_id = query.message.chat.id
-        if str(msg_chat_id).startswith("-100"):  # Supergroup/Channel IDs
+        if str(msg_chat_id).startswith("-100"):
             context.user_data["selected_chat_id"] = msg_chat_id
             return await show_group_menu(query=query, cid=msg_chat_id, context=context)
 
-        # Sonst klare Fehlermeldung
-        return await query.edit_message_text("âš ï¸ Keine Gruppe ausgewÃ¤hlt.")
+        # 3) Privatchat: sichtbare Gruppen holen
+        try:
+            groups = await get_visible_groups(update.effective_user.id)
+        except Exception:
+            groups = []
+        if groups:
+            if len(groups) == 1:
+                cid = int(groups[0][0])
+                context.user_data["selected_chat_id"] = cid
+                return await show_group_menu(query=query, cid=cid, context=context)
+            # Mehrere: Auswahl anzeigen
+            kb = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")]
+                for cid, title in groups]
+            return await query.edit_message_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(kb))
 
+        # 4) Nichts auffindbar → klare Meldung
+        return await query.edit_message_text("⚠️ Keine Gruppe ausgewählt.")
+    
     cid  = int(m.group(1))
     func = m.group(2)
     sub  = m.group(3) if m.group(3) is not None else None
