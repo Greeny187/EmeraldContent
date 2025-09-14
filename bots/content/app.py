@@ -1,5 +1,6 @@
-from telegram.ext import CommandHandler
+from telegram.ext import CommandHandler, Application
 from . import handlers, menu, rss, mood
+import os
 
 try:
     from shared import statistic, ads
@@ -8,6 +9,7 @@ except Exception:
         def __getattr__(self, _): 
             return lambda *a, **k: None
     statistic, ads = _Noop(), _Noop()
+
 
 def register(app):
     if hasattr(statistic, "register_statistics_handlers"):
@@ -29,9 +31,21 @@ def register(app):
     if hasattr(rss, "register_rss"):
         rss.register_rss(app)
 
-def register_jobs(app):
+def register_jobs(app: Application):
     if hasattr(ads, "register_ads_jobs"):
         ads.register_ads_jobs(app)
+
+    async def _notify_startup(ctx):
+        chat_id = os.getenv("ADMIN_CHAT_ID")
+        if chat_id:
+            try:
+                await ctx.bot.send_message(int(chat_id), "✅ Bot wurde neu gestartet.")
+            except Exception as e:
+                # optional loggen
+                pass
+
+    # einmalig 2s nach Start
+    app.job_queue.run_once(lambda c: app.create_task(_notify_startup(c)), when=2)
 
 def init_schema():
     # falls content-spezifische Tabellen/Indizes nötig sind

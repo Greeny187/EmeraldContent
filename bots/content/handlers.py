@@ -534,7 +534,7 @@ async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
+    msg  = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
     text = (msg.text or msg.caption or "")
@@ -542,47 +542,35 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     logger.debug(f"[FAQ] enter chat={chat.id} mid={msg.message_id} has_text={bool(text)}")
-    # nur kurze Fragen / Hinweise triggern (heuristisch)
+
+    # Heuristik, nur echte Fragen o. explizite FAQ-Trigger
     if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
-        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}…')")
         return
 
     t0 = time.time()
     hit = find_faq_answer(chat.id, text)
     if hit:
         trig, ans = hit
-        logger.debug(f"[FAQ] HIT via DB trigger='{trig}' latency_ms={(time.time()-t0)*1000:.0f}")
         await msg.reply_text(ans, parse_mode="HTML")
-        dt = int((time.time()-t0)*1000)
-        log_auto_response(chat.id, trig, 1.0, ans[:200], dt, None)
+        log_auto_response(chat.id, trig, 1.0, ans[:200], int((time.time()-t0)*1000), None)
         return
 
-    # optionaler KI-Fallback
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq or not is_pro_chat(chat.id):
-        logger.debug("[FAQ] skip: AI fallback disabled in settings")
         return
 
-    # sehr knapp, mit gruppenspezifischen Infos
     lang = get_group_language(chat.id) or "de"
     context_info = (
-        "NÃ¼tzliche Infos: Website https://greeny187.github.io/EmeraldContentBots/ â€¢ "
-        "Support: https://t.me/+DkUfIvjyej8zNGVi â€¢ "
-        "Spenden: PayPal greeny187@outlook.de"
+        "Support: https://t.me/EmeraldContentSupport • "
     )
-    prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2â€“3 SÃ¤tze) auf {lang}."
-
+    prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
     try:
-        # wir nutzen denselben Wrapper und 'missbrauchen' ai_summarize hier kurz
         answer = await ai_summarize(prompt, lang=lang)
-        logger.debug(f"[FAQ] AI fallback called ok len={len(answer) if answer else 0}")
     except Exception:
         answer = None
-
     if answer:
         await msg.reply_text(answer, parse_mode="HTML")
-        dt = int((time.time()-t0)*1000)
-        log_auto_response(chat.id, "AI", 0.5, answer[:200], dt, None)
+        log_auto_response(chat.id, "AI", 0.5, answer[:200], int((time.time()-t0)*1000), None)
 
 async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flag = context.user_data.get('awaiting_nm_time')

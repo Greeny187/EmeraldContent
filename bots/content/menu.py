@@ -1638,10 +1638,11 @@ async def menu_free_text_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ============
 
 def register_menu(app):
-    app.add_handler(CallbackQueryHandler(menu_callback), group=-2)
+    app.add_handler(CallbackQueryHandler(menu_callback), group=0)
     app.add_handler(MessageHandler(
         filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
-        menu_free_text_handler), group=-2)
+        menu_free_text_handler
+    ), group=0)
 
 
