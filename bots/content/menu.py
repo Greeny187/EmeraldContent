@@ -1689,6 +1689,6 @@ def register_menu(app):
         filters.REPLY & (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND
         & (filters.ChatType.GROUPS | filters.ChatType.PRIVATE),
         menu_free_text_handler
-    ), group=0)
+    ), group=-2)
 
 
