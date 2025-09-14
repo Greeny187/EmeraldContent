@@ -1,17 +1,24 @@
 import os
+import sys
 import asyncio
 import logging
+import pathlib
 from typing import Dict
 from importlib import import_module
 
 from aiohttp import web
 from telegram import Update
-from telegram.ext import Application, PicklePersistence, CommandHandler
+from telegram.ext import Application, PicklePersistence
 
 DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")
 PORT = int(os.getenv("PORT", "8443"))
 DEVELOPER_CHAT_ID = os.getenv("DEVELOPER_CHAT_ID", "5114518219")
+
+# Root in sys.path sichern (für shared/* Importe)
+ROOT = pathlib.Path(__file__).parent.resolve()
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 def load_bots_env():
     bots = []
@@ -60,17 +67,20 @@ async def build_application(bot_cfg: Dict, is_primary: bool) -> Application:
     token = bot_cfg["token"]
 
     persistence = PicklePersistence(filepath=f"state_{route_key}.pickle")
-    app_builder = Application.builder().token(token).arbitrary_callback_data(True).persistence(persistence)
-
-    request = None
-    if name == "content":
+    app_builder = (Application.builder().token(token).arbitrary_callback_data(True).persistence(persistence))
+    # Optional: HTTPX-Request aus shared.network (oder fallback request_config)
+    if name == "content" and os.getenv("SKIP_CUSTOM_REQUEST", "0") != "1":
         try:
-            req_mod = import_module("bots.content")
-            request = getattr(req_mod, "create_request_with_increased_pool")()
-        except Exception:
-            request = None
-    if request is not None:
-        app_builder = app_builder.request(request)
+            from shared.network import create_httpx_request
+            app_builder = app_builder.request(create_httpx_request(pool_size=100))
+            logging.info("content: custom HTTPXRequest aktiv")
+        except Exception as e:
+            try:
+                import request_config
+                app_builder = app_builder.request(request_config.create_request_with_increased_pool())
+                logging.info("content: request_config HTTPXRequest aktiv")
+            except Exception:
+                logging.warning("content: HTTPXRequest nicht gesetzt: %s", e)
 
     app = app_builder.build()
 
@@ -82,38 +92,12 @@ async def build_application(bot_cfg: Dict, is_primary: bool) -> Application:
         logging.exception("Unhandled error", exc_info=context.error)
     app.add_error_handler(_on_error)
 
-    if is_primary:
-        try:
-            import_module("bots.content").setup_logging()
-        except Exception:
-            pass
-        try:
-            import_module("bots.content").init_all_schemas()
-        except Exception as e:
-            logging.warning(f"init_all_schemas() skipped: {e}")
-        try:
-            import_module("bots.content").init_ads_schema()
-        except Exception:
-            pass
-
-    pkg = import_module(f"bots.{name}")
+    # Bot-Plugin laden (sauber: bots.<name>.app)
+    pkg = import_module(f"bots.{name}.app")
     if hasattr(pkg, "register"):
         pkg.register(app)
-    if hasattr(pkg, "register_jobs"):
+    if is_primary and hasattr(pkg, "register_jobs"):
         pkg.register_jobs(app)
-
-    if is_primary:
-        try:
-            tc, starter = import_module("bots.content").get_telethon_client_and_starter()
-        except Exception:
-            tc, starter = None, None
-        if tc is not None:
-            app.bot_data['telethon_client'] = tc
-        if starter is not None:
-            try:
-                await starter()
-            except Exception as e:
-                logging.warning(f"Telethon start failed: {e}")
 
     async def _post_init(application: Application) -> None:
         try:
