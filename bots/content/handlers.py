@@ -12,18 +12,13 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType
 try:
-    from .patchnotes import __version__, PATCH_NOTES
-except Exception:
-    __version__, PATCH_NOTES = "0.0.0", ""
-
-try:
     from .user_manual import help_handler  # falls du das im /help verwendest
 except Exception:
     async def help_handler(update, context):
         await update.effective_message.reply_text("Hilfe ist aktuell nicht hinterlegt.")
 
 # Access-Helfer (Admin/Owner/Topic-Owner-Ermittlung)
-from .access import resolve_privileged_flags, get_visible_groups
+from .access import resolve_privileged_flags, get_visible_groups, cached_admins
 
 # DB-Import robust halten (Monorepo vs. Standalone)
 
@@ -51,17 +46,10 @@ logger = logging.getLogger(__name__)
 _EMOJI_RE = re.compile(r'([\U0001F300-\U0001FAFF\U00002600-\U000027BF])')
 _URL_RE = re.compile(r'(https?://\S+|www\.\S+)', re.IGNORECASE)
 
-def _extract_domains(text:str) -> list[str]:
-    doms = []
-    for m in _URL_RE.findall(text or ""):
-        u = m if m.startswith("http") else f"http://{m}"
-        try:
-            dom = urlparse(u).netloc.lower()
-            if dom.startswith("www."): dom = dom[4:]
-            if dom: doms.append(dom)
-        except Exception:
-            pass
-    return doms
+async def _on_admin_change(update, context):
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id is not None:
+        context.bot_data.get("admins_cache", {}).pop(chat_id, None)
 
 def _count_emojis(text:str) -> int:
     return len(_EMOJI_RE.findall(text or ""))
@@ -95,9 +83,9 @@ def _is_anon_admin_message(msg) -> bool:
 
 async def _resolve_username_to_user(context, chat_id: int, username: str):
     """
-    Versucht @username â†’ telegram.User aufzulÃ¶sen:
-    1) Aus context.chat_data['username_map'] (gefÃ¼llt durch message_logger)
-    2) Fallback: unter aktuellen Admins suchen
+    Versucht @username → telegram.User aufzulösen:
+    1) Aus context.chat_data['username_map']
+    2) Fallback: aus gecachter Adminliste (cached_admins)
     """
     name = username.lstrip("@").lower()
 
@@ -111,9 +99,9 @@ async def _resolve_username_to_user(context, chat_id: int, username: str):
     except Exception:
         pass
 
-    # 2) Admin-Fallback
+    # 2) Admin-Cache
     try:
-        admins = await context.bot.get_chat_administrators(chat_id)
+        admins = await cached_admins(context.bot, context, chat_id)
         for a in admins:
             if a.user.username and a.user.username.lower() == name:
                 return a.user
@@ -204,195 +192,131 @@ async def _hard_delete_message(context, chat_id: int, msg) -> bool:
 
 async def spam_enforcer(update, context):
     msg = update.effective_message
-    if not msg: return
-    chat_id = msg.chat.id
-    if _already_seen(context, chat_id, msg.message_id):
+    if not msg:
         return
     chat = update.effective_chat
     user = update.effective_user
     chat_id = chat.id
-    text = msg.text or msg.caption or ""
     topic_id = getattr(msg, "message_thread_id", None)
-    is_topic_owner = is_topic_owner or (
-        bool(topic_id) and user and has_topic(chat.id, user.id, topic_id)
-    )
-    if is_topic_owner and policy.get("exempt_topic_owner", True):
+    text = msg.text or msg.caption or ""
+
+    # Doppelt? (Edits/Forwards)
+    if _already_seen(context, chat_id, msg.message_id):
         return
 
-    # Ausnahme: Admin / anonymer Admin / Topic-Owner
-
+    # Privilegien zuerst klären
     is_owner, is_admin, is_anon_admin, is_topic_owner, chat_id, user_id = \
         await resolve_privileged_flags(msg, context)
+    privileged = bool(is_owner or is_admin or is_anon_admin)
 
-    privileged = is_owner or is_admin or is_anon_admin or is_topic_owner
-    if privileged:
-        return  # Admins/Owner/Anonyme Ã¼berspringen
+    # Effektive Link-/Spam-Policy (topic-aware)
+    policy = get_effective_link_policy(chat_id, topic_id) or {}
 
-    policy = get_effective_link_policy(chat_id, topic_id)
+    # Topic-Owner-Exempt (spät möglich, weil Policy jetzt existiert)
+    if not is_topic_owner and topic_id and user:
+        try:
+            is_topic_owner = has_topic(chat.id, user.id, topic_id)
+        except Exception:
+            is_topic_owner = False
+    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or (privileged and policy.get("exempt_admins", True)):
+        return
+
+    # --- LINKREGELN ---
     domains_in_msg = _extract_domains_from_text(text)
-    violation = False
-    reason = None
-
     if domains_in_msg:
-        # 1) Blacklist (Topic)
-        for host in domains_in_msg:
-            if any(host.endswith('.'+d) or host == d for d in (policy.get("blacklist") or [])):
-                 violation = True; reason = "domain_blacklist"
-                 break
-
-        # 2) Nur-Admin-Links (global), Whitelist erlaubt
-        if not violation and policy.get("admins_only") and not is_admin:
-            def allowed(host):
-                return any(host.endswith('.'+d) or host == d for d in (policy.get("whitelist") or []))
-            if not any(allowed(h) for h in domains_in_msg):
-                violation = True
-
-    if violation:
-        deleted = await _safe_delete(msg)
-        # Aktion
-        act = policy.get("action") or "delete"
-        did = "delete" if deleted else "none"
-        if act == "mute" and not is_admin:
+        bl = set((policy.get("blacklist") or []))
+        wl = set((policy.get("whitelist") or []))
+        # Blacklist
+        if any(h.endswith("."+d) or h == d for d in bl for h in domains_in_msg):
+            reason = "domain_blacklist"
+            deleted = await _safe_delete(msg)
+            did = "delete" if deleted else "none"
+            # Aktion (mute optional)
+            act = (policy.get("action") or "delete").lower()
+            if act == "mute" and not is_admin and user:
+                try:
+                    until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+                    await context.bot.restrict_chat_member(
+                        chat_id, user.id,
+                        permissions=ChatPermissions(can_send_messages=False),
+                        until_date=until
+                    )
+                    did += "/mute60m"
+                except Exception as e:
+                    logger.warning(f"mute failed: {e}")
+            if _once(context, ("link_warn", chat_id, (user.id if user else 0)), ttl=5.0):
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        message_thread_id=topic_id,
+                        text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
+                    )
+                except Exception:
+                    pass
             try:
-                until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-                await context.bot.restrict_chat_member(
-                    chat_id, msg.from_user.id,
-                    permissions=ChatPermissions(can_send_messages=False),
-                    until_date=until
-                )
-                did += "/mute60m"
-            except Exception as e:
-                logger.warning(f"mute failed: {e}")
-
-        # Hinweis nur einmal pro Nutzer/5s
-        if _once(context, ("link_warn", chat_id, (msg.from_user.id if msg.from_user else 0)), ttl=5.0):
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=msg.message_thread_id,
-                    text=policy.get("warning_text") or "ðŸš« Nur Admins dÃ¼rfen Links posten."
-                )
+                log_spam_event(chat_id, user.id if user else None, reason, did, {"domains": domains_in_msg})
             except Exception:
                 pass
+            return
 
-        # Logging mit reason
-        try:
-            log_spam_event(chat_id, user.id if user else None, reason or "link_violation", did,
-                           {"domains": domains_in_msg})
-        except Exception:
-            pass
-        return
-    
-    # --- Tageslimit (pro Topic & User) --- 
-    # separat die *Spam*-Policy laden (inkl. Topic-Overrides)
-    link_flags = get_link_settings(chat_id)  # 4-Tuple aus DB
-    spam_pol   = effective_spam_policy(chat_id, topic_id, link_flags)
+        # Nur-Admin-Links (Whitelist erlaubt)
+        if policy.get("admins_only") and not is_admin:
+            def allowed(host): return any(host.endswith("."+d) or host == d for d in wl)
+            if not any(allowed(h) for h in domains_in_msg):
+                deleted = await _safe_delete(msg)
+                if _once(context, ("link_warn", chat_id, (user.id if user else 0)), ttl=5.0):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            message_thread_id=topic_id,
+                            text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
+                        )
+                    except Exception:
+                        pass
+                try:
+                    log_spam_event(chat_id, user.id if user else None, "admins_only", "delete" if deleted else "none", {"domains": domains_in_msg})
+                except Exception:
+                    pass
+                return
 
+    # --- QUOTA / FLOOD (pro Topic & User) ---
+    link_flags  = get_link_settings(chat_id)
+    spam_pol    = effective_spam_policy(chat_id, topic_id, link_flags)
     daily_lim   = int(spam_pol.get("per_user_daily_limit") or 0)
     notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
 
     if topic_id and daily_lim > 0 and user and not privileged:
-        # ZÃ¤hle Nachrichten bis JETZT (vor dieser Nachricht)
         used_before = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
-
-        # Ãœberschreitet diese Nachricht das Limit?
         if used_before >= daily_lim:
             deleted = await _hard_delete_message(context, chat_id, msg)
-
             did_action = "delete" if deleted else "none"
-            primary = (spam_pol.get("action_primary") or "delete").lower()
-
-            # Optional zusÃ¤tzlich stumm schalten, wenn so konfiguriert
-            if primary in ("mute", "stumm"):
+            if (spam_pol.get("action_primary","delete").lower() in ("mute","stumm")):
                 try:
                     until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-                    await context.bot.restrict_chat_member(
-                        chat_id, user.id, ChatPermissions(can_send_messages=False), until_date=until
-                    )
+                    await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False), until_date=until)
                     did_action = (did_action + "/mute60m") if did_action != "none" else "mute60m"
                 except Exception as e:
                     logger.warning(f"Limit mute failed in {chat_id}: {e}")
-
-            # Hinweis ins Topic (du wolltest beides: lÃ¶schen + warnen)
             try:
-                extra = " â€” Nutzer 60 Min. stumm." if "mute60m" in did_action else ""
-                await context.bot.send_message(
-                    chat_id=chat_id, message_thread_id=topic_id,
-                    text=f"ðŸš¦ Limit erreicht: max. {daily_lim} Nachrichten/Tag in diesem Topic.{extra}",
-                )
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=topic_id,
+                                               text=f"🛑 Tageslimit erreicht ({daily_lim}) – bitte morgen weiter.")
             except Exception:
                 pass
-
-            # Logging (best effort)
             try:
-                from shared.statistic import log_spam_event
-                log_spam_event(
-                    chat_id, user.id, "limit_day", did_action,
-                    {"limit": daily_lim, "used_before": used_before, "topic_id": topic_id}
-                )
+                log_spam_event(chat_id, user.id, "limit_day", did_action,
+                               {"limit": daily_lim, "used_before": used_before, "topic_id": topic_id})
             except Exception:
                 pass
+            return
 
-            return  # WICHTIG: nichts Weiteres mehr prÃ¼fen
-
-        # Noch innerhalb des Limits: Rest nach dieser Nachricht anzeigen
         remaining_after = daily_lim - (used_before + 1)
-        if notify_mode == "always" or (notify_mode == "smart" and (used_before in (0,) or remaining_after in (10, 5, 2, 1, 0))):
+        if notify_mode == "always" or (notify_mode == "smart" and (used_before in (0,) or remaining_after in (10,5,2,1,0))):
             try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=topic_id,
-                    reply_to_message_id=msg.message_id,
-                    text=f"ðŸ§® Rest heute: {max(remaining_after,0)}/{daily_lim}"
-                )
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=topic_id,
+                                               reply_to_message_id=msg.message_id,
+                                               text=f"🧮 Rest heute: {max(remaining_after,0)}/{daily_lim}")
             except Exception:
                 pass
-    
-    # 1) Topic-Router (nur wenn nicht bereits im Ziel-Topic)
-    match = get_matching_router_rule(chat_id, text, domains_in_msg)
-    if match and topic_id != match["target_topic_id"]:
-        try:
-            # Kopieren in Ziel-Topic
-            await context.bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=chat_id,
-                message_id=msg.message_id,
-                message_thread_id=match["target_topic_id"]
-            )
-            if match["delete_original"] and not privileged:
-                await msg.delete()
-            if match["warn_user"] and not privileged:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=topic_id,
-                    text="â†ªï¸ Bitte ins passende Thema, habe deinen Beitrag verschoben."
-                )
-            # kein weiterer Spamcheck nÃ¶tig â€“ wir haben geroutet
-            return
-        except Exception as e:
-            logger.warning(f"Router copy failed: {e}")
-
-    # 2) Link-Blocking (nur Policy-basiert)
-    if domains_in_msg and not privileged:
-        wl = set(d.lower() for d in (policy.get("whitelist") or []))
-        bl = set(d.lower() for d in (policy.get("blacklist") or []))
-        if any(d in bl for d in domains_in_msg):
-            try:
-                await msg.delete()
-                log_spam_event(chat_id, user.id if user else None, "link_blacklist", "delete",
-                               {"domains": domains_in_msg})
-            except Exception:
-                pass
-            return
-        if policy.get("admins_only") and not is_admin:
-            if not any((d in wl) for d in domains_in_msg):
-                try:
-                    await msg.delete()
-                    log_spam_event(chat_id, user.id if user else None, "link_admins_only", "delete",
-                                   {"domains": domains_in_msg})
-                except Exception:
-                    pass
-                return
 
     # 3) Emoji- und Flood-Limits (je nach Level/Override)
     if not privileged:
@@ -437,8 +361,7 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Privilegien
-    admins = await context.bot.get_chat_administrators(chat.id)
-    is_admin = any(a.user.id == (user.id if user else 0) for a in admins)
+    is_admin = await _is_admin(context.bot, chat.id, user.id if user else 0)
     is_topic_owner = False  # falls du Topic-Owner-Check hast: hier einsetzen
     if (is_admin and policy.get("exempt_admins", True)) or (is_topic_owner and policy.get("exempt_topic_owner", True)):
         return
@@ -603,17 +526,17 @@ async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.debug(f"[FAQ] enter chat={chat.id} mid={msg.message_id} has_text={bool(text)}")
     msg = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-    if not msg or not chat or chat.type not in ("group","supergroup") or not (msg.text or msg.caption):
+    text = (msg.text or msg.caption or "")
+    if not msg or not chat or chat.type not in ("group","supergroup") or not text:
         return
-    text = msg.text or msg.caption
-    
+
+    logger.debug(f"[FAQ] enter chat={chat.id} mid={msg.message_id} has_text={bool(text)}")
     # nur kurze Fragen / Hinweise triggern (heuristisch)
     if "?" not in text and not text.lower().startswith(("faq ", "/faq ")):
-        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}â€¦')")
+        logger.debug(f"[FAQ] skip: no trigger (text='{text[:60]}…')")
         return
 
     t0 = time.time()
@@ -635,7 +558,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # sehr knapp, mit gruppenspezifischen Infos
     lang = get_group_language(chat.id) or "de"
     context_info = (
-        "NÃ¼tzliche Infos: Website https://greeny187.github.io/GreenyManagementBots/ â€¢ "
+        "NÃ¼tzliche Infos: Website https://greeny187.github.io/EmeraldContentBots/ â€¢ "
         "Support: https://t.me/+DkUfIvjyej8zNGVi â€¢ "
         "Spenden: PayPal greeny187@outlook.de"
     )
@@ -1459,6 +1382,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
+    app.add_handler(ChatMemberHandler(_on_admin_change, ChatMemberHandler.CHAT_MEMBER), group=-3)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=0)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=0)

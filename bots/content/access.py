@@ -1,18 +1,47 @@
-﻿async def get_visible_groups(user_id: int, bot, all_groups):
+﻿from telegram import ChatMemberAdministrator, ChatMemberOwner
+from typing import Tuple
+import time, asyncio
+
+async def is_admin_or_owner(bot, chat_id: int, user_id: int) -> tuple[bool, bool]:
+    try:
+        cm = await bot.get_chat_member(chat_id, user_id)
+    except Exception:
+        return (False, False)
+    is_owner = isinstance(cm, ChatMemberOwner) or getattr(cm, "status", "") == "creator"
+    is_admin = is_owner or isinstance(cm, ChatMemberAdministrator) or getattr(cm, "status", "") == "administrator"
+    return (is_admin, is_owner)
+
+async def cached_admins(bot, context, chat_id: int, max_age=120):
+    cache = context.bot_data.setdefault("admins_cache", {})
+    entry = cache.get(chat_id)
+    now = time.time()
+    if entry and now - entry["ts"] < max_age:
+        return entry["admins"]
+
+    locks = context.bot_data.setdefault("admins_cache_locks", {})
+    lock = locks.setdefault(chat_id, asyncio.Lock())
+    async with lock:
+        entry = cache.get(chat_id)
+        if entry and now - entry["ts"] < max_age:
+            return entry["admins"]
+        admins = await bot.get_chat_administrators(chat_id)
+        cache[chat_id] = {"ts": time.time(), "admins": admins}
+        return admins
+
+async def get_visible_groups(user_id: int, bot, all_groups):
     """
-    Gibt nur Gruppen zurÃ¼ck, in denen der Bot aktiv ist und der Nutzer Admin ist.
+    Gibt nur Gruppen zurück, in denen der Bot aktiv ist und der Nutzer Admin/Owner ist.
+    Nutzt get_chat_member (1 Call/Gruppe) statt komplette Adminliste.
     """
     visible = []
     for chat_id, title in all_groups:
         try:
-            admins = await bot.get_chat_administrators(chat_id)
-            if any(a.user.id == user_id for a in admins):
+            is_admin, is_owner = await is_admin_or_owner(bot, chat_id, user_id)
+            if is_admin or is_owner:
                 visible.append((chat_id, title))
-        except:
+        except Exception:
             continue
     return visible
-
-from typing import Tuple
 
 async def resolve_privileged_flags(message, context) -> Tuple[bool, bool, bool, bool, int, int]:
     """
