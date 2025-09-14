@@ -88,7 +88,6 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Rückkanal der Mini-App ---------------------------------------------------
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Empfängt Daten aus der Mini-App (update.message.web_app_data.data) und speichert sie."""
     msg = update.message
     if not msg or not getattr(msg, "web_app_data", None):
         return
@@ -98,6 +97,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         return await msg.reply_text("❌ Ungültige Daten von der Mini-App.")
 
+    # --- Basics ---
     cid_raw = data.get("cid")
     try:
         cid = int(cid_raw)
@@ -109,37 +109,198 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
     db = _db()
-    errors: List[str] = []
+    errors = []
 
-    # Welcome speichern/löschen
+    # --- Begrüßung / Abschied ---
     try:
         if data.get("welcome_on"):
-            text = (data.get("welcome_text") or "Willkommen {user} 👋").strip()
-            db["set_welcome"](cid, text)
+            db["set_welcome"](cid, (data.get("welcome_text") or "Willkommen {user} 👋").strip())
         else:
             db["delete_welcome"](cid)
     except Exception as e:
         errors.append(f"Welcome: {e}")
 
-    # Spam-Level speichern (legt/erweitert Konfig-Dict)
+    try:
+        # Farewell optional: gleiche Funktion wie Welcome, sofern vorhanden
+        from shared.database import set_farewell, delete_farewell  # prefer shared
+    except Exception:
+        try:
+            from shared.database import set_farewell, delete_farewell
+        except Exception:
+            set_farewell = delete_farewell = None
+    if set_farewell and delete_farewell:
+        try:
+            if data.get("farewell_on"):
+                set_farewell(cid, (data.get("farewell_text") or "Tschüss {user}!").strip())
+            else:
+                delete_farewell(cid)
+        except Exception as e:
+            errors.append(f"Farewell: {e}")
+
+    # --- Regeln & Clean Deleted ---
+    try:
+        from shared.database import set_rules, delete_rules, set_clean_deleted_settings
+    except Exception:
+        try:
+            from shared.database import set_rules, delete_rules, set_clean_deleted_settings
+        except Exception:
+            set_rules = delete_rules = set_clean_deleted_settings = None
+    if set_rules and delete_rules:
+        try:
+            if data.get("rules_on") and (data.get("rules_text") or "").strip():
+                set_rules(cid, data["rules_text"].strip())
+            else:
+                delete_rules(cid)
+        except Exception as e:
+            errors.append(f"Regeln: {e}")
+    if set_clean_deleted_settings:
+        try:
+            set_clean_deleted_settings(cid, bool(data.get("clean_deleted")))
+        except Exception as e:
+            errors.append(f"Aufräumen: {e}")
+
+    # --- Spam / Links ---
     try:
         cfg = db["get_link_settings"](cid) or {}
+        # grobe Felder; dein DB-Schema kann mehr können – wir lassen Unbekanntes unangetastet
         cfg["spam_level"] = data.get("spam_level", "mid")
+        cfg["admins_only"] = bool(data.get("links_admins_only"))
+        # Whitelist/Blacklist als Listen
+        wl = [x.strip() for x in (data.get("whitelist") or "").splitlines() if x.strip()]
+        bl = [x.strip() for x in (data.get("blacklist") or "").splitlines() if x.strip()]
+        if wl: cfg["whitelist"] = wl
+        if bl: cfg["blacklist"] = bl
         db["set_link_settings"](cid, cfg)
     except Exception as e:
-        errors.append(f"Spam: {e}")
+        errors.append(f"Spam/Links: {e}")
 
-    # FAQ-KI speichern
+    # Optional: Topic-spezifisch (wenn deine DB-API das kann)
+    topic_id = (data.get("topic_id") or "").strip()
+    if topic_id.isdigit():
+        try:
+            from shared.database import set_spam_policy_topic
+        except Exception:
+            try:
+                from shared.database import set_spam_policy_topic
+            except Exception:
+                set_spam_policy_topic = None
+        if set_spam_policy_topic:
+            try:
+                set_spam_policy_topic(cid, int(topic_id), {"whitelist": wl, "blacklist": bl})
+            except Exception as e:
+                errors.append(f"Spam Topic {topic_id}: {e}")
+
+    # --- RSS ---
     try:
-        ai_faq_old, ai_rss = db["get_ai_settings"](cid)
-        ai_faq_new = bool(data.get("faq_ai"))
-        db["set_ai_settings"](cid, ai_faq_new, ai_rss)
-    except Exception as e:
-        errors.append(f"KI: {e}")
+        from shared.database import add_rss_feed, remove_rss_feed, set_rss_feed_options
+    except Exception:
+        try:
+            from shared.database import add_rss_feed, remove_rss_feed, set_rss_feed_options
+        except Exception:
+            add_rss_feed = remove_rss_feed = set_rss_feed_options = None
+    if set_rss_feed_options:
+        try:
+            set_rss_feed_options(cid, {"images": bool(data.get("rss_images"))})
+        except Exception as e:
+            errors.append(f"RSS-Optionen: {e}")
+    if add_rss_feed:
+        try:
+            for url in [u.strip() for u in (data.get("rss_add") or "").splitlines() if u.strip()]:
+                add_rss_feed(cid, url)
+        except Exception as e:
+            errors.append(f"RSS hinzufügen: {e}")
+    if remove_rss_feed:
+        try:
+            for url in [u.strip() for u in (data.get("rss_del") or "").splitlines() if u.strip()]:
+                remove_rss_feed(cid, url)
+        except Exception as e:
+            errors.append(f"RSS entfernen: {e}")
 
-    if errors:
-        return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
-    return await msg.reply_text("✅ Einstellungen gespeichert.")
+    # --- KI ---
+    try:
+        ai_faq_old, ai_rss_old = db["get_ai_settings"](cid)
+        db["set_ai_settings"](cid, bool(data.get("ai_faq")), bool(data.get("ai_rss")))
+    except Exception as e:
+        errors.append(f\"KI: {e}\")
+
+    # --- FAQ Verwaltung ---
+    try:
+        from shared.database import upsert_faq, delete_faq
+    except Exception:
+        try:
+            from .database import upsert_faq, delete_faq
+        except Exception:
+            upsert_faq = delete_faq = None
+    faq_add = data.get(\"faq_add\") or None
+    if upsert_faq and faq_add and (faq_add.get(\"q\") or \"\").strip():
+        try:
+            upsert_faq(cid, faq_add[\"q\"].strip(), (faq_add.get(\"a\") or \"\").strip())
+        except Exception as e:
+            errors.append(f\"FAQ add: {e}\")
+    faq_del = data.get(\"faq_del\") or None
+    if delete_faq and faq_del and (faq_del.get(\"q\") or \"\").strip():
+        try:
+            delete_faq(cid, faq_del[\"q\"].strip())
+        except Exception as e:
+            errors.append(f\"FAQ del: {e}\")
+
+    # --- Report / Statistiken ---
+    try:
+        from shared.database import set_daily_stats
+    except Exception:
+        try:
+            from .database import set_daily_stats
+        except Exception:
+            set_daily_stats = None
+    if set_daily_stats:
+        try:
+            set_daily_stats(cid, bool(data.get(\"daily_stats\")))
+        except Exception as e:
+            errors.append(f\"Report: {e}\")
+
+    # --- Mood ---
+    try:
+        from shared.database import set_mood_question, set_mood_topic
+    except Exception:
+        try:
+            from .database import set_mood_question, set_mood_topic
+        except Exception:
+            set_mood_question = set_mood_topic = None
+    if set_mood_question:
+        try:
+            if (data.get(\"mood_question\") or \"\").strip(): set_mood_question(cid, data[\"mood_question\"].strip())
+            if (data.get(\"mood_topic\") or \"\").strip().isdigit(): set_mood_topic(cid, int(data[\"mood_topic\"].strip()))
+        except Exception as e:
+            errors.append(f\"Mood: {e}\")
+
+    # --- Sprache ---
+    try:
+        from shared.database import set_group_language
+    except Exception:
+        try:
+            from .database import set_group_language
+        except Exception:
+            set_group_language = None
+    if set_group_language:
+        try:
+            lang = (data.get(\"language\") or \"de\").strip()[:5]
+            set_group_language(cid, lang)
+        except Exception as e:
+            errors.append(f\"Sprache: {e}\")
+
+    # --- Nachtmodus ---
+    try:
+        from shared.database import set_night_mode
+    except Exception:
+        try:
+            from .database import set_night_mode
+        except Exception:
+            set_night_mode = None
+    night = data.get(\"night\") or {}
+    if set_night_mode:
+        try:
+            nm = {\n                \"enabled\": bool(night.get(\"on\")),\n                \"start\": (night.get(\"start\") or \"22:00\"),\n                \"end\":   (night.get(\"end\")   or \"07:00\"),\n                \"days\":  (night.get(\"days\")  or \"\").strip(),\n            }\n            set_night_mode(cid, nm)\n        except Exception as e:\n            errors.append(f\"Nachtmodus: {e}\")\n\n    # --- Router-Regel (einfaches Format \"pattern → topic\") ---\n    try:\n        from shared.database import add_topic_router_rule\n    except Exception:\n        try:\n            from .database import add_topic_router_rule\n        except Exception:\n            add_topic_router_rule = None\n    if add_topic_router_rule:\n        try:\n            rule = (data.get(\"router_rule\") or \"\").strip()\n            if rule:\n                for line in rule.splitlines():\n                    if \"→\" in line:\n                        patt, tid = [x.strip() for x in line.split(\"→\",1)]\n                    elif \"->\" in line:\n                        patt, tid = [x.strip() for x in line.split(\"->\",1)]\n                    else:\n                        continue\n                    if patt and tid.lstrip(\"-\").isdigit():\n                        add_topic_router_rule(cid, patt, int(tid))\n        except Exception as e:\n            errors.append(f\"Router: {e}\")\n\n    # --- Antwort ---\n    if errors:\n        return await msg.reply_text(\"⚠️ Teilweise gespeichert:\\n• \" + \"\\n• \".join(errors))\n    return await msg.reply_text(\"✅ Einstellungen gespeichert.\")\n```
+
 
 # --- Öffentliche Registrierung ------------------------------------------------
 def register_miniapp(app: Application):
