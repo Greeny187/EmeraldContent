@@ -10,6 +10,7 @@ from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,33 @@ async def _state_json(cid: int) -> dict:
         sub = db["get_subscription_info"](cid) or {}
     except Exception:
         sub = {"tier":"free", "active":False, "valid_until":None}
+    # --- AI Moderation (effektiv + rohe Settings zusammenführen)
+    try:
+        aimod_eff  = db["effective_ai_mod_policy"](cid) or {}
+        aimod_cfg  = db["get_ai_mod_settings"](cid) or {}
+        aimod = {**aimod_eff, **aimod_cfg}
+    except Exception:
+        aimod = {}
 
+    # --- FAQs
+    try:
+        faqs = [{"q": q, "a": a} for (q, a) in (db["list_faqs"](cid) or [])]
+    except Exception:
+        faqs = []
+
+    # --- Topic-Router Regeln (falls vorhanden)
+    try:
+        rules = db["list_topic_router_rules"](cid) or []
+        router_rules = [{
+            "rule_id": r[0],
+            "target_topic_id": r[1],
+            "enabled": bool(r[2]),
+            "keywords": r[3] or [],
+            "domains": r[4] or []
+        } for r in rules]
+    except Exception:
+        router_rules = []
+    
     return {
         "welcome": _mk_media_block(cid, "welcome"),
         "rules":   _mk_media_block(cid, "rules"),
@@ -179,6 +206,9 @@ async def _state_json(cid: int) -> dict:
             "exceptions_enabled": bool(link.get("exceptions_enabled")),
         },
         "ai": {"faq": bool(ai_faq), "rss": bool(ai_rss)},
+        "aimod": aimod,
+        "faqs": faqs,
+        "router_rules": router_rules,
         "mood": {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
         "rss": {"topic": rss_topic, "feeds": feeds},
         "daily_stats": db["is_daily_stats_enabled"](cid),
@@ -231,7 +261,35 @@ async def route_stats(request: web.Request):
         "top_responders": top,
         "agg": agg,
     })
+    
+async def route_send_mood(request: web.Request):
+    app: Application = request.app["ptb_app"]
+    if request.method == "OPTIONS":
+        return _cors_json({})
+    try:
+        cid = int(request.query.get("cid", "0"))
+        uid = int(request.query.get("uid", "0"))
+    except Exception:
+        return _cors_json({"error": "bad_params"}, 400)
+    if not await _is_admin(app, cid, uid):
+        return _cors_json({"error": "forbidden"}, 403)
 
+    db = _db()
+    question = db["get_mood_question"](cid) or "Wie ist deine Stimmung?"
+    topic_id = db["get_mood_topic"](cid) or None
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👍", callback_data="mood_like"),
+        InlineKeyboardButton("👎", callback_data="mood_dislike"),
+        InlineKeyboardButton("🤔", callback_data="mood_think"),
+    ]])
+
+    try:
+        await app.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
+        return _cors_json({"ok": True})
+    except Exception as e:
+        return _cors_json({"ok": False, "error": str(e)})
+    
 # === Bot-Befehle & WebAppData speichern ======================================
 async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # nur im Privatchat
@@ -418,12 +476,33 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             errors.append(f"FAQ del: {e}")
 
-    # Daily Stats --------------------------------------------------------------
+    # AI-Moderation ------------------------------------------------------------
+    try:
+        aimod = data.get("ai_mod") or {}
+        if aimod:
+            # Nur erlaubte Schlüssel übernehmen; Topic separat
+            allowed = {
+                "enabled", "shadow_mode", "action_primary",
+                "mute_minutes", "warn_text", "appeal_url",
+                "max_per_min", "cooldown_s",
+                # optionale Schwellen:
+                "toxicity", "hate", "sexual", "harassment", "selfharm", "violence",
+                "nudity", "sexual_minors", "weapons", "gore", "link_risk",
+                # Ausnahmen:
+                "exempt_admins", "exempt_topic_owner"
+            }
+            payload = {k: aimod[k] for k in allowed if k in aimod}
+            topic_id = int(aimod.get("topic_id") or 0)
+            db["set_ai_mod_settings"](cid, topic_id, **payload)
+    except Exception as e:
+        errors.append(f"AI-Mod: {e}")
+
+    # Daily-Report (Statistik 08:00) ------------------------------------------
     try:
         if "daily_stats" in data:
             db["set_daily_stats"](cid, bool(data.get("daily_stats")))
     except Exception as e:
-        errors.append(f"Report: {e}")
+        errors.append(f"Daily-Report: {e}")
 
     # Mood ---------------------------------------------------------------------
     try:
@@ -513,7 +592,8 @@ def register_miniapp(app: Application):
         webapp.router.add_route("OPTIONS", "/miniapp/stats", route_stats)
         webapp.router.add_route("GET", "/miniapp/file", _file_proxy)
         webapp.router.add_route("OPTIONS", "/miniapp/file", _file_proxy)
-
+        webapp.router.add_route("GET", " /miniapp/send_mood", route_send_mood)
+        webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
         logger.info("[miniapp] HTTP-Routen registriert")
     else:
         logger.info("[miniapp] Keine AIOHTTP-App verfügbar – /miniapp/state|stats nicht aktiv.")
