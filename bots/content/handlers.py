@@ -1342,10 +1342,10 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
-    app.add_handler(ChatMemberHandler(_on_admin_change, ChatMemberHandler.CHAT_MEMBER), group=-3)
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=-3)
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=-3)
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=-3)
+    app.add_handler(ChatMemberHandler(_on_admin_change, ChatMemberHandler.CHAT_MEMBER), group=-4)
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=-4)
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=-4)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=-4)
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r"^-?\d+_captcha_button_\d+$"), group=-2)
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, math_captcha_handler), group=-2)
 
@@ -1354,4 +1354,5 @@ def register_handlers(app):
 
     # Hilfe (wenn du einen help_handler als Conversation/Handler-Objekt hast)
     app.add_handler(help_handler, group=5)
+    app.add_error_handler(error_handler)
 
