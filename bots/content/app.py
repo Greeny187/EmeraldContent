@@ -1,7 +1,7 @@
 from telegram.ext import CommandHandler, Application
 from . import handlers, menu, rss, mood
 import os
-from shared.miniapp import register_miniapp
+from .miniapp import register_miniapp
 try:
     from shared import statistic, ads
 except Exception:
