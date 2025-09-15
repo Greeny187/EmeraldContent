@@ -156,63 +156,108 @@ def _mk_media_block(cid:int, kind:str):
 
 async def _state_json(cid: int) -> dict:
     db = _db()
-    link = db["get_link_settings"](cid) or {}
-    ai_faq, ai_rss = (db["get_ai_settings"](cid) or (False, False))
-    rss_topic, feeds = None, []
+    # Links/Spam
     try:
-        rss_topic = db["get_rss_topic"](cid)
-        feeds = [{"url": u, "topic": t} for (u, t) in (db["list_rss_feeds"](cid) or [])]
+        eff = db["get_effective_link_policy"](cid, None) or {}
+    except Exception:
+        eff = {}
+    try:
+        link = db["get_link_settings"](cid) or {}
+    except Exception:
+        link = {}
+
+    # RSS (voll)
+    feeds = []
+    try:
+        for (c,url,topic,etag,lm,post_images,enabled) in db["get_rss_feeds_full"]():
+            if c == cid:
+                feeds.append({"url":url, "topic":topic, "post_images":bool(post_images), "enabled":bool(enabled)})
     except Exception:
         pass
+
+    # Subscription
     try:
         sub = db["get_subscription_info"](cid) or {}
     except Exception:
-        sub = {"tier":"free", "active":False, "valid_until":None}
-    # --- AI Moderation (effektiv + rohe Settings zusammenführen)
+        sub = {"tier":"free","active":False,"valid_until":None}
+
+    # AI‑Moderation (effektiv + explizit)
     try:
-        aimod_eff  = db["effective_ai_mod_policy"](cid) or {}
-        aimod_cfg  = db["get_ai_mod_settings"](cid) or {}
+        aimod_eff = db["effective_ai_mod_policy"](cid) or {}
+        aimod_cfg = db["get_ai_mod_settings"](cid, 0) or {}
         aimod = {**aimod_eff, **aimod_cfg}
     except Exception:
         aimod = {}
 
-    # --- FAQs
+    # FAQs
     try:
-        faqs = [{"q": q, "a": a} for (q, a) in (db["list_faqs"](cid) or [])]
+        faqs = [{"q":q, "a":a} for (q,a) in (db["list_faqs"](cid) or [])]
     except Exception:
         faqs = []
 
-    # --- Topic-Router Regeln (falls vorhanden)
+    # Router
     try:
-        rules = db["list_topic_router_rules"](cid) or []
+        rows = db["list_topic_router_rules"](cid) or []
         router_rules = [{
-            "rule_id": r[0],
-            "target_topic_id": r[1],
-            "enabled": bool(r[2]),
-            "keywords": r[3] or [],
-            "domains": r[4] or []
-        } for r in rules]
+          "rule_id": r[0], "target_topic_id": r[1], "enabled": bool(r[2]),
+          "delete_original": bool(r[3]), "warn_user": bool(r[4]),
+          "keywords": r[5] or [], "domains": r[6] or []
+        } for r in rows]
     except Exception:
         router_rules = []
-    
+
+    # Night mode
+    try:
+        (enabled, start_m, end_m, del_non_admin, warn_once, tz, hard, override_until) = db["get_night_mode"](cid)
+        night = {
+          "enabled": bool(enabled),
+          "start": f"{start_m//60:02d}:{start_m%60:02d}",
+          "end":   f"{end_m//60:02d}:{end_m%60:02d}",
+          "delete_non_admin_msgs": bool(del_non_admin),
+          "warn_once": bool(warn_once),
+          "timezone": tz,
+          "hard_mode": bool(hard),
+          "override_until": override_until.isoformat() if override_until else None,
+        }
+    except Exception:
+        night = {"enabled": False, "start": "22:00", "end":"07:00"}
+
+    # Spam‑Block für die UI
+    spam_block = {
+        "on":           bool(eff.get("admins_only") or link.get("only_admin_links")),
+        "block_links":  bool(eff.get("admins_only") or link.get("only_admin_links")),
+        "block_media":  False,
+        "block_invite_links": False,
+        "policy_topic": 0,
+        "whitelist":    eff.get("whitelist") or [],
+        "blacklist":    eff.get("blacklist") or [],
+        "action":       eff.get("action") or "delete",
+        "per_user_daily_limit": 0,
+        "quota_notify": None
+    }
+
+    # AI Assistent Flags
+    try:
+        (ai_faq, ai_rss) = db["get_ai_settings"](cid)
+    except Exception:
+        ai_faq, ai_rss = (False, False)
+
     return {
-        "welcome": _mk_media_block(cid, "welcome"),
-        "rules":   _mk_media_block(cid, "rules"),
-        "farewell":_mk_media_block(cid, "farewell"),
-        "links": {
-            "only_admin_links": bool(link.get("only_admin_links")),
-            "warning_enabled": bool(link.get("warning_enabled")),
-            "warning_text": link.get("warning_text") or "⚠️ Nur Admins dürfen Links posten.",
-            "exceptions_enabled": bool(link.get("exceptions_enabled")),
-        },
-        "ai": {"faq": bool(ai_faq), "rss": bool(ai_rss)},
-        "aimod": aimod,
-        "faqs": faqs,
-        "router_rules": router_rules,
-        "mood": {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
-        "rss": {"topic": rss_topic, "feeds": feeds},
-        "daily_stats": db["is_daily_stats_enabled"](cid),
-        "subscription": sub,
+      "welcome": _mk_media_block(cid, "welcome"),
+      "rules":   _mk_media_block(cid, "rules"),
+      "farewell":_mk_media_block(cid, "farewell"),
+      "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
+      "spam":    spam_block,
+      "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
+      "aimod":   aimod,
+      "faqs":    faqs,
+      "router_rules": router_rules,
+      "mood":    {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
+      "rss":     {"feeds": feeds},
+      "daily_stats": db["is_daily_stats_enabled"](cid),
+      "subscription": sub,
+      "night":   night,
+      "language": db.get("get_group_language", lambda *_: None)(cid)
     }
 
 # === HTTP-Routen (nur lesend, Admin-Gate per Bot) ============================
@@ -331,237 +376,196 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not getattr(msg, "web_app_data", None):
         return
 
-    # payload parsen
     try:
         data = json.loads(msg.web_app_data.data or "{}")
     except Exception:
-        return await msg.reply_text("❌ Ungültige Daten von der Mini-App.")
+        return await msg.reply_text("❌ Ungültige Daten von der Mini‑App.")
 
+    # cid aus Payload (fallback: context/chat)
+    cid = None
     try:
-        cid = int(data.get("cid"))
+        if "cid" in data: cid = int(data.get("cid"))
+        elif "context" in data and "cid" in data["context"]: cid = int(data["context"]["cid"])
     except Exception:
-        return await msg.reply_text("❌ Gruppen-ID fehlt oder ist ungültig.")
+        pass
+    if not cid:
+        return await msg.reply_text("❌ Gruppen‑ID fehlt oder ist ungültig.")
 
-    # Nur Admin/Owner dürfen speichern
+    # Nur Admin/Owner
     if not await _is_admin_or_owner(context, cid, update.effective_user.id):
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
     db = _db()
-    errors: List[str] = []
+    errors: list[str] = []
 
-    # Welcome/Farewell/Rules ---------------------------------------------------
+    # Welcome/Rules/Farewell
     try:
-        if data.get("welcome_on"):
-            text = (data.get("welcome_text") or "Willkommen {user} 👋").strip()
-            db["set_welcome"](cid, None, text)  # (chat_id, photo_id, text)
-        else:
-            db["delete_welcome"](cid)
-    except Exception as e:
-        errors.append(f"Welcome: {e}")
+        w = data.get("welcome") or {}
+        if w.get("on"): db["set_welcome"](cid, None, (w.get("text") or "Willkommen {user} 👋").strip())
+        else:            db["delete_welcome"](cid)
+    except Exception as e: errors.append(f"Welcome: {e}")
 
     try:
-        if data.get("farewell_on"):
-            db["set_farewell"](cid, None, (data.get("farewell_text") or "Tschüss {user}!").strip())
-        else:
-            db["delete_farewell"](cid)
-    except Exception as e:
-        errors.append(f"Farewell: {e}")
+        rls = data.get("rules") or {}
+        if rls.get("on") and (rls.get("text") or "").strip(): db["set_rules"](cid, None, rls.get("text").strip())
+        else:                                                    db["delete_rules"](cid)
+    except Exception as e: errors.append(f"Regeln: {e}")
 
     try:
-        if data.get("rules_on") and (data.get("rules_text") or "").strip():
-            db["set_rules"](cid, None, data["rules_text"].strip())  # (chat_id, photo_id, text)
-        else:
-            db["delete_rules"](cid)
-    except Exception as e:
-        errors.append(f"Regeln: {e}")
+        f = data.get("farewell") or {}
+        if f.get("on"): db["set_farewell"](cid, None, (f.get("text") or "Tschüss {user}!").strip())
+        else:            db["delete_farewell"](cid)
+    except Exception as e: errors.append(f"Farewell: {e}")
 
-    # Clean Deleted (nur Flag, Details optional)
+    # Links/Spam
     try:
-        if "clean_deleted" in data:
-            # falls du eine DB-Funktion dafür hast – hier nur als Beispiel:
-            # db["set_clean_deleted_settings"](cid, enabled=bool(data.get("clean_deleted")))
-            pass
-    except Exception as e:
-        errors.append(f"Aufräumen: {e}")
+        sp = data.get("spam") or {}
+        admins_only = bool(sp.get("on") or sp.get("block_links") or data.get("admins_only"))
+        db["set_link_settings"](cid, admins_only=admins_only)
 
-    # Spam/Links global + Topic-Override --------------------------------------
+        t_raw = str(sp.get("policy_topic") or '').strip()
+        topic_id = int(t_raw) if t_raw.isdigit() else None
+
+        def _to_list(v):
+            if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+            if isinstance(v, str):  return [s.strip() for line in v.splitlines() for s in line.split(',') if s.strip()]
+            return []
+
+        fields = {}
+        wl=_to_list(sp.get("whitelist","")); bl=_to_list(sp.get("blacklist",""))
+        if wl: fields["link_whitelist"]   = wl
+        if bl: fields["domain_blacklist"] = bl
+        act=(sp.get("action") or '').strip().lower();
+        if act in ("delete","warn","mute"): fields["action_primary"] = act
+        lim=str(sp.get("per_user_daily_limit") or '').strip();
+        if lim.isdigit(): fields["per_user_daily_limit"] = int(lim)
+        qn=(sp.get("quota_notify") or '').strip().lower();
+        if qn in ("off","smart","always"): fields["quota_notify"]=qn
+        if topic_id is not None and fields:
+            db["set_spam_policy_topic"](cid, topic_id, **fields)
+    except Exception as e: errors.append(f"Spam/Links: {e}")
+
+    # RSS: add/del + update (enabled/post_images)
     try:
-        admins_only   = bool(data.get("admins_only"))
-        warning_on    = bool(data.get("warning_on"))
-        warning_text  = (data.get("warning_text") or "").strip() or None
-        exceptions_on = bool(data.get("exceptions_on"))
+        r = data.get("rss") or {}
+        if (r.get("url") or '').strip():
+            url = r.get("url").strip(); topic = int(r.get("topic") or 0)
+            try: db["set_rss_topic"](cid, topic)
+            except Exception: pass
+            db["add_rss_feed"](cid, url, topic)
+            db["set_rss_feed_options"](cid, url, post_images=bool(r.get("post_images")), enabled=bool(r.get("enabled", True)))
+        upd = data.get("rss_update") or None
+        if upd and (upd.get("url") or '').strip():
+            url=upd.get("url").strip()
+            db["set_rss_feed_options"](cid, url, post_images=upd.get("post_images"), enabled=upd.get("enabled"))
+        if data.get("rss_del"): db["remove_rss_feed"](cid, data.get("rss_del"))
+    except Exception as e: errors.append(f"RSS: {e}")
 
-        db["set_link_settings"](cid,
-            admins_only=admins_only,     # Alias → protection in DB
-            warning_on=warning_on,
-            warning_text=warning_text,
-            exceptions_on=exceptions_on,
-        )  # schreibt group_settings inkl. Warnung/Ausnahmen
-
-        topic_id_raw = (data.get("topic_id") or "").strip()
-        topic_id = int(topic_id_raw) if topic_id_raw.isdigit() else None
-
-        wl = [x.strip().lower().lstrip(".") for x in (data.get("whitelist") or "").splitlines() if x.strip()]
-        bl = [x.strip().lower().lstrip(".") for x in (data.get("blacklist") or "").splitlines() if x.strip()]
-
-        spam_action = (data.get("spam_action") or "").strip().lower()
-        if spam_action not in ("delete", "mute"):
-            spam_action = None
-
-        per_day = data.get("topic_limit")
-        try:
-            per_day = int(per_day) if per_day is not None and str(per_day).strip() != "" else None
-        except Exception:
-            per_day = None
-
-        quota_notify = (data.get("quota_notify") or "").strip().lower()
-        if quota_notify not in ("off", "smart", "always"):
-            quota_notify = None
-
-        if topic_id is not None:
-            fields = {}
-            if wl:            fields["link_whitelist"] = wl
-            if bl:            fields["domain_blacklist"] = bl
-            if spam_action:   fields["action_primary"] = spam_action
-            if per_day is not None: fields["per_user_daily_limit"] = per_day
-            if quota_notify:  fields["quota_notify"] = quota_notify
-            if fields:
-                db["set_spam_policy_topic"](cid, topic_id, **fields)
-    except Exception as e:
-        errors.append(f"Spam/Links: {e}")
-
-    # RSS ----------------------------------------------------------------------
+    # KI (Assistent/FAQ)
     try:
-        post_images = bool(data.get("rss_images"))
-        add_list = [u.strip() for u in (data.get("rss_add") or "").splitlines() if u.strip()]
-        del_list = [u.strip() for u in (data.get("rss_del") or "").splitlines() if u.strip()]
+        ai = data.get("ai") or {}
+        faq_on = bool(ai.get("on") or (ai.get("faq") or '').strip())
+        db["set_ai_settings"](cid, faq=faq_on, rss=None)
+    except Exception as e: errors.append(f"KI: {e}")
 
-        # auf das (evtl.) vorhandene Topic mappen
-        try:
-            rss_topic = db["get_rss_topic"](cid) or 0
-        except Exception:
-            rss_topic = 0
-
-        for url in add_list:
-            try:
-                db["add_rss_feed"](cid, url, rss_topic)
-                db["set_rss_feed_options"](cid, url, post_images=post_images)
-            except Exception as e:
-                errors.append(f"RSS add {url}: {e}")
-        for url in del_list:
-            try:
-                db["remove_rss_feed"](cid, url)
-            except Exception as e:
-                errors.append(f"RSS del {url}: {e}")
-    except Exception as e:
-        errors.append(f"RSS: {e}")
-
-    # AI / FAQ -----------------------------------------------------------------
+    # FAQ
     try:
-        db["set_ai_settings"](cid, faq=bool(data.get("ai_faq")), rss=bool(data.get("ai_rss")))
-    except Exception as e:
-        errors.append(f"KI: {e}")
-
-    faq_add = data.get("faq_add") or None
-    if faq_add and (faq_add.get("q") or "").strip():
-        try:
-            db["upsert_faq"](cid, faq_add["q"].strip(), (faq_add.get("a") or "").strip())
-        except Exception as e:
-            errors.append(f"FAQ add: {e}")
-
-    faq_del = data.get("faq_del") or None
-    if faq_del and (faq_del.get("q") or "").strip():
-        try:
+        faq_add = data.get("faq_add") or None
+        if faq_add and (faq_add.get("q") or '').strip():
+            db["upsert_faq"](cid, faq_add["q"].strip(), (faq_add.get("a") or '').strip())
+        faq_del = data.get("faq_del") or None
+        if faq_del and (faq_del.get("q") or '').strip():
             db["delete_faq"](cid, faq_del["q"].strip())
-        except Exception as e:
-            errors.append(f"FAQ del: {e}")
+    except Exception as e: errors.append(f"FAQ: {e}")
 
-    # AI-Moderation ------------------------------------------------------------
+    # KI‑Moderation (viele Felder erlaubt)
     try:
         aimod = data.get("ai_mod") or {}
         if aimod:
-            # Nur erlaubte Schlüssel übernehmen; Topic separat
             allowed = {
-                "enabled", "shadow_mode", "action_primary",
-                "mute_minutes", "warn_text", "appeal_url",
-                "max_per_min", "cooldown_s",
-                # optionale Schwellen:
-                "toxicity", "hate", "sexual", "harassment", "selfharm", "violence",
-                "nudity", "sexual_minors", "weapons", "gore", "link_risk",
-                # Ausnahmen:
-                "exempt_admins", "exempt_topic_owner"
+              "enabled","shadow_mode","action_primary","mute_minutes","warn_text","appeal_url",
+              "max_per_min","cooldown_s","exempt_admins","exempt_topic_owner",
+              "toxicity","hate","sexual","harassment","selfharm","violence",
+              # Aliase → DB‑Spalten
+              "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh"
             }
-            payload = {k: aimod[k] for k in allowed if k in aimod}
-            topic_id = int(aimod.get("topic_id") or 0)
-            db["set_ai_mod_settings"](cid, topic_id, **payload)
-    except Exception as e:
-        errors.append(f"AI-Mod: {e}")
+            payload={}
+            for k in allowed:
+                if k in aimod and aimod[k] is not None:
+                    payload[k]=aimod[k]
+            # Aliase umbenennen
+            alias = {
+              "toxicity":"tox_thresh","hate":"hate_thresh","sexual":"sex_thresh",
+              "harassment":"harass_thresh","selfharm":"selfharm_thresh","violence":"violence_thresh"
+            }
+            for k,v in list(payload.items()):
+              if k in alias: payload[alias[k]]=v; del payload[k]
+            db["set_ai_mod_settings"](cid, 0, **payload)
+    except Exception as e: errors.append(f"AI‑Mod: {e}")
 
-    # Daily-Report (Statistik 08:00) ------------------------------------------
+    # Daily Report
     try:
-        if "daily_stats" in data:
-            db["set_daily_stats"](cid, bool(data.get("daily_stats")))
-    except Exception as e:
-        errors.append(f"Daily-Report: {e}")
+        if "daily_stats" in data: db["set_daily_stats"](cid, bool(data.get("daily_stats")))
+    except Exception as e: errors.append(f"Daily‑Report: {e}")
 
-    # Mood ---------------------------------------------------------------------
+    # Mood
     try:
-        if (data.get("mood_question") or "").strip():
-            db["set_mood_question"](cid, data["mood_question"].strip())
-        if (data.get("mood_topic") or "").strip().isdigit():
-            db["set_mood_topic"](cid, int(data["mood_topic"].strip()))
-    except Exception as e:
-        errors.append(f"Mood: {e}")
+        if (data.get("mood") or {}).get("question", "").strip(): db["set_mood_question"](cid, data["mood"]["question"].strip())
+        if str((data.get("mood") or {}).get("topic", "")).strip().isdigit(): db["set_mood_topic"](cid, int(str(data["mood"]["topic"]).strip()))
+    except Exception as e: errors.append(f"Mood: {e}")
 
-    # Sprache ------------------------------------------------------------------
+    # Sprache
     try:
-        if (data.get("language") or "").strip():
-            db["set_group_language"](cid, data["language"].strip()[:5])
-    except Exception as e:
-        errors.append(f"Sprache: {e}")
+        lang=(data.get("language") or '').strip()
+        if lang: db["set_group_language"](cid, lang[:5])
+    except Exception as e: errors.append(f"Sprache: {e}")
 
-    # Nachtmodus ---------------------------------------------------------------
+    # Nachtmodus (erweitert)
     try:
         night = data.get("night") or {}
-        if "on" in night or "start" in night or "end" in night:
+        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night):
+            def _hm_to_min(s, default):
+                try:
+                    h,m = str(s or '').split(':'); return int(h)*60 + int(m)
+                except Exception: return default
             enabled = bool(night.get("on"))
             start_m = _hm_to_min(night.get("start") or "22:00", 1320)
             end_m   = _hm_to_min(night.get("end") or "07:00", 360)
-            db["set_night_mode"](cid, enabled=enabled, start_minute=start_m, end_minute=end_m)
-    except Exception as e:
-        errors.append(f"Nachtmodus: {e}")
+            db["set_night_mode"](cid,
+                enabled=enabled,
+                start_minute=start_m,
+                end_minute=end_m,
+                delete_non_admin_msgs = night.get("delete_non_admin_msgs"),
+                warn_once = night.get("warn_once"),
+                timezone = night.get("timezone"),
+                hard_mode = night.get("hard_mode"),
+                override_until = night.get("override_until")
+            )
+    except Exception as e: errors.append(f"Nachtmodus: {e}")
 
-    # Router -------------------------------------------------------------------
+    # Router
     try:
-        rule_text = (data.get("router_rule") or "").strip()
-        if rule_text:
-            for line in rule_text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                if "→" in line:
-                    patt, tid = [x.strip() for x in line.split("→", 1)]
-                elif "->" in line:
-                    patt, tid = [x.strip() for x in line.split("->", 1)]
-                else:
-                    continue
-                if not patt or not tid.lstrip("-").isdigit():
-                    continue
-                db["add_topic_router_rule"](cid, int(tid), keywords=[patt])
-    except Exception as e:
-        errors.append(f"Router: {e}")
+        if "router_add" in data:
+            ra = data["router_add"] or {}
+            target = int(ra.get("target_topic_id") or 0)
+            kw = ra.get("keywords") or []
+            dom = ra.get("domains") or []
+            del_orig = bool(ra.get("delete_original", True))
+            warn_user = bool(ra.get("warn_user", True))
+            if target:
+                db["add_topic_router_rule"](cid, target, keywords=kw, domains=dom, delete_original=del_orig, warn_user=warn_user)
+    except Exception as e: errors.append(f"Router: {e}")
 
-    # Pro kaufen -------------------------------------------------------------------
+    # Pro kaufen/verlängern
     try:
         months = int(data.get("pro_months") or 0)
-        if months > 0:
-            from datetime import datetime
+        if months>0:
+            from datetime import datetime, timedelta
             from zoneinfo import ZoneInfo
             until = datetime.now(ZoneInfo("UTC")) + timedelta(days=30*months)
             db["set_pro_until"](cid, until, tier="pro")
-    except Exception as e:
-        errors.append(f"Pro-Abo: {e}")
-    
+    except Exception as e: errors.append(f"Pro‑Abo: {e}")
+
     if errors:
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
     return await msg.reply_text("✅ Einstellungen gespeichert.")
@@ -592,7 +596,7 @@ def register_miniapp(app: Application):
         webapp.router.add_route("OPTIONS", "/miniapp/stats", route_stats)
         webapp.router.add_route("GET", "/miniapp/file", _file_proxy)
         webapp.router.add_route("OPTIONS", "/miniapp/file", _file_proxy)
-        webapp.router.add_route("GET", " /miniapp/send_mood", route_send_mood)
+        webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
         webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
         logger.info("[miniapp] HTTP-Routen registriert")
     else:

@@ -1338,7 +1338,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=-1)
 
     # --- Moderation ---
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=-2)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=-3)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
@@ -1353,5 +1353,5 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=3)
 
     # Hilfe (wenn du einen help_handler als Conversation/Handler-Objekt hast)
-    app.add_handler(help_handler, group=1)
+    app.add_handler(help_handler, group=5)
 
