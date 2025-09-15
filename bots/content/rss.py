@@ -220,33 +220,6 @@ async def fetch_rss_feed(context: CallbackContext):
 
     logger.debug(f"fetch_rss_feed took {(time.time()-start):.3f}s")
 
-async def rss_url_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    ud  = context.user_data or {}
-    text = (msg.text or "").strip()
-
-    # Nur reagieren, wenn Pending existiert
-    pend = get_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
-    cid  = (ud.get('rss_group_id') or (pend.get('chat_id') if isinstance(pend, dict) else None))
-    if not cid:
-        # Kein RSS-Flow aktiv â†’ einfach NICHT antworten, damit der menu_free_text_handler dran ist
-        return
-
-    # (Optional) prÃ¼fen, ob wirklich auf Bot-Prompt geantwortet wurde:
-    rep = msg.reply_to_message
-    if not (rep and rep.from_user and rep.from_user.id == context.bot.id):
-        # Wir kÃ¶nnten eine freundliche Anleitung senden â€“ besser: still zurÃ¼ckkehren
-        pass
-
-    try:
-        await _call_db_safe(add_rss_feed, cid, text)
-        clear_pending_input(msg.chat.id, update.effective_user.id, 'rss_url')
-        ud.pop('awaiting_rss_url', None)
-        return await msg.reply_text("âœ… RSS-Feed hinzugefÃ¼gt.")
-    except Exception:
-        logger.exception("RSS-URL speichern fehlgeschlagen")
-        return await msg.reply_text("âŒ Konnte den RSS-Feed nicht speichern.")
-
 def register_rss(app):
     # RSS-Befehle
     app.add_handler(CommandHandler("setrss",   set_rss_feed))

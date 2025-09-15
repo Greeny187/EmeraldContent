@@ -178,9 +178,6 @@ def _extract_domains_from_text(text:str) -> list[str]:
         except: pass
     return doms
 
-def ai_available() -> bool:
-    return bool(os.getenv("OPENAI_API_KEY"))
-
 def heuristic_link_risk(domains:list[str]) -> float:
     """
     Grobe Risikobewertung fÃ¼r Links ohne AI: Shortener/Suspicious TLDs etc.

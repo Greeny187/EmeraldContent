@@ -118,8 +118,8 @@ def _cors_json(data: dict, status: int = 200):
         }
     )
 
-async def _file_proxy(request: web.Request) -> Response:
-    app: Application = request.app["ptb_app"]
+async def _file_proxy(request):
+    app = request.app["ptb_app"]
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
@@ -132,57 +132,37 @@ async def _file_proxy(request: web.Request) -> Response:
         return _cors_json({"error":"missing_file_id"}, 400)
     if not await _is_admin(app, cid, uid):
         return _cors_json({"error":"forbidden"}, 403)
-
     try:
         f = await app.bot.get_file(fid)
         buf = BytesIO()
         await f.download_to_memory(out=buf)
         buf.seek(0)
-        # Content-Type rudimentär (optional verbessern über Dateiendung)
-        return Response(
-            body=buf.read(),
-            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
-            content_type="application/octet-stream"
-        )
-    except Exception as e:
-        logger.warning(f"[miniapp] file proxy failed: {e}")
+        return Response(body=buf.read(), headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
+                        content_type="application/octet-stream")
+    except Exception:
         return _cors_json({"error":"not_found"}, 404)
-    
 
 # --- kleine Helferblöcke (DB-Aufrufe sauber gekapselt) -----------------------
 def _mk_media_block(cid:int, kind:str):
-    # kind ∈ {"welcome","rules","farewell"}
-    db = _db()
     loader = {"welcome": "get_welcome", "rules": "get_rules", "farewell":"get_farewell"}[kind]
     ph, tx = (None, None)
     try:
-        r = db[loader](cid)
-        if r:
-            ph, tx = r
+        r = _db()[loader](cid)
+        if r: ph, tx = r
     except Exception:
         pass
-    return {
-        "on": bool(tx),
-        "text": tx or "",
-        "photo": bool(ph),
-        # relative Proxy-URL (Client hängt cid/uid an)
-        "photo_id": ph or ""
-    }
+    return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or ""}
 
 async def _state_json(cid: int) -> dict:
     db = _db()
-    link = db["get_link_settings"](cid) or {}  # only_admin_links, warning_enabled, warning_text, exceptions_enabled  # noqa
-    ai = db["get_ai_settings"](cid) or (False, False)
-    ai_faq, ai_rss = ai
-
-    rss_topic = None
-    feeds = []
+    link = db["get_link_settings"](cid) or {}
+    ai_faq, ai_rss = (db["get_ai_settings"](cid) or (False, False))
+    rss_topic, feeds = None, []
     try:
         rss_topic = db["get_rss_topic"](cid)
         feeds = [{"url": u, "topic": t} for (u, t) in (db["list_rss_feeds"](cid) or [])]
     except Exception:
         pass
-    sub = {}
     try:
         sub = db["get_subscription_info"](cid) or {}
     except Exception:
@@ -192,12 +172,17 @@ async def _state_json(cid: int) -> dict:
         "welcome": _mk_media_block(cid, "welcome"),
         "rules":   _mk_media_block(cid, "rules"),
         "farewell":_mk_media_block(cid, "farewell"),
-        "links": {...},
-        "ai": {...},
-        "mood": {...},
-        "rss": {...},
+        "links": {
+            "only_admin_links": bool(link.get("only_admin_links")),
+            "warning_enabled": bool(link.get("warning_enabled")),
+            "warning_text": link.get("warning_text") or "⚠️ Nur Admins dürfen Links posten.",
+            "exceptions_enabled": bool(link.get("exceptions_enabled")),
+        },
+        "ai": {"faq": bool(ai_faq), "rss": bool(ai_rss)},
+        "mood": {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
+        "rss": {"topic": rss_topic, "feeds": feeds},
         "daily_stats": db["is_daily_stats_enabled"](cid),
-        "subscription": sub,  # <-- wichtig für Pro/Free im Frontend
+        "subscription": sub,
     }
 
 # === HTTP-Routen (nur lesend, Admin-Gate per Bot) ============================
@@ -519,15 +504,16 @@ def register_miniapp(app: Application):
         # Fallbacks ignorieren – dann gibt’s eben keine HTTP-Routen
         webapp = None
 
+# miniapp.py (Auszug im register_miniapp)
     if webapp:
         webapp["ptb_app"] = app
         webapp.router.add_route("GET", "/miniapp/state", route_state)
         webapp.router.add_route("OPTIONS", "/miniapp/state", route_state)
         webapp.router.add_route("GET", "/miniapp/stats", route_stats)
         webapp.router.add_route("OPTIONS", "/miniapp/stats", route_stats)
-        # NEU:
         webapp.router.add_route("GET", "/miniapp/file", _file_proxy)
         webapp.router.add_route("OPTIONS", "/miniapp/file", _file_proxy)
+
         logger.info("[miniapp] HTTP-Routen registriert")
     else:
         logger.info("[miniapp] Keine AIOHTTP-App verfügbar – /miniapp/state|stats nicht aktiv.")
