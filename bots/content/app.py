@@ -1,5 +1,5 @@
 from telegram.ext import CommandHandler, Application
-from . import handlers, menu, rss, mood
+from . import handlers, rss, mood
 import os
 from .miniapp import register_miniapp
 try:
@@ -17,13 +17,6 @@ def register(app):
 
     if hasattr(handlers, "register_handlers"):
         handlers.register_handlers(app)
-
-    # Dein echtes /menu an den Original-Handler binden (kein Fallback)
-    if hasattr(handlers, "menu_command"):
-        app.add_handler(CommandHandler("menu", handlers.menu_command), group=-3)
-
-    if hasattr(menu, "register_menu"):
-        menu.register_menu(app)   # registriert Callback/Reply-Handler
 
     if hasattr(mood, "register_mood"):
         mood.register_mood(app)

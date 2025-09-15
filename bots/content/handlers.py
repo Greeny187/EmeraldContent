@@ -35,7 +35,6 @@ from .patchnotes import __version__, PATCH_NOTES
 from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
     ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
     heuristic_link_risk, _apply_hard_permissions)
-from .menu import show_group_menu, menu_free_text_handler
 from shared.statistic import log_spam_event, log_night_event
 from shared.translator import translate_hybrid
 
@@ -672,33 +671,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("ðŸ”§ WÃ¤hle eine Gruppe:", reply_markup=markup)
 
-async def menu_command(update, context):
-    try:
-        from shared.database import get_registered_groups
-    except Exception:
-        from .database import get_registered_groups
-
-    from .access import get_visible_groups  # in-funktion, um Zyklen zu vermeiden
-
-    user = update.effective_user
-    all_groups = get_registered_groups()
-    visible_groups = await get_visible_groups(user.id, context.bot, all_groups)
-
-    if not visible_groups:
-        return await update.message.reply_text(
-            "🚫 Du bist in keiner Gruppe Admin, in der der Bot aktiv ist.\n"
-            "➡️ Füge den Bot in eine Gruppe ein und gib ihm Adminrechte."
-        )
-
-    if len(visible_groups) == 1:
-        chat_id = visible_groups[0][0]
-        context.user_data["selected_chat_id"] = chat_id
-        from .menu import show_group_menu
-        return await show_group_menu(query=None, cid=chat_id, context=context, dest_chat_id=update.effective_chat.id)
-
-    keyboard = [[InlineKeyboardButton(title, callback_data=f"group_{cid}")] for cid, title in visible_groups]
-    await update.message.reply_text("🛠️ Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 async def forum_topic_registry_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
@@ -748,7 +720,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Schlanker Fallback:
     - Niemals in KanÃ¤len laufen
     - Mood-Frage beantworten
-    - Bei irgendeinem offenen MenÃ¼-Flow (awaiting_*) an menu_free_text_handler delegieren
     - Sonst: nichts tun
     """
     msg   = update.effective_message
@@ -762,12 +733,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1) Expliziter Mini-Flow: Mood-Frage
     if ud.get("awaiting_mood_question"):
         return await mood_question_handler(update, context)
-
-    # 2) Zentrale MenÃ¼-Reply-Fallbacks
-    #    Wenn irgendein Awaiting-Flag (oder last_edit) gesetzt ist,
-    #    gib die Nachricht an den zentralen menu_free_text_handler ab.
-    if any(k.startswith("awaiting_") for k in ud.keys()) or ("last_edit" in ud):
-        return await menu_free_text_handler(update, context)
 
     # 3) Sonst: nichts â€“ andere Aufgaben haben eigene Handler
     return
@@ -1346,7 +1311,6 @@ async def math_captcha_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def register_handlers(app):
     app.add_handler(CommandHandler("start", start), group=-3)
-    app.add_handler(CommandHandler("menu", menu_command), group=-3)
     app.add_handler(CommandHandler("version", version), group=-3)
     app.add_handler(CommandHandler("rules", show_rules_cmd), group=-3)
     app.add_handler(CommandHandler("settopic", set_topic_cmd, filters=filters.ChatType.GROUPS), group=-3)
@@ -1366,22 +1330,22 @@ def register_handlers(app):
     # ggf. weitere CallbackQueryHandler hier
 
     # --- FrÃ¼he Message-Guards (keine Commands!) ---
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forum_topic_registry_tracker), group=-1)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, nightmode_enforcer), group=-1)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forum_topic_registry_tracker), group=-2)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, nightmode_enforcer), group=-2)
 
     # --- Logging / leichte Helfer ---
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_logger), group=0)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=0)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=-1)
 
     # --- Moderation ---
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=1)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=-1)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
     app.add_handler(ChatMemberHandler(_on_admin_change, ChatMemberHandler.CHAT_MEMBER), group=-3)
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=0)
-    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=0)
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=0)
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=-3)
+    app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=-3)
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=-3)
     app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r"^-?\d+_captcha_button_\d+$"), group=-2)
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, math_captcha_handler), group=-2)
 
