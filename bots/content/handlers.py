@@ -1338,7 +1338,7 @@ def register_handlers(app):
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, faq_autoresponder), group=-1)
 
     # --- Moderation ---
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=-1)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, spam_enforcer), group=-2)
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, ai_moderation_enforcer), group=-1)
 
     # --- Mitglieder-Events ---
