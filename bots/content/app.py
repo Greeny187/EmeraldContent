@@ -11,7 +11,7 @@ except Exception:
     statistic, ads = _Noop(), _Noop()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from miniapp_routes import router as miniapp_router
+from .miniapp_routes import router as miniapp_router
 
 app = FastAPI()
 
