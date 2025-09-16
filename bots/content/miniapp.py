@@ -3,10 +3,10 @@ import json
 import urllib.parse
 import logging
 from io import BytesIO
+from aiohttp import web
 from aiohttp.web_response import Response
 from typing import List, Tuple, Optional
 from datetime import date, timedelta
-from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -21,6 +21,227 @@ MINIAPP_URL = os.getenv(
     "https://greeny187.github.io/EmeraldContentBots/miniapp/appcontent.html"
 )
 MINIAPP_API_BASE = os.getenv("MINIAPP_API_BASE", "").rstrip("/")
+
+# ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
+async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
+    db = _db()
+    errors: List[str] = []
+
+    # --- Welcome ---
+    try:
+        w = data.get("welcome") or {}
+        if w.get("on"):
+            db["set_welcome"](cid, None, (w.get("text") or "Willkommen {user} 👋").strip())
+        else:
+            db["delete_welcome"](cid)
+    except Exception as e:
+        errors.append(f"Welcome: {e}")
+
+    # --- Rules ---
+    try:
+        rls = data.get("rules") or {}
+        if rls.get("on") and (rls.get("text") or "").strip():
+            db["set_rules"](cid, None, rls.get("text").strip())
+        else:
+            db["delete_rules"](cid)
+    except Exception as e:
+        errors.append(f"Regeln: {e}")
+
+    # --- Farewell ---
+    try:
+        f = data.get("farewell") or {}
+        if f.get("on"):
+            db["set_farewell"](cid, None, (f.get("text") or "Tschüss {user}!").strip())
+        else:
+            db["delete_farewell"](cid)
+    except Exception as e:
+        errors.append(f"Farewell: {e}")
+
+    # --- Links/Spam ---
+    try:
+        sp = data.get("spam") or {}
+        admins_only = bool(sp.get("on") or sp.get("block_links") or data.get("admins_only"))
+        db["set_link_settings"](cid, admins_only=admins_only)
+
+        t_raw = str(sp.get("policy_topic") or "").strip()
+        topic_id = int(t_raw) if t_raw.isdigit() else None
+
+        def _to_list(v):
+            if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+            if isinstance(v, str):  return [s.strip() for line in v.splitlines() for s in line.split(",") if s.strip()]
+            return []
+
+        fields = {}
+        wl=_to_list(sp.get("whitelist","")); bl=_to_list(sp.get("blacklist",""))
+        if wl: fields["link_whitelist"]   = wl
+        if bl: fields["domain_blacklist"] = bl
+        act=(sp.get("action") or "").strip().lower()
+        if act in ("delete","warn","mute"): fields["action_primary"] = act
+        lim=str(sp.get("per_user_daily_limit") or "").strip()
+        if lim.isdigit(): fields["per_user_daily_limit"] = int(lim)
+        qn=(sp.get("quota_notify") or "").strip().lower()
+        if qn in ("off","smart","always"): fields["quota_notify"]=qn
+
+        if topic_id is not None and fields:
+            db["set_spam_policy_topic"](cid, topic_id, **fields)
+    except Exception as e:
+        errors.append(f"Spam/Links: {e}")
+
+    # --- RSS add/del/update ---
+    try:
+        r = data.get("rss") or {}
+        if (r.get("url") or "").strip():
+            url = r.get("url").strip()
+            topic = int(r.get("topic") or 0)
+            try: db["set_rss_topic"](cid, topic)
+            except Exception: pass
+            db["add_rss_feed"](cid, url, topic)
+            db["set_rss_feed_options"](cid, url, post_images=bool(r.get("post_images")), enabled=bool(r.get("enabled", True)))
+        upd = data.get("rss_update") or None
+        if upd and (upd.get("url") or "").strip():
+            url=upd.get("url").strip()
+            db["set_rss_feed_options"](cid, url, post_images=upd.get("post_images"), enabled=upd.get("enabled"))
+        if data.get("rss_del"):
+            db["remove_rss_feed"](cid, data.get("rss_del"))
+    except Exception as e:
+        errors.append(f"RSS: {e}")
+
+    # --- KI (Assistent/FAQ) ---
+    try:
+        ai = data.get("ai") or {}
+        faq_on = bool(ai.get("on") or (ai.get("faq") or "").strip())
+        db["set_ai_settings"](cid, faq=faq_on, rss=None)
+    except Exception as e:
+        errors.append(f"KI: {e}")
+
+    # --- FAQ add/del ---
+    try:
+        faq_add = data.get("faq_add") or None
+        if faq_add and (faq_add.get("q") or "").strip():
+            db["upsert_faq"](cid, faq_add["q"].strip(), (faq_add.get("a") or "").strip())
+        faq_del = data.get("faq_del") or None
+        if faq_del and (faq_del.get("q") or "").strip():
+            db["delete_faq"](cid, faq_del["q"].strip())
+    except Exception as e:
+        errors.append(f"FAQ: {e}")
+
+    # --- KI-Moderation ---
+    try:
+        aimod = data.get("ai_mod") or {}
+        if aimod:
+            allowed = {
+              "enabled","shadow_mode","action_primary","mute_minutes","warn_text","appeal_url",
+              "max_per_min","cooldown_s","exempt_admins","exempt_topic_owner",
+              "toxicity","hate","sexual","harassment","selfharm","violence",
+              "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh"
+            }
+            payload={}
+            for k in allowed:
+                if k in aimod and aimod[k] is not None:
+                    payload[k]=aimod[k]
+            alias={"toxicity":"tox_thresh","hate":"hate_thresh","sexual":"sex_thresh",
+                   "harassment":"harass_thresh","selfharm":"selfharm_thresh","violence":"violence_thresh"}
+            for k,v in list(payload.items()):
+                if k in alias: payload[alias[k]]=v; del payload[k]
+            db["set_ai_mod_settings"](cid, 0, **payload)
+    except Exception as e:
+        errors.append(f"AI-Mod: {e}")
+
+    # --- Daily Report ---
+    try:
+        if "daily_stats" in data:
+            db["set_daily_stats"](cid, bool(data.get("daily_stats")))
+    except Exception as e:
+        errors.append(f"Daily-Report: {e}")
+
+    # --- Mood ---
+    try:
+        if (data.get("mood") or {}).get("question", "").strip():
+            db["set_mood_question"](cid, data["mood"]["question"].strip())
+        if str((data.get("mood") or {}).get("topic", "")).strip().isdigit():
+            db["set_mood_topic"](cid, int(str(data["mood"]["topic"]).strip()))
+    except Exception as e:
+        errors.append(f"Mood: {e}")
+
+    # --- Sprache ---
+    try:
+        lang=(data.get("language") or "").strip()
+        if lang: db["set_group_language"](cid, lang[:5])
+    except Exception as e:
+        errors.append(f"Sprache: {e}")
+
+    # --- Nachtmodus ---
+    try:
+        night = data.get("night") or {}
+        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night):
+            def _hm_to_min(s, default):
+                try:
+                    h,m = str(s or '').split(':'); return int(h)*60 + int(m)
+                except Exception: return default
+            enabled = bool(night.get("on"))
+            start_m = _hm_to_min(night.get("start") or "22:00", 1320)
+            end_m   = _hm_to_min(night.get("end") or "07:00", 360)
+            db["set_night_mode"](cid,
+                enabled=enabled,
+                start_minute=start_m,
+                end_minute=end_m,
+                delete_non_admin_msgs = night.get("delete_non_admin_msgs"),
+                warn_once = night.get("warn_once"),
+                timezone = night.get("timezone"),
+                hard_mode = night.get("hard_mode"),
+                override_until = night.get("override_until")
+            )
+    except Exception as e:
+        errors.append(f"Nachtmodus: {e}")
+
+    # --- Router ---
+    try:
+        if "router_add" in data:
+            ra = data["router_add"] or {}
+            target = int(ra.get("target_topic_id") or 0)
+            kw = ra.get("keywords") or []
+            dom = ra.get("domains") or []
+            del_orig = bool(ra.get("delete_original", True))
+            warn_user = bool(ra.get("warn_user", True))
+            if target:
+                db["add_topic_router_rule"](cid, target, keywords=kw, domains=dom, delete_original=del_orig, warn_user=warn_user)
+    except Exception as e:
+        errors.append(f"Router: {e}")
+
+    # --- Pro kaufen/verlängern ---
+    try:
+        months = int(data.get("pro_months") or 0)
+        if months>0:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            until = datetime.now(ZoneInfo("UTC")) + timedelta(days=30*months)
+            db["set_pro_until"](cid, until, tier="pro")
+    except Exception as e:
+        errors.append(f"Pro-Abo: {e}")
+
+    return errors
+
+
+# ---------- HTTP-Fallback: /miniapp/apply ----------
+async def route_apply(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    cid = int(request.query.get("cid") or data.get("cid") or 0)
+    uid = int(request.query.get("uid") or data.get("uid") or 0)
+
+    if not cid:
+        return web.Response(status=400, text="cid fehlt")
+
+    # Optional: Hier könnte man get_chat_member aufrufen, um Adminrechte zu prüfen
+    # Für die Mini-App-Entwicklung erlauben wir den HTTP-Save.
+
+    errors = await _save_from_payload(cid, uid, data)
+    if errors:
+        return web.Response(status=207, text="Teilweise gespeichert:\n- " + "\n- ".join(errors))
+    return web.Response(text="✅ Einstellungen gespeichert.")
+
 
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
 def _origin(url: str) -> str:
@@ -166,7 +387,7 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         link = {}
 
-    # RSS (voll)
+    # RSS voll
     feeds = []
     try:
         for (c,url,topic,etag,lm,post_images,enabled) in db["get_rss_feeds_full"]():
@@ -181,7 +402,7 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         sub = {"tier":"free","active":False,"valid_until":None}
 
-    # AI‑Moderation (effektiv + explizit)
+    # AI-Moderation
     try:
         aimod_eff = db["effective_ai_mod_policy"](cid) or {}
         aimod_cfg = db["get_ai_mod_settings"](cid, 0) or {}
@@ -191,7 +412,7 @@ async def _state_json(cid: int) -> dict:
 
     # FAQs
     try:
-        faqs = [{"q":q, "a":a} for (q,a) in (db["list_faqs"](cid) or [])]
+        faqs = [{"q": q, "a": a} for (q, a) in (db["list_faqs"](cid) or [])]
     except Exception:
         faqs = []
 
@@ -222,7 +443,6 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         night = {"enabled": False, "start": "22:00", "end":"07:00"}
 
-    # Spam‑Block für die UI
     spam_block = {
         "on":           bool(eff.get("admins_only") or link.get("only_admin_links")),
         "block_links":  bool(eff.get("admins_only") or link.get("only_admin_links")),
@@ -236,7 +456,7 @@ async def _state_json(cid: int) -> dict:
         "quota_notify": None
     }
 
-    # AI Assistent Flags
+    # AI Flags
     try:
         (ai_faq, ai_rss) = db["get_ai_settings"](cid)
     except Exception:
@@ -259,6 +479,7 @@ async def _state_json(cid: int) -> dict:
       "night":   night,
       "language": db.get("get_group_language", lambda *_: None)(cid)
     }
+
 
 # === HTTP-Routen (nur lesend, Admin-Gate per Bot) ============================
 async def route_state(request: web.Request):
@@ -395,8 +616,12 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await _is_admin_or_owner(context, cid, update.effective_user.id):
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
+    errors = await _save_from_payload(cid, update.effective_user.id, data)
+    if errors:
+        return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
+        return await msg.reply_text("✅ Einstellungen gespeichert.")
+    
     db = _db()
-    errors: list[str] = []
 
     # Welcome/Rules/Farewell
     try:
@@ -598,6 +823,7 @@ def register_miniapp(app: Application):
         webapp.router.add_route("OPTIONS", "/miniapp/file", _file_proxy)
         webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
         webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
+        webapp.router.add_route("POST", "/miniapp/apply", route_apply)
         logger.info("[miniapp] HTTP-Routen registriert")
     else:
         logger.info("[miniapp] Keine AIOHTTP-App verfügbar – /miniapp/state|stats nicht aktiv.")
