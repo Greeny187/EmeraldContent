@@ -281,6 +281,10 @@ def _db():
             set_night_mode,
             # Topic router
             add_topic_router_rule,
+            get_effective_link_policy,      # NEU
+            get_rss_feeds_full,             # NEU
+            get_subscription_info,          # NEU
+            effective_ai_mod_policy,        # NEU
         )
     except Exception:
         # fallback: lokale DB
@@ -795,35 +799,35 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
     return await msg.reply_text("✅ Einstellungen gespeichert.")
 
-# === Registrierung ============================================================
-def register_miniapp(app: Application):
-    # 1) /miniapp nur im Privatchat
-    app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
-
-    # 2) WebAppData: wir filtern nur auf Privat – Handler selbst prüft web_app_data
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
-
-    # 3) AIOHTTP-Routen für State & Stats (nur wenn Webhook/AIOHTTP aktiv)
-    webapp = None
+def _attach_http_routes(app: Application) -> bool:
     try:
-        # PTB >= 20: webhook_application() liefert aiohttp.web.Application
         webapp = app.webhook_application()
     except Exception:
-        # Fallbacks ignorieren – dann gibt’s eben keine HTTP-Routen
         webapp = None
+    if not webapp:
+        logger.info("[miniapp] webhook_application() noch nicht verfügbar – retry folgt")
+        return False
+    webapp["ptb_app"] = app
+    webapp.router.add_route("GET",     "/miniapp/state",     route_state)
+    webapp.router.add_route("OPTIONS", "/miniapp/state",     route_state)
+    webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
+    webapp.router.add_route("OPTIONS", "/miniapp/stats",     route_stats)
+    webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
+    webapp.router.add_route("OPTIONS", "/miniapp/file",      _file_proxy)
+    webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
+    webapp.router.add_route("OPTIONS", "/miniapp/apply",     route_apply)  # <-- PRE-FLIGHT
+    logger.info("[miniapp] HTTP-Routen registriert (late)")
+    return True
 
-# miniapp.py (Auszug im register_miniapp)
-    if webapp:
-        webapp["ptb_app"] = app
-        webapp.router.add_route("GET", "/miniapp/state", route_state)
-        webapp.router.add_route("OPTIONS", "/miniapp/state", route_state)
-        webapp.router.add_route("GET", "/miniapp/stats", route_stats)
-        webapp.router.add_route("OPTIONS", "/miniapp/stats", route_stats)
-        webapp.router.add_route("GET", "/miniapp/file", _file_proxy)
-        webapp.router.add_route("OPTIONS", "/miniapp/file", _file_proxy)
-        webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
-        webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
-        webapp.router.add_route("POST", "/miniapp/apply", route_apply)
-        logger.info("[miniapp] HTTP-Routen registriert")
-    else:
-        logger.info("[miniapp] Keine AIOHTTP-App verfügbar – /miniapp/state|stats nicht aktiv.")
+def register_miniapp(app: Application):
+    app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
+
+    # 1. Versuch sofort:
+    if not _attach_http_routes(app):
+        # 2./3. Versuch kurz nach Start (nachdem der Webhook sicher steht)
+        app.job_queue.run_once(lambda c: _attach_http_routes(app), when=1.0)
+        app.job_queue.run_once(lambda c: _attach_http_routes(app), when=3.0)
+

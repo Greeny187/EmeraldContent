@@ -15,7 +15,7 @@ from .miniapp_routes import router as miniapp_router
 
 app = FastAPI()
 
-ALLOWED_ORIGINS = ["https://greeny187.github.io/EmeraldContentBots"]
+ALLOWED_ORIGINS = ["https://greeny187.github.io"]
 
 app.add_middleware(
     CORSMiddleware,
