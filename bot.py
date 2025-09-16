@@ -5,7 +5,7 @@ import logging
 import pathlib
 from typing import Dict
 from importlib import import_module
-from bots.content.miniapp import register_miniapp, register_miniapp_routes
+
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
@@ -14,8 +14,6 @@ DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learni
 APP_BASE_URL = os.getenv("APP_BASE_URL")
 PORT = int(os.getenv("PORT", "8443"))
 DEVELOPER_CHAT_ID = os.getenv("DEVELOPER_CHAT_ID", "5114518219")
-BOT_TOKEN = os.environ["BOT1_TOKEN"]            # ggf. anpassen
-PORT = int(os.environ.get("PORT", "8000"))
 
 # Root in sys.path sichern (für shared/* Importe)
 ROOT = pathlib.Path(__file__).parent.resolve()
@@ -175,19 +173,4 @@ async def main():
             await app.shutdown()
 
 if __name__ == "__main__":
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    # Telegram-Handler (z.B. /miniapp, WebApp-Data)
-    register_miniapp(app)
-
-    # EINE aiohttp-App für Webhook + Mini-App
-    web_app = web.Application()
-    register_miniapp_routes(web_app, app)
-
-    # WICHTIG: PTB hostet genau diese web_app (keine „late attach“-Magie mehr)
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_path="/webhook/content",   # wie in deiner Webhook-Config genutzt
-        web_app=web_app,
-    )
+    asyncio.run(main())
