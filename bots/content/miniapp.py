@@ -359,7 +359,6 @@ def _cors_json(data: dict, status: int = 200):
         headers={
             "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
             "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, X-Dev-Token, X-Dev-User-Id",
         }
     )
