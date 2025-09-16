@@ -14,7 +14,7 @@ DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learni
 APP_BASE_URL = os.getenv("APP_BASE_URL")
 PORT = int(os.getenv("PORT", "8443"))
 DEVELOPER_CHAT_ID = os.getenv("DEVELOPER_CHAT_ID", "5114518219")
-BOT_TOKEN = os.environ["BOT_TOKEN1"]            # ggf. anpassen
+BOT_TOKEN = os.environ["BOT1_TOKEN"]            # ggf. anpassen
 PORT = int(os.environ.get("PORT", "8000"))
 
 # Root in sys.path sichern (für shared/* Importe)
