@@ -810,6 +810,37 @@ async def _cors_ok(request):
         }
     )
 
+def register_miniapp_routes(webapp: web.Application, app: Application) -> None:
+    """Registriert alle Miniapp-HTTP-Routen an der gegebenen aiohttp-App."""
+    webapp["ptb_app"] = app
+
+    async def _cors_ok(_request):
+        return web.json_response(
+            {}, status=204,
+            headers={
+                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
+            }
+        )
+
+    # GET/OPTIONS
+    webapp.router.add_route("GET",     "/miniapp/state",     route_state)
+    webapp.router.add_route("OPTIONS", "/miniapp/state",     _cors_ok)
+
+    webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
+    webapp.router.add_route("OPTIONS", "/miniapp/stats",     _cors_ok)
+
+    webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
+    webapp.router.add_route("OPTIONS", "/miniapp/file",      _cors_ok)
+
+    webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", _cors_ok)
+
+    # POST/OPTIONS (Speichern)
+    webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
+    webapp.router.add_route("OPTIONS", "/miniapp/apply",     _cors_ok)
+
 def _attach_http_routes(app: Application) -> bool:
     """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
     Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
