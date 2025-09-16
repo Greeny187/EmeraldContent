@@ -1,4 +1,4 @@
-from telegram.ext import CommandHandler, Application
+from telegram.ext import Application
 from . import handlers, rss, mood
 import os
 from .miniapp import register_miniapp
@@ -9,7 +9,27 @@ except Exception:
         def __getattr__(self, _): 
             return lambda *a, **k: None
     statistic, ads = _Noop(), _Noop()
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from miniapp_routes import router as miniapp_router
 
+app = FastAPI()
+
+ALLOWED_ORIGINS = ["https://greeny187.github.io/EmeraldContentBots"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+app.include_router(miniapp_router)
+
+@app.get("/health")
+async def health():
+    return {"ok": True}
 
 def register(app):
     if hasattr(statistic, "register_statistics_handlers"):
