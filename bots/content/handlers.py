@@ -503,7 +503,7 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
                 if action == "ban":
                     await context.bot.ban_chat_member(chat.id, user.id)
                 else:
-                    until = datetime.utcnow() + timedelta(minutes=int(policy.get("mute_minutes",60)))
+                    until = datetime.datetime.utcnow() + datetime.timedelta(minutes=int(policy.get("mute_minutes",60)))
                     perms = telegram.ChatPermissions(can_send_messages=False)
                     await context.bot.restrict_chat_member(chat.id, user.id, permissions=perms, until_date=until)
             except Exception:
@@ -830,7 +830,10 @@ async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat = update.effective_chat
     if not msg or chat.type not in ("group","supergroup"):
         return
-
+    if getattr(msg, "new_chat_members", None) or getattr(msg, "left_chat_member", None):
+        return
+    if not getattr(msg, "from_user", None):
+        return
     enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = get_night_mode(chat.id)
     if not enabled:
         return
@@ -1159,8 +1162,8 @@ async def spamlevel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if k=="emoji": fields["emoji_max_per_msg"] = int(v)
             elif k in ("emoji_per_min","emojimin"): fields["emoji_max_per_min"] = int(v)
             elif k in ("flood10s","rate"): fields["max_msgs_per_10s"] = int(v)
-            elif k=="whitelist": fields["link_whitelist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
-            elif k=="blacklist": fields["domain_blacklist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
+            elif k=="whitelist": fields["whitelist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
+            elif k=="blacklist": fields["blacklist"] = [d.strip().lower() for d in v.split(",") if d.strip()]
     if level: fields["level"] = level
     set_spam_policy_topic(chat.id, topic_id or 0, **fields)
     await msg.reply_text(f"âœ… Spam-Policy gesetzt (Topic {topic_id or 0}).")
