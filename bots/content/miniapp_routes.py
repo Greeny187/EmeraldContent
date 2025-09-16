@@ -4,7 +4,7 @@ import hmac, hashlib, urllib.parse, os
 
 router = APIRouter(prefix="/miniapp", tags=["miniapp"])
 
-BOT_TOKEN = os.getenv("BOT_TOKEN1", "")
+BOT_TOKEN = os.getenv("BOT1_TOKEN", "")
 SECRET = hashlib.sha256(BOT_TOKEN.encode()).digest() if BOT_TOKEN else None
 
 def verify_telegram_init_data(init_data: str) -> bool:

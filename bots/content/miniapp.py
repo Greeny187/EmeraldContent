@@ -256,52 +256,27 @@ ALLOWED_ORIGIN = _origin(MINIAPP_URL)
 
 # === DB-Brücke: Funktionen dynamisch laden (shared.database ODER lokale database) ===
 def _db():
-    try:
-        # bevorzugt shared
-        from shared.database import (
-            # Gruppen
-            get_registered_groups,
-            # Welcome/Rules/Farewell
-            set_welcome, delete_welcome, get_welcome,
-            set_rules, delete_rules, get_rules,
-            set_farewell, delete_farewell, get_farewell,
-            # Links/Spam global & Topic-Overrides
-            get_link_settings, set_link_settings, set_spam_policy_topic,
-            # RSS
-            set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
-            # AI/FAQ
-            get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
-            # Daily stats
-            set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
-            # Mood
-            set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
-            # Language
-            set_group_language,
-            # Night mode
-            set_night_mode,
-            # Topic router
-            add_topic_router_rule,
-            get_effective_link_policy,      # NEU
-            get_rss_feeds_full,             # NEU
-            get_subscription_info,          # NEU
-            effective_ai_mod_policy,        # NEU
-        )
-    except Exception:
-        # fallback: lokale DB
-        from .database import (
-            get_registered_groups,
-            set_welcome, delete_welcome, get_welcome,
-            set_rules, delete_rules, get_rules,
-            set_farewell, delete_farewell, get_farewell,
-            get_link_settings, set_link_settings, set_spam_policy_topic,
-            set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
-            get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
-            set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
-            set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
-            set_group_language,
-            set_night_mode,
-            add_topic_router_rule,
-        )
+    # Nur noch lokale DB – kein shared.database mehr
+    from .database import (
+        get_registered_groups,
+        set_welcome, delete_welcome, get_welcome,
+        set_rules, delete_rules, get_rules,
+        set_farewell, delete_farewell, get_farewell,
+        get_link_settings, set_link_settings, set_spam_policy_topic,
+        set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
+        get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
+        set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
+        set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
+        set_group_language,
+        set_night_mode,
+        add_topic_router_rule,
+        get_effective_link_policy,      # falls genutzt
+        get_rss_feeds_full,             # falls genutzt
+        get_subscription_info,          # falls genutzt
+        effective_ai_mod_policy,        # falls genutzt
+        get_ai_mod_settings,            # falls genutzt
+        set_ai_mod_settings,            # falls genutzt
+    )
     return locals()
 
 # === Helpers =================================================================
@@ -884,21 +859,3 @@ def register_miniapp(app: Application):
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
-
-    # 2) Sofort versuchen, die Routen zu attachen
-    attached_now = _attach_http_routes(app)
-
-    # 3) Falls das Webhook-Application-Objekt noch nicht steht: alle 2s neu versuchen
-    if not attached_now:
-        async def _retry_attach(context: ContextTypes.DEFAULT_TYPE):
-            if _attach_http_routes(context.application):
-                # Erfolgreich -> diesen Job beenden
-                context.job.schedule_removal()
-
-        # erster Versuch nach 1s, dann alle 2s
-        app.job_queue.run_repeating(
-            _retry_attach,
-            interval=2.0,
-            first=1.0,
-            name="miniapp_attach_retry",
-        )

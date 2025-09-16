@@ -911,7 +911,7 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_user = user
 
     if not topic_id:
-        return await update.message.reply_text("Bitte im gewÃ¼nschten Topic ausfÃ¼hren oder auf eine Nachricht im Ziel-Topic antworten.")
+        return await update.message.reply_text("Bitte im gewünschten Topic ausführen oder auf eine Nachricht im Ziel-Topic antworten.")
     if not target_user:
         return await update.message.reply_text("Kein Nutzer erkannt. Antworte auf eine Nachricht oder nutze @username.")
 

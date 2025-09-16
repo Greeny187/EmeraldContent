@@ -5,10 +5,15 @@ import logging
 import pathlib
 from typing import Dict
 from importlib import import_module
-
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
+
+try:
+    from bots.content.miniapp import register_miniapp_routes as _register_content_miniapp_routes
+except Exception:
+    _register_content_miniapp_routes = None
+
 
 DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")
@@ -154,6 +159,8 @@ async def main():
         raise RuntimeError("No bots configured (no tokens found).")
 
     webapp = web.Application()
+    if _register_content_miniapp_routes and "content" in APPLICATIONS:
+        _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
     webapp.router.add_get("/health", health_handler)
     webapp.router.add_get("/env", env_handler)
     webapp.router.add_post("/webhook/{route_key}", webhook_handler)
