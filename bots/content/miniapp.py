@@ -799,35 +799,75 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
     return await msg.reply_text("✅ Einstellungen gespeichert.")
 
+async def _cors_ok(request):
+    # Einheitliche Antwort für Preflight
+    return web.json_response(
+        {}, status=204,
+        headers={
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
+        }
+    )
+
 def _attach_http_routes(app: Application) -> bool:
+    """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
+    Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
+    """
     try:
         webapp = app.webhook_application()
     except Exception:
         webapp = None
+
     if not webapp:
         logger.info("[miniapp] webhook_application() noch nicht verfügbar – retry folgt")
         return False
+
+    # Doppelte Registrierung vermeiden:
+    if webapp.get("_miniapp_routes_attached"):
+        return True
+
     webapp["ptb_app"] = app
+    # GET/OPTIONS für State/Stats/File/Send_mood
     webapp.router.add_route("GET",     "/miniapp/state",     route_state)
-    webapp.router.add_route("OPTIONS", "/miniapp/state",     route_state)
+    webapp.router.add_route("OPTIONS", "/miniapp/state",     _cors_ok)
+
     webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
-    webapp.router.add_route("OPTIONS", "/miniapp/stats",     route_stats)
+    webapp.router.add_route("OPTIONS", "/miniapp/stats",     _cors_ok)
+
     webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
-    webapp.router.add_route("OPTIONS", "/miniapp/file",      _file_proxy)
+    webapp.router.add_route("OPTIONS", "/miniapp/file",      _cors_ok)
+
     webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
-    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", _cors_ok)
+
+    # POST/OPTIONS für Apply (Speichern)
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
-    webapp.router.add_route("OPTIONS", "/miniapp/apply",     route_apply)  # <-- PRE-FLIGHT
+    webapp.router.add_route("OPTIONS", "/miniapp/apply",     _cors_ok)
+
+    webapp["_miniapp_routes_attached"] = True
     logger.info("[miniapp] HTTP-Routen registriert (late)")
     return True
 
 def register_miniapp(app: Application):
+    # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
 
-    # 1. Versuch sofort:
-    if not _attach_http_routes(app):
-        # 2./3. Versuch kurz nach Start (nachdem der Webhook sicher steht)
-        app.job_queue.run_once(lambda c: _attach_http_routes(app), when=1.0)
-        app.job_queue.run_once(lambda c: _attach_http_routes(app), when=3.0)
+    # 2) Sofort versuchen, die Routen zu attachen
+    attached_now = _attach_http_routes(app)
 
+    # 3) Falls das Webhook-Application-Objekt noch nicht steht: alle 2s neu versuchen
+    if not attached_now:
+        async def _retry_attach(context: ContextTypes.DEFAULT_TYPE):
+            if _attach_http_routes(context.application):
+                # Erfolgreich -> diesen Job beenden
+                context.job.schedule_removal()
+
+        # erster Versuch nach 1s, dann alle 2s
+        app.job_queue.run_repeating(
+            _retry_attach,
+            interval=2.0,
+            first=1.0,
+            name="miniapp_attach_retry",
+        )
