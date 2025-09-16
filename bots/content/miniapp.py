@@ -2,6 +2,7 @@ import os
 import json
 import urllib.parse
 import logging
+import hmac, hashlib
 from io import BytesIO
 from aiohttp import web
 from aiohttp.web_response import Response
@@ -21,6 +22,42 @@ MINIAPP_URL = os.getenv(
     "https://greeny187.github.io/EmeraldContentBots/miniapp/appcontent.html"
 )
 MINIAPP_API_BASE = os.getenv("MINIAPP_API_BASE", "").rstrip("/")
+BOT_TOKEN = (os.getenv("BOT1_TOKEN"))
+SECRET = hashlib.sha256(BOT_TOKEN.encode()).digest() if BOT_TOKEN else None
+
+def _verify_init_data(init_data: str) -> int:
+    """
+    Prüft X-Telegram-Init-Data und gibt user_id zurück (0 = ungültig/fehlt).
+    """
+    if not (init_data and SECRET):
+        return 0
+    parsed = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
+    data = dict(parsed)
+    hash_recv = data.pop("hash", None)
+    check_str = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    if hmac.new(SECRET, msg=check_str.encode(), digestmod=hashlib.sha256).hexdigest() != (hash_recv or ""):
+        return 0
+    try:
+        import json
+        user = json.loads(data.get("user") or "{}")
+        return int(user.get("id") or 0)
+    except Exception:
+        return 0
+
+def _resolve_uid(request: web.Request) -> int:
+    # 1) Telegram WebApp Header zuerst
+    init = request.headers.get("X-Telegram-Init-Data")
+    uid = _verify_init_data(init) if init else 0
+    if uid:
+        return uid
+    # 2) Fallback: Query (für frühen Browser-Test)
+    q_uid = request.query.get("uid")
+    if q_uid and str(q_uid).lstrip("-").isdigit():
+        return int(q_uid)
+    # 3) Optionaler Dev-Bypass
+    if os.getenv("ALLOW_BROWSER_DEV") == "1" and request.headers.get("X-Dev-Token") == os.getenv("DEV_TOKEN", ""):
+        return int(request.headers.get("X-Dev-User-Id", "0") or 0)
+    return 0
 
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
 async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
@@ -228,8 +265,15 @@ async def route_apply(request: web.Request):
         data = await request.json()
     except Exception:
         data = {}
-    cid = int(request.query.get("cid") or data.get("cid") or 0)
-    uid = int(request.query.get("uid") or data.get("uid") or 0)
+    cid = int(request.query.get("cid", "0") or 0)
+    uid = _resolve_uid(request)
+    if uid <= 0:
+        return _cors_json({"error": "auth_required"}, 403)
+    
+    app: Application = request.app["ptb_app"]
+    
+    if not await _is_admin(app, cid, uid):
+        return _cors_json({"error": "forbidden"}, 403)
 
     if not cid:
         return web.Response(status=400, text="cid fehlt")
@@ -316,6 +360,7 @@ def _cors_json(data: dict, status: int = 200):
             "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
             "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
+            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, X-Dev-Token, X-Dev-User-Id",
         }
     )
 
@@ -466,8 +511,13 @@ async def route_state(request: web.Request):
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
-        cid = int(request.query.get("cid", "0"))
-        uid = int(request.query.get("uid", "0"))
+        cid = int(request.query.get("cid", "0") or 0)
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _cors_json({"error": "auth_required"}, 403)
+        if not await _is_admin(app, cid, uid):
+            return _cors_json({"error": "forbidden"}, 403)
+
     except Exception:
         return _cors_json({"error": "bad_params"}, 400)
 
@@ -481,8 +531,13 @@ async def route_stats(request: web.Request):
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
-        cid = int(request.query.get("cid", "0"))
-        uid = int(request.query.get("uid", "0"))
+        cid = int(request.query.get("cid", "0") or 0)
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _cors_json({"error": "auth_required"}, 403)
+        if not await _is_admin(app, cid, uid):
+            return _cors_json({"error": "forbidden"}, 403)
+
     except Exception:
         return _cors_json({"error": "bad_params"}, 400)
     if not await _is_admin(app, cid, uid):
@@ -512,8 +567,13 @@ async def route_send_mood(request: web.Request):
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
-        cid = int(request.query.get("cid", "0"))
-        uid = int(request.query.get("uid", "0"))
+        cid = int(request.query.get("cid", "0") or 0)
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _cors_json({"error": "auth_required"}, 403)
+        if not await _is_admin(app, cid, uid):
+            return _cors_json({"error": "forbidden"}, 403)
+
     except Exception:
         return _cors_json({"error": "bad_params"}, 400)
     if not await _is_admin(app, cid, uid):
