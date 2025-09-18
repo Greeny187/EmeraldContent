@@ -59,7 +59,9 @@ def _verify_init_data_any(init_data: str) -> int:
 
 def _resolve_uid(request: web.Request) -> int:
     # 1) Telegram WebApp Header zuerst
-    init_str = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+    init_str = (request.headers.get("X-Telegram-Init-Data")
+            or request.query.get("init_data")
+            or request.headers.get("x-telegram-web-app-data"))  # optionaler Fallback
     uid = _verify_init_data_any(init_str) if init_str else 0
 
     if uid:
