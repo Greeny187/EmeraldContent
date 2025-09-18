@@ -3,7 +3,7 @@ import os
 import argparse
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat
-from .database import add_member
+from bots.content.database import add_member
 
 # Ersetze diese Werte mit deinen API-Credentials
 api_id = 29370987
