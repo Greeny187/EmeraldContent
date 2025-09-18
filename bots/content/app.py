@@ -10,28 +10,8 @@ except Exception:
         def __getattr__(self, _): 
             return lambda *a, **k: None
     statistic, ads = _Noop(), _Noop()
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from .miniapp_routes import router as miniapp_router
 
-app = FastAPI()
 logger = logging.getLogger(__name__)
-
-ALLOWED_ORIGINS = ["https://greeny187.github.io"]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-app.include_router(miniapp_router)
-
-@app.get("/health")
-async def health():
-    return {"ok": True}
 
 def register(app):
     if hasattr(statistic, "register_statistics_handlers"):
@@ -46,8 +26,8 @@ def register(app):
     if hasattr(rss, "register_rss"):
         rss.register_rss(app)
 
-    register_miniapp(app)  # << Mini-App einhängen
-    
+    register_miniapp(app)  # Bot-Befehle registrieren
+
     # HTTP-Routen für Mini-App registrieren
     try:
         webapp = app.webhook_application()
