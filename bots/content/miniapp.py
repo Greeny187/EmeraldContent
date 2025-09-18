@@ -739,7 +739,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     errors = await _save_from_payload(cid, update.effective_user.id, data)
     if errors:
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
-    return await msg.reply_text("✅ Einstellungen gespeichert.")
     
     db = _db()
 
