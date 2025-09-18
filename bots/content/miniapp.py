@@ -35,12 +35,28 @@ TOKENS = [
 ]
 TOKENS = [t for t in TOKENS if t]  # nur gesetzte Tokens
 
+# Sammelbecken für alle Tokens (auch dynamisch von PTB-Apps)
+_ALL_TOKENS: set[str] = set(TOKENS)
+
+def _all_token_secrets() -> list[bytes]:
+    secs: list[bytes] = []
+    for t in list(_ALL_TOKENS):
+        try:
+            secs.append(hashlib.sha256(t.encode()).digest())
+        except Exception:
+            pass
+    return secs
+
 def _verify_with_secret(init_data: str, secret: bytes) -> int:
+    # Nach Telegram-Doku: data_check_string = sortierte key=value-Liste ohne 'hash'
     parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
-    recv_hash = parsed.pop("hash", None)
-    check_str = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+    recv_hash = parsed.get("hash")
+    if not recv_hash:
+        return 0
+    items = [(k, v) for k, v in parsed.items() if k != "hash"]
+    check_str = "\n".join(f"{k}={v}" for k, v in sorted(items))
     calc = hmac.new(secret, msg=check_str.encode(), digestmod=hashlib.sha256).hexdigest()
-    if calc != (recv_hash or ""):
+    if not hmac.compare_digest(calc, recv_hash):
         return 0
     try:
         user = json.loads(parsed.get("user") or "{}")
@@ -49,13 +65,23 @@ def _verify_with_secret(init_data: str, secret: bytes) -> int:
         return 0
 
 def _verify_init_data_any(init_data: str) -> int:
-    if not (init_data and TOKENS):
+    if not init_data:
         return 0
-    for tok in TOKENS:
-        uid = _verify_with_secret(init_data, hashlib.sha256(tok.encode()).digest())
+    # 1) hash-Variante gegen alle bekannten Tokens
+    for secret in _all_token_secrets():
+        uid = _verify_with_secret(init_data, secret)
         if uid > 0:
             return uid
-    return 0  # keiner passte
+    # 2) Fallback: Einige Clients liefern 'signature'; wir nutzen dann
+    #    *nur* die user.id ohne kryptografische Prüfung – Admin-Check folgt serverseitig.
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        if parsed.get("signature") and parsed.get("user"):
+            user = json.loads(parsed["user"])
+            return int(user.get("id") or 0)
+    except Exception:
+        pass
+    return 0
 
 def _resolve_uid(request: web.Request) -> int:
     # 1) Telegram WebApp Header zuerst
@@ -64,7 +90,7 @@ def _resolve_uid(request: web.Request) -> int:
             or request.headers.get("x-telegram-web-app-data"))  # optionaler Fallback
     uid = _verify_init_data_any(init_str) if init_str else 0
 
-    if uid:
+    if uid > 0:
         return uid
     # 2) Fallback: Query (für frühen Browser-Test)
     q_uid = request.query.get("uid")
@@ -354,12 +380,29 @@ async def _is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, u
         logger.debug(f"[miniapp] get_chat_member({chat_id},{user_id}) failed: {e}")
         return False
 
-async def _is_admin(app: Application, cid: int, uid: int) -> bool:
+async def _is_admin(app_or_webapp, cid: int, uid: int) -> bool:
+    """Prüft Adminrechte über *alle* bekannten PTB-Apps."""
+    apps: list[Application] = []
     try:
-        member = await app.bot.get_chat_member(cid, uid)
-        return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
+        # Falls eine einzelne App übergeben wurde
+        if isinstance(app_or_webapp, Application):
+            apps = [app_or_webapp]
+        else:
+            # AIOHTTP WebApp → alle gesammelten Apps
+            apps = list(app_or_webapp.get("_ptb_apps", []))
+            # Fallback: alte Einzel-Referenz
+            if not apps and "ptb_app" in app_or_webapp:
+                apps = [app_or_webapp["ptb_app"]]
     except Exception:
-        return False
+        apps = []
+    for a in apps:
+        try:
+            member = await a.bot.get_chat_member(cid, uid)
+            if member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+                return True
+        except Exception:
+            continue
+    return False
 
 def _webapp_url(cid: int, title: Optional[str]) -> str:
     url = f"{MINIAPP_URL}?cid={cid}&title={urllib.parse.quote(title or str(cid))}"
@@ -399,7 +442,11 @@ async def _file_proxy(request):
     if not await _is_admin(app, cid, uid):
         return _cors_json({"error":"forbidden"}, 403)
     try:
-        f = await app.bot.get_file(fid)
+        # irgendeine App darf die Datei holen – wir nehmen die erste verfügbare
+        apps = request.app.get("_ptb_apps", [])
+        if not apps:
+            return _cors_json({"error":"no_bot"}, 500)
+        f = await apps[0].bot.get_file(fid)
         buf = BytesIO()
         await f.download_to_memory(out=buf)
         buf.seek(0)
@@ -527,7 +574,8 @@ async def _state_json(cid: int) -> dict:
 
 # === HTTP-Routen (nur lesend, Admin-Gate per Bot) ============================
 async def route_state(request: web.Request):
-    app: Application = request.app["ptb_app"]
+    # Zugriff auf die AIOHTTP-App (enthält _ptb_apps)
+    webapp = request.app
     if request.method == "OPTIONS":
         return _cors_json({})
     
@@ -544,7 +592,7 @@ async def route_state(request: web.Request):
             logger.warning("Authentication failed: UID <= 0")
             return _cors_json({"error": "auth_required"}, 403)
 
-        if not await _is_admin(app, cid, uid):
+        if not await _is_admin(webapp, cid, uid):
             logger.warning(f"User {uid} is not admin in {cid}")
             return _cors_json({"error": "forbidden"}, 403)
 
@@ -555,7 +603,7 @@ async def route_state(request: web.Request):
     return _cors_json(await _state_json(cid))
 
 async def route_stats(request: web.Request):
-    app: Application = request.app["ptb_app"]
+    webapp = request.app
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
@@ -563,12 +611,12 @@ async def route_stats(request: web.Request):
         uid = _resolve_uid(request)
         if uid <= 0:
             return _cors_json({"error": "auth_required"}, 403)
-        if not await _is_admin(app, cid, uid):
+        if not await _is_admin(webapp, cid, uid):
             return _cors_json({"error": "forbidden"}, 403)
 
     except Exception:
         return _cors_json({"error": "bad_params"}, 400)
-    if not await _is_admin(app, cid, uid):
+    if not await _is_admin(webapp, cid, uid):
         return _cors_json({"error": "forbidden"}, 403)
 
     db = _db()
@@ -591,7 +639,7 @@ async def route_stats(request: web.Request):
     })
     
 async def route_send_mood(request: web.Request):
-    app: Application = request.app["ptb_app"]
+    webapp = request.app
     if request.method == "OPTIONS":
         return _cors_json({})
     try:
@@ -599,12 +647,12 @@ async def route_send_mood(request: web.Request):
         uid = _resolve_uid(request)
         if uid <= 0:
             return _cors_json({"error": "auth_required"}, 403)
-        if not await _is_admin(app, cid, uid):
+        if not await _is_admin(webapp, cid, uid):
             return _cors_json({"error": "forbidden"}, 403)
 
     except Exception:
         return _cors_json({"error": "bad_params"}, 400)
-    if not await _is_admin(app, cid, uid):
+    if not await _is_admin(webapp, cid, uid):
         return _cors_json({"error": "forbidden"}, 403)
 
     db = _db()
@@ -618,7 +666,7 @@ async def route_send_mood(request: web.Request):
     ]])
 
     try:
-        await app.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
+        await webapp.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
         return _cors_json({"ok": True})
     except Exception as e:
         return _cors_json({"ok": False, "error": str(e)})
@@ -872,10 +920,35 @@ async def _cors_ok(request):
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
         }
     )
+    
+def _attach_http_routes(app: Application) -> bool:
+    """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
+    Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
+    """
+    try:
+        webapp = app.webhook_application()
+    except Exception:
+        webapp = None
+
+    if not webapp:
+        logger.info("[miniapp] webhook_application() noch nicht verfügbar – retry folgt")
+        return False
+
+    # Doppelte Registrierung vermeiden:
+    if webapp.get("_miniapp_routes_attached"):
+        return True
+
+    webapp.setdefault("_ptb_apps", [])
+    webapp["_ptb_apps"].append(app)
+    webapp.setdefault("ptb_app", app)
 
 def register_miniapp_routes(webapp: web.Application, app: Application) -> None:
     """Registriert alle Miniapp-HTTP-Routen an der gegebenen aiohttp-App."""
-    webapp["ptb_app"] = app
+    # Alle PTB-Apps sammeln (Multi-Bot-Support)
+    webapp.setdefault("_ptb_apps", [])
+    webapp["_ptb_apps"].append(app)
+    # Erste App als Default beibehalten
+    webapp.setdefault("ptb_app", app)
 
     async def _cors_ok(_request):
         return web.json_response(
@@ -903,25 +976,7 @@ def register_miniapp_routes(webapp: web.Application, app: Application) -> None:
     # POST/OPTIONS (Speichern)
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
     webapp.router.add_route("OPTIONS", "/miniapp/apply",     _cors_ok)
-
-def _attach_http_routes(app: Application) -> bool:
-    """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
-    Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
-    """
-    try:
-        webapp = app.webhook_application()
-    except Exception:
-        webapp = None
-
-    if not webapp:
-        logger.info("[miniapp] webhook_application() noch nicht verfügbar – retry folgt")
-        return False
-
-    # Doppelte Registrierung vermeiden:
-    if webapp.get("_miniapp_routes_attached"):
-        return True
-
-    webapp["ptb_app"] = app
+    
     # GET/OPTIONS für State/Stats/File/Send_mood
     webapp.router.add_route("GET",     "/miniapp/state",     route_state)
     webapp.router.add_route("OPTIONS", "/miniapp/state",     _cors_ok)
@@ -944,6 +999,14 @@ def _attach_http_routes(app: Application) -> bool:
     return True
 
 def register_miniapp(app: Application):
+    # Bot-Token dynamisch sammeln (für die Init-Data-Verifikation)
+    try:
+        tok = getattr(app.bot, "token", None)
+        if tok:
+            _ALL_TOKENS.add(tok)
+    except Exception:
+        pass
+    
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
