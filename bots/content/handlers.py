@@ -22,7 +22,7 @@ from .access import resolve_privileged_flags, get_visible_groups, cached_admins,
 
 # DB-Import robust halten (Monorepo vs. Standalone)
 
-from shared.database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
+from .database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
     remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
     get_night_mode, set_night_mode, get_group_language, set_spam_policy_topic, get_spam_policy_topic,
     add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
@@ -996,7 +996,7 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, ans = hit
         return await msg.reply_text(ans, parse_mode="HTML")
    # --- KI-Fallback (nur wenn aktiviert & Pro & Key vorhanden) ---
-    from shared.database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
+    from .database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
     from .utils import ai_available, ai_summarize
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq:

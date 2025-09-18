@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any
 
 # Nur leichte DB-Helpers importieren (keine zirkulÃ¤ren AbhÃ¤ngigkeiten mit utils)
-from shared.database import is_pro_chat, get_ai_settings, effective_ai_mod_policy  # vorhandene DB-Funktionen
+from .database import is_pro_chat, get_ai_settings, effective_ai_mod_policy  # vorhandene DB-Funktionen
 
 log = logging.getLogger(__name__)
 _OPENAI_KEY = os.getenv("OPENAI_API_KEY")

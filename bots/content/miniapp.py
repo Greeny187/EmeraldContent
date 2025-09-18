@@ -223,6 +223,7 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
             for k,v in list(payload.items()):
                 if k in alias: payload[alias[k]]=v; del payload[k]
             db["set_ai_mod_settings"](cid, 0, **payload)
+            logger.info("[miniapp] AIMOD: %s", data.get("ai_mod"))
     except Exception as e:
         errors.append(f"AI-Mod: {e}")
 

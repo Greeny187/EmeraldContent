@@ -5,7 +5,7 @@ import re
 from telegram.constants import ChatType
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler, filters
-from shared.database import save_mood, get_mood_counts, get_mood_question, set_mood_topic, get_mood_topic
+from .database import save_mood, get_mood_counts, get_mood_question, set_mood_topic, get_mood_topic
 
 logger = logging.getLogger(__name__)
 

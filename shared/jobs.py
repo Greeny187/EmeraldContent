@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from .telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+from bots.content.database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     prune_pending_inputs_older_than, get_clean_deleted_settings,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
 from .statistic import (
@@ -205,7 +205,7 @@ def schedule_cleanup_for_chat(job_queue, chat_id:int, tz_str:str="Europe/Berlin"
 
 # 2.3 beim Start alle geplanten Jobs laden
 def load_all_cleanup_jobs(job_queue):
-    from database import get_registered_groups, get_timezone_for_chat  # falls du je Chat eine TZ speicherst
+    from bots.content.database import get_registered_groups, get_timezone_for_chat  # falls du je Chat eine TZ speicherst
     chats = get_registered_groups()  # [(chat_id, title), ...]
     for cid, _title in chats:
         tz = "Europe/Berlin"
@@ -421,7 +421,7 @@ def register_jobs(app):
     # NEU: night_mode_job registrieren, damit er jede Minute läuft
     jq.run_repeating(night_mode_job, interval=60, first=10, name="night_mode_job")
     # Pending-Inputs aufräumen (alle 24h)
-    from .database import prune_pending_inputs_older_than
+    from bots.content.database import prune_pending_inputs_older_than
     async def _prune(_):
         try:
             prune_pending_inputs_older_than(48)

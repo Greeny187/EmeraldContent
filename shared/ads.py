@@ -10,7 +10,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application, filters
 
 # interne Imports aus eurer Codebase
-from .database import (
+from bots.content.database import (
     _with_cursor,
     get_registered_groups,      # (chat_id, title)
     get_group_language,         # chat -> 'de'/'en'/...

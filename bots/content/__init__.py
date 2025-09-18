@@ -10,7 +10,7 @@ def setup_logging():
 
 def init_all_schemas():
     try:
-        from shared.database import init_all_schemas as _init
+        from .database import init_all_schemas as _init
         _init()
     except Exception:
         pass
