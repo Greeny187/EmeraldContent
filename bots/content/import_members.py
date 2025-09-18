@@ -3,12 +3,12 @@ import os
 import argparse
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat
-from database import add_member
+from .database import add_member
 
 # Ersetze diese Werte mit deinen API-Credentials
 api_id = 29370987
 api_hash = 'd3c4c05db902fbefb7944e13c1a97afa'
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT1_TOKEN")
 
 async def list_chats():
     client = await TelegramClient('bot', api_id, api_hash).start(bot_token=BOT_TOKEN)
