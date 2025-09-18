@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
-from telegram.constants import ChatType
+from telegram.constants import ChatType, ChatMemberStatus
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
 except Exception:
@@ -1046,65 +1046,95 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1) Service-Messages (neue/gehende Mitglieder) per Message-Event
     if msg:
         chat_id = msg.chat.id
+
         # a) Neue Mitglieder (klassischer Service-Post)
         if msg.new_chat_members:
             for user in msg.new_chat_members:
                 rec = get_welcome(chat_id)
-                if rec:
-                    photo_id, text = rec
-                    text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+                photo_id, text = (rec if rec else (None, "👋 Willkommen {user}!"))
+                text = (text or "👋 Willkommen {user}!").replace(
+                    "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+                )
+                try:
                     if photo_id:
                         await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                     else:
                         await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-                add_member(chat_id, user.id)
+                except Exception:
+                    pass
+
+                try:
+                    add_member(chat_id, user.id)
+                except Exception:
+                    pass
 
                 # Captcha (optional)
                 enabled, ctype, behavior = get_captcha_settings(chat_id)
                 if enabled:
                     if ctype == 'button':
                         kb = InlineKeyboardMarkup([[
-                            InlineKeyboardButton("âœ… Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
+                            InlineKeyboardButton("✅ Ich bin kein Bot", callback_data=f"{chat_id}_captcha_button_{user.id}")
                         ]])
-                        sent = await context.bot.send_message(chat_id, f"ðŸ” Bitte bestÃ¤tige, {user.first_name}.", reply_markup=kb)
-                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"msg_id": sent.message_id, "behavior": behavior, "issued_at": datetime.datetime.utcnow()}
+                        sent = await context.bot.send_message(chat_id, f"🔐 Bitte bestätige, {user.first_name}.", reply_markup=kb)
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
+                            "msg_id": sent.message_id, "behavior": behavior,
+                            "issued_at": datetime.datetime.utcnow()
+                        }
                     elif ctype == 'math':
                         a, b = random.randint(1,9), random.randint(1,9)
-                        sent = await context.bot.send_message(chat_id, f"ðŸ” Bitte rechne: {a} + {b} = ?", reply_markup=ForceReply(selective=True))
-                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {"answer": a+b, "behavior": behavior, "issued_at": datetime.datetime.utcnow(), "msg_id": sent.message_id}
+                        sent = await context.bot.send_message(
+                            chat_id, f"🔐 Bitte rechne: {a} + {b} = ?", reply_markup=ForceReply(selective=True)
+                        )
+                        context.bot_data[f"captcha:{chat_id}:{user.id}"] = {
+                            "answer": a+b, "behavior": behavior,
+                            "issued_at": datetime.datetime.utcnow(), "msg_id": sent.message_id
+                        }
             return
 
         # b) Verlassene Mitglieder
         if msg.left_chat_member:
             user = msg.left_chat_member
             rec = get_farewell(chat_id)
-            if rec:
-                photo_id, text = rec
-                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            photo_id, text = (rec if rec else (None, "👋 Auf Wiedersehen, {user}!"))
+            text = (text or "👋 Auf Wiedersehen, {user}!").replace(
+                "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            )
+            try:
                 if photo_id:
                     await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                 else:
                     await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-            remove_member(chat_id, user.id)
+            except Exception:
+                pass
+            try:
+                remove_member(chat_id, user.id)
+            except Exception:
+                pass
             return
 
-    # 2) ChatMember-Updates (Beitritt ohne Service-Post / via Einladungslink)
+    # 2) ChatMember-Updates (Join/Leave ohne Service-Post / via Einladungslink)
     if cm:
         chat_id = cm.chat.id
         user    = cm.new_chat_member.user
-        old     = cm.old_chat_member.status
-        status  = cm.new_chat_member.status
+        old_s   = cm.old_chat_member.status
+        new_s   = cm.new_chat_member.status
 
         # Join
-        if old in ("left","kicked") and status in ("member","administrator","creator"):
+        if old_s in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED) and new_s in (
+            ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER
+        ):
             rec = get_welcome(chat_id)
-            if rec:
-                photo_id, text = rec
-                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            photo_id, text = (rec if rec else (None, "👋 Willkommen {user}!"))
+            text = (text or "👋 Willkommen {user}!").replace(
+                "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            )
+            try:
                 if photo_id:
                     await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                 else:
                     await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+            except Exception:
+                pass
             try:
                 add_member(chat_id, user.id)
             except Exception:
@@ -1112,16 +1142,23 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Leave
-        if status in ("left","kicked"):
+        if new_s in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
             rec = get_farewell(chat_id)
-            if rec:
-                photo_id, text = rec
-                text = (text or "").replace("{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>")
+            photo_id, text = (rec if rec else (None, "👋 Auf Wiedersehen, {user}!"))
+            text = (text or "👋 Auf Wiedersehen, {user}!").replace(
+                "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            )
+            try:
                 if photo_id:
                     await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
                 else:
                     await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-            remove_member(chat_id, user.id)
+            except Exception:
+                pass
+            try:
+                remove_member(chat_id, user.id)
+            except Exception:
+                pass
             return
         
 async def cleandelete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
