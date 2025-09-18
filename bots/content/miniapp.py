@@ -514,19 +514,27 @@ async def route_state(request: web.Request):
     app: Application = request.app["ptb_app"]
     if request.method == "OPTIONS":
         return _cors_json({})
+    
+    # Debug-Logging hinzufügen
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Query params: {dict(request.query)}")
+    
     try:
         cid = int(request.query.get("cid", "0") or 0)
         uid = _resolve_uid(request)
+        logger.info(f"Resolved UID: {uid}, CID: {cid}")
+
         if uid <= 0:
+            logger.warning("Authentication failed: UID <= 0")
             return _cors_json({"error": "auth_required"}, 403)
+
         if not await _is_admin(app, cid, uid):
+            logger.warning(f"User {uid} is not admin in {cid}")
             return _cors_json({"error": "forbidden"}, 403)
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error in route_state: {e}")
         return _cors_json({"error": "bad_params"}, 400)
-
-    if not await _is_admin(app, cid, uid):
-        return _cors_json({"error": "forbidden"}, 403)
 
     return _cors_json(await _state_json(cid))
 
