@@ -365,6 +365,54 @@ def _db():
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until
         )
+        # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
+        return {
+            "get_registered_groups": get_registered_groups,
+            "set_welcome": set_welcome,
+            "delete_welcome": delete_welcome,
+            "get_welcome": get_welcome,
+            "set_rules": set_rules,
+            "delete_rules": delete_rules,
+            "get_rules": get_rules,
+            "set_farewell": set_farewell,
+            "delete_farewell": delete_farewell,
+            "get_farewell": get_farewell,
+            "get_link_settings": get_link_settings,
+            "set_link_settings": set_link_settings,
+            "set_spam_policy_topic": set_spam_policy_topic,
+            "set_rss_topic": set_rss_topic,
+            "get_rss_topic": get_rss_topic,
+            "add_rss_feed": add_rss_feed,
+            "remove_rss_feed": remove_rss_feed,
+            "set_rss_feed_options": set_rss_feed_options,
+            "list_rss_feeds": list_rss_feeds,
+            "get_ai_settings": get_ai_settings,
+            "set_ai_settings": set_ai_settings,
+            "upsert_faq": upsert_faq,
+            "delete_faq": delete_faq,
+            "set_daily_stats": set_daily_stats,
+            "is_daily_stats_enabled": is_daily_stats_enabled,
+            "get_top_responders": get_top_responders,
+            "get_agg_rows": get_agg_rows,
+            "set_mood_question": set_mood_question,
+            "get_mood_question": get_mood_question,
+            "set_mood_topic": set_mood_topic,
+            "get_mood_topic": get_mood_topic,
+            "set_group_language": set_group_language,
+            "set_night_mode": set_night_mode,
+            "add_topic_router_rule": add_topic_router_rule,
+            "get_effective_link_policy": get_effective_link_policy,
+            "get_rss_feeds_full": get_rss_feeds_full,
+            "get_subscription_info": get_subscription_info,
+            "effective_ai_mod_policy": effective_ai_mod_policy,
+            "get_ai_mod_settings": get_ai_mod_settings,
+            "set_ai_mod_settings": set_ai_mod_settings,
+            "list_faqs": list_faqs,
+            "list_topic_router_rules": list_topic_router_rules,
+            "get_night_mode": get_night_mode,
+            "set_pro_until": set_pro_until,
+            # ggf. weitere Funktionen ergänzen
+        }
     except ImportError as e:
         logger.error(f"Database import failed: {e}")
         # Dummy-Funktionen als Fallback
@@ -1019,4 +1067,4 @@ def register_miniapp(app: Application):
     
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-5)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-4)
