@@ -1023,4 +1023,4 @@ def register_miniapp(app: Application):
     
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-1)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-5)
