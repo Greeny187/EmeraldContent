@@ -25,29 +25,43 @@ MINIAPP_API_BASE = os.getenv("MINIAPP_API_BASE", "").rstrip("/")
 BOT_TOKEN = (os.getenv("BOT1_TOKEN"))
 SECRET = hashlib.sha256(BOT_TOKEN.encode()).digest() if BOT_TOKEN else None
 
-def _verify_init_data(init_data: str) -> int:
-    """
-    Prüft X-Telegram-Init-Data und gibt user_id zurück (0 = ungültig/fehlt).
-    """
-    if not (init_data and SECRET):
-        return 0
-    parsed = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
-    data = dict(parsed)
-    hash_recv = data.pop("hash", None)
-    check_str = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
-    if hmac.new(SECRET, msg=check_str.encode(), digestmod=hashlib.sha256).hexdigest() != (hash_recv or ""):
+TOKENS = [
+    os.getenv("BOT1_TOKEN"),
+    os.getenv("BOT2_TOKEN"),
+    os.getenv("BOT3_TOKEN"),
+    os.getenv("BOT4_TOKEN"),
+    os.getenv("BOT5_TOKEN"),
+    os.getenv("BOT6_TOKEN"),
+]
+TOKENS = [t for t in TOKENS if t]  # nur gesetzte Tokens
+
+def _verify_with_secret(init_data: str, secret: bytes) -> int:
+    parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+    recv_hash = parsed.pop("hash", None)
+    check_str = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+    calc = hmac.new(secret, msg=check_str.encode(), digestmod=hashlib.sha256).hexdigest()
+    if calc != (recv_hash or ""):
         return 0
     try:
-        import json
-        user = json.loads(data.get("user") or "{}")
+        user = json.loads(parsed.get("user") or "{}")
         return int(user.get("id") or 0)
     except Exception:
         return 0
 
+def _verify_init_data_any(init_data: str) -> int:
+    if not (init_data and TOKENS):
+        return 0
+    for tok in TOKENS:
+        uid = _verify_with_secret(init_data, hashlib.sha256(tok.encode()).digest())
+        if uid > 0:
+            return uid
+    return 0  # keiner passte
+
 def _resolve_uid(request: web.Request) -> int:
     # 1) Telegram WebApp Header zuerst
-    init = request.headers.get("X-Telegram-Init-Data")
-    uid = _verify_init_data(init) if init else 0
+    init_str = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+    uid = _verify_init_data_any(init_str) if init_str else 0
+
     if uid:
         return uid
     # 2) Fallback: Query (für frühen Browser-Test)
