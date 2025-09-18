@@ -304,6 +304,18 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
 
 # ---------- HTTP-Fallback: /miniapp/apply ----------
 async def route_apply(request: web.Request):
+    app: Application = request.app["ptb_app"]
+    if request.method == "OPTIONS":
+        return _cors_json({})
+    # Logging:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    logger.info("[miniapp] APPLY cid=%s uid=%s keys=%s",
+                request.query.get("cid"), 
+                _resolve_uid(request),
+                list(payload.keys()))
     try:
         data = await request.json()
     except Exception:
@@ -312,8 +324,6 @@ async def route_apply(request: web.Request):
     uid = _resolve_uid(request)
     if uid <= 0:
         return _cors_json({"error": "auth_required"}, 403)
-    
-    app: Application = request.app["ptb_app"]
     
     if not await _is_admin(app, cid, uid):
         return _cors_json({"error": "forbidden"}, 403)
@@ -357,7 +367,7 @@ def _db():
             set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
             set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
-            set_ai_mod_settings            # falls genutzt
+            set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until
         )
     except ImportError as e:
         logger.error(f"Database import failed: {e}")
@@ -1013,4 +1023,4 @@ def register_miniapp(app: Application):
     
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler))
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-1)
