@@ -713,12 +713,16 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not getattr(msg, "web_app_data", None):
         return
 
+    logger.info("[miniapp] web_app_data received: uid=%s, len=%s",
+                msg.from_user.id if msg.from_user else None,
+                len(msg.web_app_data.data or ""))
+
     try:
         data = json.loads(msg.web_app_data.data or "{}")
     except Exception:
-        return await msg.reply_text("❌ Ungültige Daten von der Mini‑App.")
+        return await msg.reply_text("❌ Ungültige Daten von der Mini-App.")
 
-    # cid aus Payload (fallback: context/chat)
+    # cid aus Payload ziehen (wie bei dir bisher)
     cid = None
     try:
         if "cid" in data: cid = int(data.get("cid"))
@@ -726,16 +730,16 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
     if not cid:
-        return await msg.reply_text("❌ Gruppen‑ID fehlt oder ist ungültig.")
+        return await msg.reply_text("❌ Gruppen-ID fehlt oder ist ungültig.")
 
-    # Nur Admin/Owner
+    # Admincheck
     if not await _is_admin_or_owner(context, cid, update.effective_user.id):
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
     errors = await _save_from_payload(cid, update.effective_user.id, data)
     if errors:
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
-        return await msg.reply_text("✅ Einstellungen gespeichert.")
+    return await msg.reply_text("✅ Einstellungen gespeichert.")
     
     db = _db()
 
