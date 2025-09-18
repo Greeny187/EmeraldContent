@@ -28,7 +28,7 @@ from .database import (register_group, get_registered_groups, get_rules, set_wel
     add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
     toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
     effective_spam_policy, count_topic_user_messages_today, set_spam_policy_topic, 
-    effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, set_ai_mod_settings, add_strike_points, get_strike_points, top_strike_users, decay_strikes
+    effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, add_strike_points, get_strike_points, top_strike_users, decay_strikes
     )
 from zoneinfo import ZoneInfo
 from .patchnotes import __version__, PATCH_NOTES

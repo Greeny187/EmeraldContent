@@ -307,19 +307,15 @@ async def route_apply(request: web.Request):
     app: Application = request.app["ptb_app"]
     if request.method == "OPTIONS":
         return _cors_json({})
-    # Logging:
-    try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-    logger.info("[miniapp] APPLY cid=%s uid=%s keys=%s",
-                request.query.get("cid"), 
-                _resolve_uid(request),
-                list(payload.keys()))
+    # Parse JSON payload once (avoid consuming the stream twice)
     try:
         data = await request.json()
     except Exception:
         data = {}
+    logger.info("[miniapp] APPLY cid=%s uid=%s keys=%s",
+                request.query.get("cid"),
+                _resolve_uid(request),
+                list(data.keys()))
     cid = int(request.query.get("cid", "0") or 0)
     uid = _resolve_uid(request)
     if uid <= 0:
