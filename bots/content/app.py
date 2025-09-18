@@ -1,6 +1,7 @@
 from telegram.ext import Application
 from . import handlers, rss, mood
 import os
+import logging
 from .miniapp import register_miniapp
 try:
     from shared import statistic, ads
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .miniapp_routes import router as miniapp_router
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 ALLOWED_ORIGINS = ["https://greeny187.github.io"]
 
@@ -45,6 +47,15 @@ def register(app):
         rss.register_rss(app)
 
     register_miniapp(app)  # << Mini-App einhängen
+    
+    # HTTP-Routen für Mini-App registrieren
+    try:
+        webapp = app.webhook_application()
+        if webapp:
+            from .miniapp import register_miniapp_routes
+            register_miniapp_routes(webapp, app)
+    except Exception as e:
+        logger.warning(f"Could not register miniapp routes: {e}")
     
 def register_jobs(app: Application):
     if hasattr(ads, "register_ads_jobs"):

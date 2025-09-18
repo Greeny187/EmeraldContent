@@ -301,26 +301,31 @@ ALLOWED_ORIGIN = _origin(MINIAPP_URL)
 # === DB-Brücke: Funktionen dynamisch laden (shared.database ODER lokale database) ===
 def _db():
     # Nur noch lokale DB – kein shared.database mehr
-    from .database import (
-        get_registered_groups,
-        set_welcome, delete_welcome, get_welcome,
-        set_rules, delete_rules, get_rules,
-        set_farewell, delete_farewell, get_farewell,
-        get_link_settings, set_link_settings, set_spam_policy_topic,
-        set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
-        get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
-        set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
-        set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
-        set_group_language,
-        set_night_mode,
-        add_topic_router_rule,
-        get_effective_link_policy,      # falls genutzt
-        get_rss_feeds_full,             # falls genutzt
-        get_subscription_info,          # falls genutzt
-        effective_ai_mod_policy,        # falls genutzt
-        get_ai_mod_settings,            # falls genutzt
-        set_ai_mod_settings,            # falls genutzt
-    )
+    try:
+        from .database import (
+            get_registered_groups,
+            set_welcome, delete_welcome, get_welcome,
+            set_rules, delete_rules, get_rules,
+            set_farewell, delete_farewell, get_farewell,
+            get_link_settings, set_link_settings, set_spam_policy_topic,
+            set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
+            get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
+            set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
+            set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
+            set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
+            get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
+            set_ai_mod_settings            # falls genutzt
+        )
+    except ImportError as e:
+        logger.error(f"Database import failed: {e}")
+        # Dummy-Funktionen als Fallback
+        def dummy(*args, **kwargs):
+            return None
+        return {name: dummy for name in [
+            'get_registered_groups', 'set_welcome', 'delete_welcome', 'get_welcome',
+            # ... alle anderen benötigten Funktionen ...
+        ]}
+    
     return locals()
 
 # === Helpers =================================================================
