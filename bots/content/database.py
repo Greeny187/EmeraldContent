@@ -61,11 +61,13 @@ def _with_cursor(func):
                     cur_ping.execute("SELECT 1;")
                 # eigentlicher DB-Call
                 with conn.cursor() as cur:
+                    logger.debug(f"[DB] Calling {func.__name__} args={args} kwargs={kwargs}")
                     res = func(cur, *args, **kwargs)
                     conn.commit()
                     return res
             except (OperationalError, InterfaceError) as e:
                 last_exc = e
+                logger.error(f"[DB] Operational/Interface error in {func.__name__}: {e}")
                 # defekte Verbindung hart schließen und aus dem Pool entfernen
                 try:
                     conn.close()
@@ -82,6 +84,9 @@ def _with_cursor(func):
                 # kurzer Backoff, dann neuer Versuch
                 time.sleep(0.2)
                 continue
+            except Exception as e:
+                logger.error(f"[DB] Exception in {func.__name__}: {e}", exc_info=True)
+                raise
             finally:
                 try:
                     if conn and not getattr(conn, "closed", 0):
@@ -1089,6 +1094,7 @@ def set_link_settings(cur, chat_id: int,
                       exceptions_on: bool | None = None,
                       only_admin_links: bool | None = None,   # NEU: Alias
                       admins_only: bool | None = None):        # NEU: weiterer Alias
+    logger.info(f"DB: set_link_settings für Chat {chat_id} protection={protection} only_admin_links={only_admin_links} admins_only={admins_only}")
     # Aliase auf 'protection' abbilden (falls gesetzt)
     if protection is None:
         if only_admin_links is not None:
@@ -1107,10 +1113,12 @@ def set_link_settings(cur, chat_id: int,
         parts.append("link_exceptions_enabled = %s");   params.append(exceptions_on)
 
     if not parts:
+        logger.info("DB: set_link_settings – keine Änderungen")
         return
     sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET "
     sql += ", ".join(parts)
     params = [chat_id] + params
+    logger.info(f"DB: set_link_settings SQL: {sql} PARAMS: {params}")
     cur.execute(sql, params)
 
 # --- Daily Stats ---
@@ -1400,6 +1408,7 @@ def _default_policy():
         "level": "off",
         "link_whitelist": [],
         "domain_blacklist": [],
+        "only_admin_links": False,  # ← NEU
         "emoji_max_per_msg": 0,
         "emoji_max_per_min": 0,
         "max_msgs_per_10s": 0,
@@ -1664,11 +1673,17 @@ def delete_welcome(cur, chat_id: int):
 
 @_with_cursor
 def set_rules(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
-    cur.execute(
-        "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)  # Korrekte Reihenfolge
-    )
+    try:
+        logger.info(f"DB: Speichere Rules für Chat {chat_id}. Photo: {bool(photo_id)}, Text: '{text[:50] if text else 'None'}...'")
+        cur.execute(
+            "INSERT INTO rules (chat_id, photo_id, text) VALUES (%s, %s, %s) "
+            "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
+            (chat_id, photo_id, text)
+        )
+        logger.info(f"DB: Rules für Chat {chat_id} erfolgreich gespeichert.")
+    except Exception as e:
+        logger.error(f"DB-Fehler in set_rules: {e}", exc_info=True)
+        raise
 
 @_with_cursor
 def get_rules(cur, chat_id: int) -> Optional[Tuple[str, str]]:
@@ -1681,11 +1696,17 @@ def delete_rules(cur, chat_id: int):
 
 @_with_cursor
 def set_farewell(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
-    cur.execute(
-        "INSERT INTO farewell (chat_id, photo_id, text) VALUES (%s, %s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
-        (chat_id, photo_id, text)  # Korrekte Reihenfolge
-    )
+    try:
+        logger.info(f"DB: Speichere Farewell für Chat {chat_id}. Photo: {bool(photo_id)}, Text: '{text[:50] if text else 'None'}...'")
+        cur.execute(
+            "INSERT INTO farewell (chat_id, photo_id, text) VALUES (%s, %s, %s) "
+            "ON CONFLICT (chat_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, text = EXCLUDED.text;",
+            (chat_id, photo_id, text)
+        )
+        logger.info(f"DB: Farewell für Chat {chat_id} erfolgreich gespeichert.")
+    except Exception as e:
+        logger.error(f"DB-Fehler in set_farewell: {e}", exc_info=True)
+        raise
 
 @_with_cursor
 def get_farewell(cur, chat_id: int) -> Optional[Tuple[str, str]]:
