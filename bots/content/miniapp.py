@@ -1,5 +1,6 @@
-import os
+import base64
 import json
+import os
 import urllib.parse
 import logging
 import hmac, hashlib
@@ -7,11 +8,13 @@ from io import BytesIO
 from aiohttp import web
 from aiohttp.web_response import Response
 from typing import List, Tuple, Optional
-from datetime import date, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from datetime import date, timedelta, datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InputFile
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from bots.content import database
+from shared import statistic
 
 logger = logging.getLogger(__name__)
 
@@ -101,16 +104,32 @@ def _resolve_uid(request: web.Request) -> int:
         return int(request.headers.get("X-Dev-User-Id", "0") or 0)
     return 0
 
+def _clean_dict_empty_to_none(d: dict) -> dict:
+    """Konvertiert leere Strings in einem dict zu None."""
+    return {k: (None if (isinstance(v, str) and v.strip() == "") else v) for k, v in d.items()}
+
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
 async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     db = _db()
     errors: List[str] = []
+    app = None
+    try:
+        app = db.get("_telegram_app")  # falls du sie global speicherst
+    except Exception:
+        pass
 
     # --- Welcome ---
     try:
         w = data.get("welcome") or {}
+        img_b64 = data.get("welcome_img") or None
         if w.get("on"):
-            db["set_welcome"](cid, None, (w.get("text") or "Willkommen {user} 👋").strip())
+            photo_id = None
+            if img_b64 and app:
+                # Bild als Datei speichern und File-ID merken
+                img_bytes = base64.b64decode(img_b64.split(",")[-1])
+                f = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="welcome.jpg"))
+                photo_id = f.photo[-1].file_id if f.photo else None
+            db["set_welcome"](cid, photo_id, (w.get("text") or "Willkommen {user} 👋").strip())
         else:
             db["delete_welcome"](cid)
     except Exception as e:
@@ -119,8 +138,14 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     # --- Rules ---
     try:
         rls = data.get("rules") or {}
+        img_b64 = data.get("rules_img") or None
         if rls.get("on") and (rls.get("text") or "").strip():
-            db["set_rules"](cid, None, rls.get("text").strip())
+            photo_id = None
+            if img_b64 and app:
+                img_bytes = base64.b64decode(img_b64.split(",")[-1])
+                f = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="rules.jpg"))
+                photo_id = f.photo[-1].file_id if f.photo else None
+            db["set_rules"](cid, photo_id, rls.get("text").strip())
         else:
             db["delete_rules"](cid)
     except Exception as e:
@@ -129,8 +154,14 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     # --- Farewell ---
     try:
         f = data.get("farewell") or {}
+        img_b64 = data.get("farewell_img") or None
         if f.get("on"):
-            db["set_farewell"](cid, None, (f.get("text") or "Tschüss {user}!").strip())
+            photo_id = None
+            if img_b64 and app:
+                img_bytes = base64.b64decode(img_b64.split(",")[-1])
+                fmsg = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="farewell.jpg"))
+                photo_id = fmsg.photo[-1].file_id if fmsg.photo else None
+            db["set_farewell"](cid, photo_id, (f.get("text") or "Tschüss {user}!").strip())
         else:
             db["delete_farewell"](cid)
     except Exception as e:
@@ -172,8 +203,6 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
         if (r.get("url") or "").strip():
             url = r.get("url").strip()
             topic = int(r.get("topic") or 0)
-            try: db["set_rss_topic"](cid, topic)
-            except Exception: pass
             db["add_rss_feed"](cid, url, topic)
             db["set_rss_feed_options"](cid, url, post_images=bool(r.get("post_images")), enabled=bool(r.get("enabled", True)))
         upd = data.get("rss_update") or None
@@ -242,6 +271,18 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
             db["set_mood_question"](cid, data["mood"]["question"].strip())
         if str((data.get("mood") or {}).get("topic", "")).strip().isdigit():
             db["set_mood_topic"](cid, int(str(data["mood"]["topic"]).strip()))
+        # Mood sofort senden
+        if data.get("mood_send_now"):
+            app = db.get("_telegram_app")
+            if app:
+                question = db["get_mood_question"](cid) or "Wie ist deine Stimmung?"
+                topic_id = db["get_mood_topic"](cid) or None
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👍", callback_data="mood_like"),
+                     InlineKeyboardButton("👎", callback_data="mood_dislike"),
+                     InlineKeyboardButton("🤔", callback_data="mood_think")]
+                ])
+                await app.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
     except Exception as e:
         errors.append(f"Mood: {e}")
 
@@ -360,7 +401,7 @@ def _db():
         from .database import (
             get_registered_groups,
             set_welcome, delete_welcome, get_welcome,
-            set_rules, delete_rules, get_rules,
+            set_rules, delete_rules, get_rules, get_group_stats
             set_farewell, delete_farewell, get_farewell,
             get_link_settings, set_link_settings, set_spam_policy_topic,
             set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
@@ -398,6 +439,7 @@ def _db():
             "delete_faq": delete_faq,
             "set_daily_stats": set_daily_stats,
             "is_daily_stats_enabled": is_daily_stats_enabled,
+            "get_group_stats": get_group_stats,
             "get_top_responders": get_top_responders,
             "get_agg_rows": get_agg_rows,
             "set_mood_question": set_mood_question,
@@ -614,10 +656,25 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         ai_faq, ai_rss = (False, False)
 
+    # Welcome/Rules/Farewell mit Bild-URL
+    def _media_block_with_image(cid, kind):
+        loader = {"welcome": "get_welcome", "rules": "get_rules", "farewell":"get_farewell"}[kind]
+        ph, tx = (None, None)
+        try:
+            r = db[loader](cid)
+            if r: ph, tx = r
+        except Exception:
+            pass
+        image_url = None
+        if ph:
+            # File-Proxy-URL für Bild
+            image_url = f"/miniapp/file?cid={cid}&file_id={ph}"
+        return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or "", "image_url": image_url}
+
     return {
-      "welcome": _mk_media_block(cid, "welcome"),
-      "rules":   _mk_media_block(cid, "rules"),
-      "farewell":_mk_media_block(cid, "farewell"),
+      "welcome": _media_block_with_image(cid, "welcome"),
+      "rules":   _media_block_with_image(cid, "rules"),
+      "farewell":_media_block_with_image(cid, "farewell"),
       "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
       "spam":    spam_block,
       "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
@@ -629,7 +686,11 @@ async def _state_json(cid: int) -> dict:
       "daily_stats": db["is_daily_stats_enabled"](cid),
       "subscription": sub,
       "night":   night,
-      "language": db.get("get_group_language", lambda *_: None)(cid)
+      "language": db.get("get_group_language", lambda *_: None)(cid),
+      "report": {
+        "enabled": True,
+        "stats": await get_group_stats(cid)
+      },
     }
 
 
@@ -990,7 +1051,8 @@ async def _cors_ok(request):
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
         }
     )
-    
+
+
 def _attach_http_routes(app: Application) -> bool:
     """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
     Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
@@ -1080,3 +1142,4 @@ def register_miniapp(app: Application):
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-4)
+
