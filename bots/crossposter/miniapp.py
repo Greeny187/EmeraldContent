@@ -10,8 +10,8 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ChatMemberStatus
 
-from common.database import get_pool
-from .crossposter_models import user_in_tenant, list_tenants_for_user, create_route, update_route, delete_route, list_routes, stats
+from .database import get_pool
+from .models import user_in_tenant, list_tenants_for_user, create_route, update_route, delete_route, list_routes, stats
 
 MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://example.com/miniapp/crossposter.html")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")

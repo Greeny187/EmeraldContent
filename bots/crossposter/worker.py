@@ -6,7 +6,7 @@ import hashlib
 from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes
-from common.database import get_pool
+from .database import get_pool
 
 async def _hash_message(update: Update) -> str:
     text = update.effective_message.text or update.effective_message.caption or ""
