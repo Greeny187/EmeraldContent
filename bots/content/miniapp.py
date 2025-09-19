@@ -671,6 +671,9 @@ async def _state_json(cid: int) -> dict:
             image_url = f"/miniapp/file?cid={cid}&file_id={ph}"
         return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or "", "image_url": image_url}
 
+    # Fix: call the function from db dict, not a string
+    stats = db["get_group_stats"](cid, date.today()) if "get_group_stats" in db else {}
+
     return {
       "welcome": _media_block_with_image(cid, "welcome"),
       "rules":   _media_block_with_image(cid, "rules"),
@@ -689,7 +692,7 @@ async def _state_json(cid: int) -> dict:
       "language": db.get("get_group_language", lambda *_: None)(cid),
       "report": {
         "enabled": True,
-        "stats": await "get_group_stats"(cid)
+        "stats": stats
       },
     }
 
