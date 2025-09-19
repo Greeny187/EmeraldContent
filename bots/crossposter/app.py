@@ -1,16 +1,21 @@
-import logging
-from telegram.ext import CommandHandler
 
-log = logging.getLogger("bot.<name>")
+# bot.py – Minimale Bootstrapping-App für Tests (Polling)
+# Für Produktion: Webhook/ASGI einrichten und FastAPI(API) mounten.
 
-async def _start(update, ctx):
-    await update.message.reply_text("Hier entsteht in den nächsten Monaten ein neuer Bot.")
+import os
+from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from bots.content.miniapp_crossposter import crossposter_handler, API
+from bots.content.crossposter_worker import route_message
 
-def register(app):
-    app.add_handler(CommandHandler("start", _start))
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
 
-def register_jobs(app):
-    pass
+def build_app():
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(crossposter_handler)
+    src_filter = (filters.ChatType.GROUPS | filters.ChatType.CHANNEL) & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
+    app.add_handler(MessageHandler(src_filter, route_message))
+    return app
 
-def init_schema():
-    pass
+if __name__ == "__main__":
+    app = build_app()
+    app.run_polling()
