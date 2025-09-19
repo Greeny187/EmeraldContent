@@ -111,7 +111,6 @@ async def create_route_api(payload: RouteIn, user=Depends(current_user)):
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
     # Lazy Import um Zyklen zu vermeiden
-    from bots.bot_context import app_bot  # Stelle sicher: globale PTB-Instanz definiert
     ok = await is_admin(app_bot, user['user']['id'], payload.source_chat_id)
     if not ok:
         raise HTTPException(status_code=403, detail="Kein Admin in der Quellgruppe")

@@ -4,8 +4,8 @@
 
 import os
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
-from bots.content.miniapp_crossposter import crossposter_handler, API
-from bots.content.crossposter_worker import route_message
+from bots.content.miniapp import crossposter_handler, API
+from bots.content.worker import route_message
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
 
