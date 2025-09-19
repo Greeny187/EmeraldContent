@@ -401,7 +401,7 @@ def _db():
         from .database import (
             get_registered_groups,
             set_welcome, delete_welcome, get_welcome,
-            set_rules, delete_rules, get_rules, get_group_stats
+            set_rules, delete_rules, get_rules, get_group_stats,
             set_farewell, delete_farewell, get_farewell,
             get_link_settings, set_link_settings, set_spam_policy_topic,
             set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
