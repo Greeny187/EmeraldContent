@@ -59,6 +59,9 @@ async def on_web_app_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.reply_text("⚠️ Konnte nicht speichern.")
 
+    tenant_id = await sql.ensure_tenant_for_chat(chat_id= int(chat_id), title= payload.get("title"))
+
+
 def register(app: Application):
     app.add_handler(CommandHandler(["support", "miniapp"], cmd_support))
     app.add_handler(CommandHandler("miniapp_open", cmd_miniapp))

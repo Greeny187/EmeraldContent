@@ -68,10 +68,14 @@ async def create_ticket(payload: TicketCreate, x_telegram_init_data: str = Heade
     return {"ok": True, "ticket_id": tid}
 
 @router.get("/tickets")
-async def list_my_tickets(x_telegram_init_data: str = Header(None)):
+async def list_my_tickets(x_telegram_init_data: str = Header(None), cid: int | None = None):
     user = _verify_init_data(x_telegram_init_data)
-    tickets = await store.get_my_tickets(user["user_id"])
+    tenant_id = None
+    if cid:
+        tenant_id = await store.resolve_tenant_id_by_chat(cid)
+    tickets = await store.get_my_tickets(user["user_id"], tenant_id=tenant_id)
     return {"ok": True, "tickets": tickets}
+
 
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: int, x_telegram_init_data: str = Header(None)):

@@ -47,21 +47,26 @@ async def create_ticket(user_id: int, category: str, subject: str, body: str) ->
         await conn.commit()
         return tid
 
-async def get_my_tickets(user_id: int, limit: int = 30):
+async def get_my_tickets(user_id: int, limit: int = 30, tenant_id: int | None = None):
     async with await get_conn() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT t.id, t.category, t.subject, t.status, t.created_at, t.closed_at
-                FROM support_tickets t
-                WHERE t.user_id=%s
-                ORDER BY t.id DESC
-                LIMIT %s
-                """,
-                (user_id, limit),
-            )
+            if tenant_id:
+                await cur.execute("""
+                    SELECT id, category, subject, status, created_at, closed_at
+                    FROM support_tickets
+                    WHERE user_id=%s AND tenant_id=%s
+                    ORDER BY id DESC LIMIT %s
+                """, (user_id, tenant_id, limit))
+            else:
+                await cur.execute("""
+                    SELECT id, category, subject, status, created_at, closed_at
+                    FROM support_tickets
+                    WHERE user_id=%s
+                    ORDER BY id DESC LIMIT %s
+                """, (user_id, limit))
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
 
 async def get_ticket(user_id: int, ticket_id: int):
     async with await get_conn() as conn:
@@ -161,3 +166,31 @@ async def load_group_stats(chat_id: int, days: int = 14):
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+async def resolve_tenant_id_by_chat(chat_id: int) -> int | None:
+    async with await get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT tenant_id FROM tenant_groups WHERE chat_id=%s LIMIT 1", (chat_id,))
+            row = await cur.fetchone()
+            return row["tenant_id"] if row else None
+
+async def ensure_tenant_for_chat(chat_id: int, title: str | None = None, slug: str | None = None) -> int:
+    # 1) existiert Mapping?
+    tid = await resolve_tenant_id_by_chat(chat_id)
+    if tid: return tid
+    # 2) neuen Tenant anlegen (wenn slug nicht vorgegeben, generieren)
+    gen_slug = (slug or f"tg-{chat_id}").lower()
+    async with await get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("INSERT INTO tenants (slug, name) VALUES (%s,%s) ON CONFLICT (slug) DO NOTHING RETURNING id",
+                              (gen_slug, title or gen_slug))
+            row = await cur.fetchone()
+            if row:
+                tid = row["id"]
+            else:
+                # falls parallel angelegt, nachschlagen
+                await cur.execute("SELECT id FROM tenants WHERE slug=%s", (gen_slug,))
+                tid = (await cur.fetchone())["id"]
+            await cur.execute("INSERT INTO tenant_groups (tenant_id, chat_id, title) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                              (tid, chat_id, title))
+        await conn.commit()
+    return tid
