@@ -1916,7 +1916,18 @@ def get_subscription_info(cur, chat_id: int) -> dict:
     if not r:
         return {"tier": "free", "valid_until": None, "active": False}
     tier, until = r
-    active = tier in ("pro","pro_plus") and (until is None or until > datetime.utcnow())
+    # Fix: always compare aware datetimes (convert to UTC if needed)
+    from datetime import datetime, timezone
+    active = False
+    if tier in ("pro","pro_plus"):
+        if until is None:
+            active = True
+        else:
+            # Make both datetimes aware (UTC)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            now_utc = datetime.now(timezone.utc)
+            active = until > now_utc
     return {"tier": tier, "valid_until": until, "active": active}
 
 @_with_cursor
