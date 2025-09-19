@@ -689,7 +689,7 @@ async def _state_json(cid: int) -> dict:
       "language": db.get("get_group_language", lambda *_: None)(cid),
       "report": {
         "enabled": True,
-        "stats": await get_group_stats(cid)
+        "stats": await "get_group_stats"(cid)
       },
     }
 

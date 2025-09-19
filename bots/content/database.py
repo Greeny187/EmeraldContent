@@ -1060,8 +1060,15 @@ def remove_topic(cur, chat_id: int, user_id: int):
     cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
 @_with_cursor
-def has_topic(cur, chat_id: int, user_id: int) -> bool:
-    cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+def has_topic(cur, chat_id: int, user_id: int, topic_id: int = None) -> bool:
+    """
+    Prüft, ob ein User für ein Topic als Owner eingetragen ist.
+    topic_id ist optional (wenn nicht angegeben, prüft nur auf irgendein Topic).
+    """
+    if topic_id is not None:
+        cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s AND topic_id = %s;", (chat_id, user_id, topic_id))
+    else:
+        cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
     return cur.fetchone() is not None
 
 @_with_cursor
