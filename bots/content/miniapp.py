@@ -208,6 +208,8 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     try:
         aimod = data.get("ai_mod") or {}
         if aimod:
+            # Leere Strings zu None konvertieren!
+            aimod_clean = _clean_dict_empty_to_none(aimod)
             allowed = {
               "enabled","shadow_mode","action_primary","mute_minutes","warn_text","appeal_url",
               "max_per_min","cooldown_s","exempt_admins","exempt_topic_owner",
@@ -216,14 +218,14 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
             }
             payload={}
             for k in allowed:
-                if k in aimod and aimod[k] is not None:
-                    payload[k]=aimod[k]
+                if k in aimod_clean and aimod_clean[k] is not None:
+                    payload[k]=aimod_clean[k]
             alias={"toxicity":"tox_thresh","hate":"hate_thresh","sexual":"sex_thresh",
                    "harassment":"harass_thresh","selfharm":"selfharm_thresh","violence":"violence_thresh"}
             for k,v in list(payload.items()):
                 if k in alias: payload[alias[k]]=v; del payload[k]
             db["set_ai_mod_settings"](cid, 0, **payload)
-            logger.info("[miniapp] AIMOD: %s", data.get("ai_mod"))
+            logger.info("[miniapp] AIMOD: %s", payload)
     except Exception as e:
         errors.append(f"AI-Mod: {e}")
 
@@ -261,6 +263,10 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
             enabled = bool(night.get("on"))
             start_m = _hm_to_min(night.get("start") or "22:00", 1320)
             end_m   = _hm_to_min(night.get("end") or "07:00", 360)
+            # Leere Strings zu None für override_until
+            override_until = night.get("override_until")
+            if isinstance(override_until, str) and override_until.strip() == "":
+                override_until = None
             db["set_night_mode"](cid,
                 enabled=enabled,
                 start_minute=start_m,
@@ -269,7 +275,7 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
                 warn_once = night.get("warn_once"),
                 timezone = night.get("timezone"),
                 hard_mode = night.get("hard_mode"),
-                override_until = night.get("override_until")
+                override_until = override_until
             )
     except Exception as e:
         errors.append(f"Nachtmodus: {e}")
@@ -880,6 +886,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         aimod = data.get("ai_mod") or {}
         if aimod:
+            # Leere Strings zu None konvertieren!
+            aimod_clean = _clean_dict_empty_to_none(aimod)
             allowed = {
               "enabled","shadow_mode","action_primary","mute_minutes","warn_text","appeal_url",
               "max_per_min","cooldown_s","exempt_admins","exempt_topic_owner",
@@ -889,8 +897,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             }
             payload={}
             for k in allowed:
-                if k in aimod and aimod[k] is not None:
-                    payload[k]=aimod[k]
+                if k in aimod_clean and aimod_clean[k] is not None:
+                    payload[k]=aimod_clean[k]
             # Aliase umbenennen
             alias = {
               "toxicity":"tox_thresh","hate":"hate_thresh","sexual":"sex_thresh",
@@ -929,6 +937,10 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             enabled = bool(night.get("on"))
             start_m = _hm_to_min(night.get("start") or "22:00", 1320)
             end_m   = _hm_to_min(night.get("end") or "07:00", 360)
+            # Leere Strings zu None für override_until
+            override_until = night.get("override_until")
+            if isinstance(override_until, str) and override_until.strip() == "":
+                override_until = None
             db["set_night_mode"](cid,
                 enabled=enabled,
                 start_minute=start_m,
@@ -937,7 +949,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 warn_once = night.get("warn_once"),
                 timezone = night.get("timezone"),
                 hard_mode = night.get("hard_mode"),
-                override_until = night.get("override_until")
+                override_until = override_until
             )
     except Exception as e: errors.append(f"Nachtmodus: {e}")
 
