@@ -95,6 +95,13 @@ def _with_cursor(func):
                     pass
     return wrapped
 
+def clear_welcome_topic(cur, chat_id: int):
+    cur.execute("UPDATE group_settings SET welcome_topic_id=NULL WHERE chat_id=%s", [chat_id])
+
+def clear_welcome_media(cur, chat_id: int):
+    cur.execute("UPDATE group_settings SET welcome_file_id=NULL, welcome_image_url=NULL WHERE chat_id=%s", [chat_id])
+
+
 async def _call_db_safe(fn, *args, **kwargs):
     """
     Führt eine (synchrone) DB-Funktion sicher aus, loggt Exceptions

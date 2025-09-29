@@ -71,6 +71,44 @@ async def _is_admin(context, chat_id: int, user_id: int) -> bool:
     except Exception:
         return False
 
+async def safe_send_welcome(bot, db, chat_id, text, topic_id, file_id, parse_mode=None):
+    try:
+        kwargs = {"parse_mode": parse_mode}
+        if topic_id is not None:
+            kwargs["message_thread_id"] = topic_id
+
+        if file_id:
+            await bot.send_photo(chat_id, file_id, caption=text, **kwargs)
+        else:
+            await bot.send_message(chat_id, text, **kwargs)
+        return
+
+    except BadRequest as e:
+        msg = str(e).lower()
+
+        # Thread ungültig -> ohne thread erneut senden & DB heilen
+        if "message_thread" in msg:
+            if file_id:
+                await bot.send_photo(chat_id, file_id, caption=text, parse_mode=parse_mode)
+            else:
+                await bot.send_message(chat_id, text, parse_mode=parse_mode)
+            try:
+                db.clear_welcome_topic(chat_id)  # kleiner DB-Helper: setzt welcome_topic_id=NULL
+            except Exception:
+                pass
+            return
+
+        # Ungültiges file_id -> zumindest Text senden & Medienfelder leeren
+        if "wrong file identifier" in msg or "file not found" in msg:
+            await bot.send_message(chat_id, text, parse_mode=parse_mode)
+            try:
+                db.clear_welcome_media(chat_id)  # setzt welcome_file_id/image_url=NULL
+            except Exception:
+                pass
+            return
+
+        raise
+
 def _is_anon_admin_message(msg) -> bool:
     """True, wenn Nachricht als anonymer Admin (sender_chat == chat) kam."""
     try:

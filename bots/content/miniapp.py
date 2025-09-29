@@ -108,6 +108,17 @@ def _clean_dict_empty_to_none(d: dict) -> dict:
     """Konvertiert leere Strings in einem dict zu None."""
     return {k: (None if (isinstance(v, str) and v.strip() == "") else v) for k, v in d.items()}
 
+def _topic_id_or_none(v):
+    if v is None:
+        return None
+    s = str(v).strip().lower()
+    if s in ("", "0", "none", "null"):
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
 async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     db = _db()
@@ -121,15 +132,18 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     # --- Welcome ---
     try:
         w = data.get("welcome") or {}
-        img_b64 = data.get("welcome_img") or None
-        if w.get("on"):
-            photo_id = None
-            if img_b64 and app:
-                # Bild als Datei speichern und File-ID merken
-                img_bytes = base64.b64decode(img_b64.split(",")[-1])
-                f = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="welcome.jpg"))
-                photo_id = f.photo[-1].file_id if f.photo else None
-            db["set_welcome"](cid, photo_id, (w.get("text") or "Willkommen {user} 👋").strip())
+        on   = bool(w.get("on"))
+        text = (w.get("text") or "").strip() or None
+
+        photo_id = None
+        img_b64 = data.get("welcome_img") or None  # aus der Mini-App (Base64-DataURL)
+        if on and img_b64 and app:
+            img_bytes = base64.b64decode(img_b64.split(",")[-1])
+            sent = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="welcome.jpg"))
+            photo_id = sent.photo[-1].file_id if sent.photo else None
+
+        if on and (text or photo_id):
+            db["set_welcome"](cid, photo_id, text)
         else:
             db["delete_welcome"](cid)
     except Exception as e:
@@ -865,25 +879,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
     
     db = _db()
-
-    # Welcome/Rules/Farewell
-    try:
-        w = data.get("welcome") or {}
-        if w.get("on"): db["set_welcome"](cid, None, (w.get("text") or "Willkommen {user} 👋").strip())
-        else:            db["delete_welcome"](cid)
-    except Exception as e: errors.append(f"Welcome: {e}")
-
-    try:
-        rls = data.get("rules") or {}
-        if rls.get("on") and (rls.get("text") or "").strip(): db["set_rules"](cid, None, rls.get("text").strip())
-        else:                                                    db["delete_rules"](cid)
-    except Exception as e: errors.append(f"Regeln: {e}")
-
-    try:
-        f = data.get("farewell") or {}
-        if f.get("on"): db["set_farewell"](cid, None, (f.get("text") or "Tschüss {user}!").strip())
-        else:            db["delete_farewell"](cid)
-    except Exception as e: errors.append(f"Farewell: {e}")
 
     # Links/Spam
     try:
