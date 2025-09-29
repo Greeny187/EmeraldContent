@@ -119,63 +119,77 @@ def _topic_id_or_none(v):
     except Exception:
         return None
 
+def _none_if_blank(v):
+    return None if (v is None or (isinstance(v, str) and v.strip() == "")) else v
+
+async def _upload_get_file_id(app: Application, chat_id: int, base64_str: str) -> str | None:
+    """Nimmt eine Data-URL/Base64 und lädt das Bild via Bot hoch. Gibt file_id zurück."""
+    if not base64_str:
+        return None
+    # data:image/jpeg;base64,AAAA...
+    b64 = base64_str.split(",", 1)[-1]
+    raw = base64.b64decode(b64)
+    bio = BytesIO(raw); bio.name = "upload.jpg"
+    msg = await app.bot.send_photo(chat_id, InputFile(bio))
+    return msg.photo[-1].file_id if msg.photo else None
+
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
-async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
+async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) -> list[str]:
     db = _db()
-    errors: List[str] = []
-    app = None
-    try:
-        app = db.get("_telegram_app")  # falls du sie global speicherst
-    except Exception:
-        pass
+    errors: list[str] = []
 
     # --- Welcome ---
     try:
         w = data.get("welcome") or {}
         on   = bool(w.get("on"))
-        text = (w.get("text") or "").strip() or None
+        text = _none_if_blank(w.get("text"))
 
+        # Bild: Base64 aus Mini-App → Telegram-Upload → file_id speichern
         photo_id = None
-        img_b64 = data.get("welcome_img") or None  # aus der Mini-App (Base64-DataURL)
-        if on and img_b64 and app:
-            img_bytes = base64.b64decode(img_b64.split(",")[-1])
-            sent = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="welcome.jpg"))
-            photo_id = sent.photo[-1].file_id if sent.photo else None
+        if app and _none_if_blank(w.get("img_base64")):
+            photo_id = await _upload_get_file_id(app, cid, w["img_base64"])
 
         if on and (text or photo_id):
-            db["set_welcome"](cid, photo_id, text)
+            db["set_welcome"](cid, photo_id, text)   # (chat_id, photo_id, text)
         else:
             db["delete_welcome"](cid)
     except Exception as e:
         errors.append(f"Welcome: {e}")
+    # --- Captcha ---
+    try:
+        if "captcha" in data:
+            c = data["captcha"] or {}
+            enabled = bool(c.get("enabled", False))
+            # falls du nur Toggle willst:
+            db["set_captcha_settings"](cid, enabled, None, None)  # Signatur ggf. anpassen
+    except Exception as e:
+        errors.append(f"Captcha: {e}")
 
     # --- Rules ---
     try:
-        rls = data.get("rules") or {}
-        img_b64 = data.get("rules_img") or None
-        if rls.get("on") and (rls.get("text") or "").strip():
-            photo_id = None
-            if img_b64 and app:
-                img_bytes = base64.b64decode(img_b64.split(",")[-1])
-                f = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="rules.jpg"))
-                photo_id = f.photo[-1].file_id if f.photo else None
-            db["set_rules"](cid, photo_id, rls.get("text").strip())
+        r = data.get("rules") or {}
+        on   = bool(r.get("on"))
+        text = _none_if_blank(r.get("text"))
+        photo_id = None
+        if app and _none_if_blank(r.get("img_base64")):
+            photo_id = await _upload_get_file_id(app, cid, r["img_base64"])
+        if on and (text or photo_id):
+            db["set_rules"](cid, photo_id, text)
         else:
             db["delete_rules"](cid)
     except Exception as e:
-        errors.append(f"Regeln: {e}")
+        errors.append(f"Rules: {e}")
 
     # --- Farewell ---
     try:
         f = data.get("farewell") or {}
-        img_b64 = data.get("farewell_img") or None
-        if f.get("on"):
-            photo_id = None
-            if img_b64 and app:
-                img_bytes = base64.b64decode(img_b64.split(",")[-1])
-                fmsg = await app.bot.send_photo(cid, InputFile(BytesIO(img_bytes), filename="farewell.jpg"))
-                photo_id = fmsg.photo[-1].file_id if fmsg.photo else None
-            db["set_farewell"](cid, photo_id, (f.get("text") or "Tschüss {user}!").strip())
+        on   = bool(f.get("on"))
+        text = _none_if_blank(f.get("text"))
+        photo_id = None
+        if app and _none_if_blank(f.get("img_base64")):
+            photo_id = await _upload_get_file_id(app, cid, f["img_base64"])
+        if on and (text or photo_id):
+            db["set_farewell"](cid, photo_id, text)
         else:
             db["delete_farewell"](cid)
     except Exception as e:
@@ -335,19 +349,19 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
     except Exception as e:
         errors.append(f"Nachtmodus: {e}")
 
-    # --- Router ---
+    # --- Topic Router ---
     try:
         if "router_add" in data:
-            ra = data["router_add"] or {}
-            target = int(ra.get("target_topic_id") or 0)
-            kw = ra.get("keywords") or []
-            dom = ra.get("domains") or []
-            del_orig = bool(ra.get("delete_original", True))
-            warn_user = bool(ra.get("warn_user", True))
-            if target:
-                db["add_topic_router_rule"](cid, target, keywords=kw, domains=dom, delete_original=del_orig, warn_user=warn_user)
+            r = data["router_add"]
+            db["add_topic_router_rule"](cid, r["pattern"], r["target_topic_id"])
+        if "router_toggle" in data:
+            r = data["router_toggle"]
+            db["toggle_topic_router_rule"](cid, r["rule_id"], r.get("enabled", True))
+        if "router_delete" in data:
+            r = data["router_delete"]
+            db["delete_topic_router_rule"](cid, r["rule_id"])
     except Exception as e:
-        errors.append(f"Router: {e}")
+        errors.append(f"TopicRouter: {e}")
 
     # --- Pro kaufen/verlängern ---
     try:
@@ -362,9 +376,18 @@ async def _save_from_payload(cid: int, uid: int, data: dict) -> List[str]:
 
     return errors
 
+    # --- Clean Deleted Accounts (Einmal-Aktion) ---
+    try:
+        if data.get("clean_delete_now"):
+            from .utils import clean_delete_accounts_for_chat
+            # nicht blockieren
+            asyncio.create_task(clean_delete_accounts_for_chat(app.bot, cid, notify=True))
+    except Exception as e:
+        errors.append(f"CleanDelete: {e}")
+
 
 # ---------- HTTP-Fallback: /miniapp/apply ----------
-async def route_apply(request: web.Request):
+async def route_apply(request):
     app: Application = request.app["ptb_app"]
     if request.method == "OPTIONS":
         return _cors_json({})
@@ -391,12 +414,41 @@ async def route_apply(request: web.Request):
     # Optional: Hier könnte man get_chat_member aufrufen, um Adminrechte zu prüfen
     # Für die Mini-App-Entwicklung erlauben wir den HTTP-Save.
 
-    errors = await _save_from_payload(cid, uid, data)
+    errors = await _save_from_payload(cid, uid, data, request.app["ptb_app"])
     if errors:
         return web.Response(status=207, text="Teilweise gespeichert:\n- " + "\n- ".join(errors))
     return web.Response(text="✅ Einstellungen gespeichert.")
 
+async def route_file(request: web.Request):
+    webapp = request.app
+    cid = int(request.query.get("cid", "0") or 0)
 
+    # Auth wie bei /miniapp/state: Header X-Telegram-Init-Data ODER ?init_data=
+    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+    uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
+
+    if uid <= 0 or not await _is_admin(webapp, cid, uid):
+        return web.Response(status=403, text="forbidden")
+
+    file_id = request.query.get("file_id")
+    if not file_id:
+        return web.Response(status=400, text="file_id required")
+
+    # irgendeine PTB-App nehmen
+    apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
+    bot = apps[0].bot
+    f = await bot.get_file(file_id)
+    blob = await bot.request.retrieve(f.file_path)
+
+    ctype = "image/jpeg"
+    lower = f.file_path.lower()
+    if lower.endswith(".png"): ctype = "image/png"
+    elif lower.endswith(".gif"): ctype = "image/gif"
+
+    return web.Response(body=blob, content_type=ctype,
+                        headers={"Cache-Control": "public, max-age=86400"})
+    
+    
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
 def _origin(url: str) -> str:
     try:
@@ -846,6 +898,23 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(rows))
 
+async def _upload_get_file_id(app, chat_id:int, base64_str:str) -> str|None:
+    if not base64_str:
+        return None
+    header, b64 = base64_str.split(',', 1) if ',' in base64_str else ('', base64_str)
+    raw = base64.b64decode(b64)
+    bio = BytesIO(raw); bio.name = "upload.jpg"
+    msg = await app.bot.send_photo(chat_id, bio)      # ← Upload
+    return msg.photo[-1].file_id if msg.photo else None
+
+    # Beispiel im Save:
+    w_img_b64 = (data.get("welcome_img") or "").strip()
+    if w_img_b64:
+        photo_id = await _upload_get_file_id(app, cid, w_img_b64)
+    else:
+        photo_id = None if data.get("welcome_img_clear") else EXISTING_OR_NONE
+    db["set_welcome"](cid, photo_id, welcome_text)
+
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not getattr(msg, "web_app_data", None):
@@ -856,7 +925,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 len(msg.web_app_data.data or ""))
 
     try:
-        data = json.loads(msg.web_app_data.data or "{}")
+        data = json.loads(update.effective_message.web_app_data.data)
     except Exception:
         return await msg.reply_text("❌ Ungültige Daten von der Mini-App.")
 
@@ -874,7 +943,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await _is_admin_or_owner(context, cid, update.effective_user.id):
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
-    errors = await _save_from_payload(cid, update.effective_user.id, data)
+    errors = await _save_from_payload(cid, update.effective_user.id, data, context.application)
+
     if errors:
         return await msg.reply_text("⚠️ Teilweise gespeichert:\n• " + "\n• ".join(errors))
     
@@ -1102,6 +1172,8 @@ def register_miniapp_routes(webapp: web.Application, app: Application) -> None:
 
     webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
     webapp.router.add_route("OPTIONS", "/miniapp/send_mood", _cors_ok)
+
+    webapp.router.add_get("/miniapp/file", route_file)
 
     # POST/OPTIONS (Speichern)
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)

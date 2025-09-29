@@ -618,7 +618,7 @@ async def nightmode_time_input(update: Update, context: ContextTypes.DEFAULT_TYP
     txt = (update.effective_message.text or "").strip()
     val = _parse_hhmm(txt)
     if val is None:
-        return await update.effective_message.reply_text(tr("âš ï¸ Bitte im Format HH:MM senden, z. B. 22:00.", lang))
+        return await update.effective_message.reply_text(tr("⚠️ Bitte im Format HH:MM senden, z. B. 22:00.", lang))
     if kind == 'start':
         set_night_mode(cid, start_minute=val)
         await update.effective_message.reply_text(tr("âœ… Startzeit gespeichert:", lang) + f" {txt}")
@@ -675,7 +675,7 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(tr("ðŸŒ™ Sofortige Ruhephase aktiv bis", lang) + f" {human} ({tz}).")
 
 async def error_handler(update, context):
-    """FÃ¤ngt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
+    """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
     logger.error("Uncaught exception", exc_info=context.error)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -685,15 +685,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
         return await update.message.reply_text(
-            "ðŸ‘‹ Willkommen bei *Greeny Group Manager*!\n\n"
-            "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten â€“ "
+            "👋 Willkommen beim *Emerald Content Bot*!\n\n"
+            "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten "
             "inklusive Schutz, Statistiken, Rollenverwaltung, Captcha u.v.m.\n\n"
-            "ðŸŒ Mehr Infos: [Zur Website](https://greeny187.github.io/GreenyManagementBots/)\n\n"
-            "ðŸ’š *UnterstÃ¼tze das Projekt:*\n"
-            "â€¢ TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
-            "â€¢ PayPal: greeny187@outlook.de\n\n"
-            "â„¹ï¸ Tippe /help fÃ¼r alle Funktionen.\n\n"
-            "âœ… Gruppe registriert! Geh privat auf /menu.")
+            "❓ Mehr Infos: [Zur Website](https://greeny187.github.io/EmeraldContent/)\n\n"
+            "🎁 *Unterstütze das Projekt:*\n"
+            "• TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
+            "• PayPal: emerald@mail.de\n\n"
+            "✅ Gruppe registriert! Geh privat auf /miniapp.")
 
     if chat.type == "private":
         all_groups = get_registered_groups()
@@ -1424,8 +1423,8 @@ def register_handlers(app):
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.CHAT_MEMBER), group=-4)
     app.add_handler(ChatMemberHandler(track_members, ChatMemberHandler.MY_CHAT_MEMBER), group=-4)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, track_members), group=-4)
-    app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r"^-?\d+_captcha_button_\d+$"), group=-2)
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, math_captcha_handler), group=-2)
+    app.add_handler(CallbackQueryHandler(button_captcha_handler, pattern=r"^-?\d+_captcha_button_\d+$"), group=-3)
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, math_captcha_handler), group=-3)
 
     # (Optional) Fallback-Text-Handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=3)
