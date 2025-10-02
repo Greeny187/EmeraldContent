@@ -1,4 +1,3 @@
-# devdash_api.py
 import os, hmac, hashlib, time, asyncio
 from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
@@ -224,7 +223,7 @@ def register_devdash_routes(app):
     app.webhook_webapp.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
     
     # Add your other routes here
-    app.webhook_webapp.router.add_get("/health", health)
+    app.webhook_webapp.router.add_get("/health", healthz)
     app.webhook_webapp.router.add_get("/tenants", get_tenants)
     app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
     app.router.add_get   ("/devdash/healthz", healthz)
