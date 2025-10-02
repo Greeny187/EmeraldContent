@@ -1,5 +1,6 @@
 
-import asyncpg, os
+import asyncpg
+import os
 _pool = None
 
 async def get_pool():
