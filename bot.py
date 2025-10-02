@@ -149,6 +149,8 @@ async def main():
         if not cfg["token"]:
             continue
         app = await build_application(cfg, is_primary=(idx == 0))
+        if idx == 0:
+            webapp = app
         await app.initialize()
         await app.start()
         APPLICATIONS[cfg["route_key"]] = app
