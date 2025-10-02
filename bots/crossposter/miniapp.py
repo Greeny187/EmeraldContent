@@ -1,40 +1,19 @@
 
-# bots/content/miniapp_crossposter.py
-# PTB-Command + FastAPI-API (mandantenfähig).
-
 import hmac, hashlib, json, time, os
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatMember, Bot
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatMember
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ChatMemberStatus
 
-from .database import get_pool
-from .models import user_in_tenant, list_tenants_for_user, create_route, update_route, delete_route, list_routes, stats
+from .crossposter_models import user_in_tenant, list_tenants_for_user, ensure_default_tenant_for_user, create_tenant_for_user, create_route, update_route, delete_route, list_routes, stats, upsert_connector, get_connector, list_connectors
 
-MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://greeny187.github.io/EmeraldContentBots/miniapp/crossposter.html")
+API = FastAPI(title="Emerald Crossposter API", version="0.3")
+MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://example.com/miniapp/crossposter.html")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
 
-# Module-level placeholder for an optional Bot. Create lazily to avoid network or blocking
-# behavior at import time (some Bot implementations may perform I/O on init).
-app_bot = None
-
-def get_app_bot():
-    """Return a Bot instance: module-level `app_bot` if set, otherwise a new Bot(token=BOT_TOKEN).
-    This is lazy to avoid side-effects during import/time when a valid token may not be present.
-    """
-    global app_bot
-    if app_bot:
-        return app_bot
-    if BOT_TOKEN and BOT_TOKEN != "SET_ME":
-        try:
-            return Bot(token=BOT_TOKEN)
-        except Exception:
-            return None
-    return None
-
-# ---------- PTB: /crossposter
+# PTB command button
 async def cmd_crossposter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(text="Crossposter öffnen", web_app=WebAppInfo(url=MINIAPP_URL))]])
     if update.message:
@@ -42,10 +21,6 @@ async def cmd_crossposter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 crossposter_handler = CommandHandler("crossposter", cmd_crossposter)
 
-# ---------- FastAPI
-API = FastAPI(title="Emerald Crossposter API", version="0.1-mt")
-
-# Telegram initData Verify
 def verify_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
     try:
         from urllib.parse import parse_qsl
@@ -66,10 +41,12 @@ def verify_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"initData invalid: {e}")
 
-# Models
 class Destination(BaseModel):
     type: str = Field(example="telegram")
     chat_id: Optional[int] = None
+    webhook_url: Optional[str] = None
+    username: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 class RouteIn(BaseModel):
     tenant_id: int
@@ -82,18 +59,14 @@ class RouteIn(BaseModel):
 class RouteOut(RouteIn):
     id: int
 
-# Helper: Admin-Check
+# Admin check
 async def is_admin(context_bot, user_id: int, chat_id: int) -> bool:
     try:
-        # PTB Application/context provides `.bot.get_chat_member`, plain Bot also exposes `get_chat_member`.
-        # Accept either a Bot-like object or an Application/Context with `.bot` attribute.
-        bot_obj = getattr(context_bot, 'bot', context_bot)
-        member: ChatMember = await bot_obj.get_chat_member(chat_id, user_id)
+        member: ChatMember = await context_bot.getChatMember(chat_id, user_id)
         return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
     except Exception:
         return False
 
-# Dependencies
 async def current_user(x_telegram_init_data: str = Header(...)):
     return verify_init_data(x_telegram_init_data, BOT_TOKEN)
 
@@ -104,67 +77,53 @@ async def health():
 @API.get("/tenants")
 async def get_tenants(user=Depends(current_user)):
     rows = await list_tenants_for_user(user['user']['id'])
+    if not rows:
+        await ensure_default_tenant_for_user(user['user'])
+        rows = await list_tenants_for_user(user['user']['id'])
     return [dict(r) for r in rows]
+
+class TenantIn(BaseModel):
+    name: str
+    slug: str
+
+@API.post("/tenants")
+async def create_tenants(payload: TenantIn, user=Depends(current_user)):
+    row = await create_tenant_for_user(user['user']['id'], payload.name, payload.slug)
+    return dict(row)
 
 @API.get("/routes", response_model=List[RouteOut])
 async def list_routes_api(tenant_id: int = Query(...), user=Depends(current_user)):
-    # Mitgliedschaft prüfen
     if not await user_in_tenant(tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
     rows = await list_routes(tenant_id, user['user']['id'])
-    # Pydantic-Serialisierung
     out = []
     for r in rows:
-        out.append(RouteOut(
-            id=r["id"],
-            tenant_id=tenant_id,
-            source_chat_id=r["source_chat_id"],
-            destinations=r["destinations"],
-            transform=r["transform"],
-            filters=r["filters"],
-            active=r["active"]
-        ))
+        out.append(RouteOut(id=r["id"], tenant_id=tenant_id, source_chat_id=r["source_chat_id"], destinations=r["destinations"], transform=r["transform"], filters=r["filters"], active=r["active"]))
     return out
 
 @API.post("/routes", response_model=RouteOut)
 async def create_route_api(payload: RouteIn, user=Depends(current_user)):
-    # Mitgliedschaft + Admin-Gate in der Quelle
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    # Lazy Bot: use module-level app_bot if available, otherwise create a Bot via get_app_bot()
-    ok = await is_admin(get_app_bot() or Bot(token=BOT_TOKEN), user['user']['id'], payload.source_chat_id)
-    if not ok:
-        raise HTTPException(status_code=403, detail="Kein Admin in der Quellgruppe")
-    row = await create_route(payload.tenant_id, user['user']['id'], payload.source_chat_id,
-                             json.loads(payload.json())['destinations'], payload.transform, payload.filters, payload.active)
-    return RouteOut(
-        id=row["id"],
-        tenant_id=row["tenant_id"],
-        source_chat_id=row["source_chat_id"],
-        destinations=row["destinations"],
-        transform=row["transform"],
-        filters=row["filters"],
-        active=row["active"]
-    )
+    try:
+        from bots.bot_context import app_bot  # global PTB instance expected
+    except Exception:
+        app_bot = None
+    if app_bot is not None:
+        ok = await is_admin(app_bot, user['user']['id'], payload.source_chat_id)
+        if not ok:
+            raise HTTPException(status_code=403, detail="Kein Admin in der Quellgruppe")
+    row = await create_route(payload.tenant_id, user['user']['id'], payload.source_chat_id, json.loads(payload.json())['destinations'], payload.transform, payload.filters, payload.active)
+    return RouteOut(id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"], destinations=row["destinations"], transform=row["transform"], filters=row["filters"], active=row["active"])
 
 @API.patch("/routes/{route_id}", response_model=RouteOut)
 async def update_route_api(route_id: int, payload: RouteIn, user=Depends(current_user)):
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    row = await update_route(route_id, payload.tenant_id, user['user']['id'],
-                             payload.source_chat_id, json.loads(payload.json())['destinations'],
-                             payload.transform, payload.filters, payload.active)
+    row = await update_route(route_id, payload.tenant_id, user['user']['id'], payload.source_chat_id, json.loads(payload.json())['destinations'], payload.transform, payload.filters, payload.active)
     if not row:
         raise HTTPException(status_code=404, detail="Route nicht gefunden")
-    return RouteOut(
-        id=row["id"],
-        tenant_id=row["tenant_id"],
-        source_chat_id=row["source_chat_id"],
-        destinations=row["destinations"],
-        transform=row["transform"],
-        filters=row["filters"],
-        active=row["active"]
-    )
+    return RouteOut(id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"], destinations=row["destinations"], transform=row["transform"], filters=row["filters"], active=row["active"])
 
 @API.delete("/routes/{route_id}")
 async def delete_route_api(route_id: int, tenant_id: int = Query(...), user=Depends(current_user)):
@@ -179,3 +138,25 @@ async def stats_api(tenant_id: int = Query(...), user=Depends(current_user)):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
     total, by_status = await stats(tenant_id, user['user']['id'])
     return {"routes": total, "by_status": by_status}
+
+# Connectors
+class ConnectorIn(BaseModel):
+    tenant_id: int
+    type: str
+    label: str = "default"
+    config: Dict[str, Any]
+    active: bool = True
+
+@API.get("/connectors")
+async def connectors_list(tenant_id: int = Query(...), user=Depends(current_user)):
+    if not await user_in_tenant(tenant_id, user['user']['id']):
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
+    rows = await list_connectors(tenant_id)
+    return [dict(r) for r in rows]
+
+@API.post("/connectors")
+async def connectors_upsert(payload: ConnectorIn, user=Depends(current_user)):
+    if not await user_in_tenant(payload.tenant_id, user['user']['id']):
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
+    row = await upsert_connector(payload.tenant_id, payload.type, payload.label, payload.config, payload.active)
+    return {"ok": True, "id": row["id"]}
