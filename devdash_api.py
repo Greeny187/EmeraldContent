@@ -1,8 +1,10 @@
 import os, hmac, hashlib, time, asyncio
 from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
-import psycopg
+import logging
 from psycopg_pool import ConnectionPool
+
+log = logging.getLogger("devdash")
 
 DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
@@ -159,16 +161,15 @@ async def _auth_user(request: web.Request) -> int:
 
 # ---------- routes ----------
 async def options_handler(request):
-    return web.Response(status=200, headers={
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data'
-    })
+    headers = _cors_headers(request)
+    return web.Response(status=204, headers=headers)
 
 async def healthz(request: web.Request):
     return _json({"status":"ok","time":int(time.time())}, request)
 
 async def auth_telegram(request: web.Request):
+    log.info("auth_telegram hit from origin=%s ua=%s",
+             request.headers.get("Origin"), request.headers.get("User-Agent"))
     payload = await request.json()
     user = verify_telegram_auth(payload)
     await execute(
