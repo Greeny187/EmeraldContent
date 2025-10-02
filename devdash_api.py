@@ -214,21 +214,16 @@ async def bots_add(request: web.Request):
     )
     return _json(row, request, status=201)
 
-def register_devdash_routes(app):
-    # Check if app has webhook_webapp attribute
-    if not hasattr(app, 'webhook_webapp'):
-        app.webhook_webapp = web.Application()
+def register_devdash_routes(app: web.Application):
     
-    # Add routes to the webhook_webapp
-    app.webhook_webapp.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
-    
-    # Add your other routes here
-    app.webhook_webapp.router.add_get("/health", healthz)
-    app.webhook_webapp.router.add_get("/tenants", get_tenants)
+    # CORS Preflight für alle /devdash/* Pfade
     app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
-    app.router.add_get   ("/devdash/healthz", healthz)
-    app.router.add_post  ("/devdash/auth/telegram", auth_telegram)
-    app.router.add_get   ("/devdash/me", me)
-    app.router.add_get   ("/devdash/metrics/overview", overview)
-    app.router.add_get   ("/devdash/bots", bots_list)
-    app.router.add_post  ("/devdash/bots", bots_add)
+
+    # DevDash API
+    app.router.add_get ("/devdash/healthz",           healthz)
+    app.router.add_post("/devdash/auth/telegram",     auth_telegram)
+    app.router.add_get ("/devdash/me",                me)
+    app.router.add_get ("/devdash/metrics/overview",  overview)
+    app.router.add_get ("/devdash/bots",              bots_list)
+    app.router.add_post("/devdash/bots",              bots_add)
+
