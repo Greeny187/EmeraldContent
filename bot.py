@@ -14,7 +14,6 @@ try:
 except Exception:
     _register_content_miniapp_routes = None
 
-
 DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")
 PORT = int(os.getenv("PORT", "8443"))
@@ -160,14 +159,17 @@ async def main():
     if not APPLICATIONS:
         raise RuntimeError("No bots configured (no tokens found).")
 
+    webapp = web.Application()
+    if _register_content_miniapp_routes and "content" in APPLICATIONS:
+        _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
+    
+    logging.info("DevDash mounting on: %r", type(webapp))
+    
     # >>> HIER EINFÜGEN: DevDashboard-API registrieren <<<
     from devdash_api import register_devdash_routes, ensure_tables
     await ensure_tables()  # legt die Kern-Tabellen einmalig an
     register_devdash_routes(webapp)
-
-    webapp = web.Application()
-    if _register_content_miniapp_routes and "content" in APPLICATIONS:
-        _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
+    
     webapp.router.add_get("/health", health_handler)
     webapp.router.add_get("/env", env_handler)
     webapp.router.add_post("/webhook/{route_key}", webhook_handler)

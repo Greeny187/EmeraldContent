@@ -215,13 +215,18 @@ async def bots_add(request: web.Request):
     return _json(row, request, status=201)
 
 def register_devdash_routes(app: web.Application):
-    app.add_routes([
-        web.route("OPTIONS", "/devdash/{tail:.*}", options_handler),
-        web.get("/devdash/healthz",           healthz),
-        web.post("/devdash/auth/telegram",    auth_telegram),
-        web.get("/devdash/me",                me),
-        web.get("/devdash/metrics/overview",  overview),
-        web.get("/devdash/bots",              bots_list),
-        web.post("/devdash/bots",             bots_add),
-    ])
+    # Harte Prüfung: wirklich aiohttp.web.Application?
+    if not isinstance(app, web.Application) or not hasattr(app, "router"):
+        raise TypeError(f"register_devdash_routes erwartet aiohttp.web.Application, bekam: {type(app)}")
+
+    # CORS Preflight für alle /devdash/* Pfade
+    app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
+
+    # DevDash API
+    app.router.add_get ("/devdash/healthz",           healthz)
+    app.router.add_post("/devdash/auth/telegram",     auth_telegram)
+    app.router.add_get ("/devdash/me",                me)
+    app.router.add_get ("/devdash/metrics/overview",  overview)
+    app.router.add_get ("/devdash/bots",              bots_list)
+    app.router.add_post("/devdash/bots",              bots_add)
 
