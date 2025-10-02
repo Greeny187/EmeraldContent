@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ChatMemberStatus
 
-from .crossposter_models import user_in_tenant, list_tenants_for_user, ensure_default_tenant_for_user, create_tenant_for_user, create_route, update_route, delete_route, list_routes, stats, upsert_connector, get_connector, list_connectors
+from .models import user_in_tenant, list_tenants_for_user, ensure_default_tenant_for_user, create_tenant_for_user, create_route, update_route, delete_route, list_routes, stats, upsert_connector, get_connector, list_connectors
 
 API = FastAPI(title="Emerald Crossposter API", version="0.3")
 MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://example.com/miniapp/crossposter.html")
@@ -106,7 +106,7 @@ async def create_route_api(payload: RouteIn, user=Depends(current_user)):
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
     try:
-        from bots.bot_context import app_bot  # global PTB instance expected
+        from bots.bot import app_bot  # global PTB instance expected
     except Exception:
         app_bot = None
     if app_bot is not None:

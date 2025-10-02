@@ -1,6 +1,6 @@
 import os
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
-from bots.crossposter.worker import route_message  # use local worker
+from .worker import route_message  # use local worker
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
 
