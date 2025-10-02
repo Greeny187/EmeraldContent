@@ -6,15 +6,33 @@ import hmac, hashlib, json, time, os
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatMember
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatMember, Bot
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ChatMemberStatus
 
 from .database import get_pool
 from .models import user_in_tenant, list_tenants_for_user, create_route, update_route, delete_route, list_routes, stats
 
-MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://example.com/miniapp/crossposter.html")
+MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://greeny187.github.io/EmeraldContentBots/miniapp/crossposter.html")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
+
+# Module-level placeholder for an optional Bot. Create lazily to avoid network or blocking
+# behavior at import time (some Bot implementations may perform I/O on init).
+app_bot = None
+
+def get_app_bot():
+    """Return a Bot instance: module-level `app_bot` if set, otherwise a new Bot(token=BOT_TOKEN).
+    This is lazy to avoid side-effects during import/time when a valid token may not be present.
+    """
+    global app_bot
+    if app_bot:
+        return app_bot
+    if BOT_TOKEN and BOT_TOKEN != "SET_ME":
+        try:
+            return Bot(token=BOT_TOKEN)
+        except Exception:
+            return None
+    return None
 
 # ---------- PTB: /crossposter
 async def cmd_crossposter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,7 +85,10 @@ class RouteOut(RouteIn):
 # Helper: Admin-Check
 async def is_admin(context_bot, user_id: int, chat_id: int) -> bool:
     try:
-        member: ChatMember = await context_bot.getChatMember(chat_id, user_id)
+        # PTB Application/context provides `.bot.get_chat_member`, plain Bot also exposes `get_chat_member`.
+        # Accept either a Bot-like object or an Application/Context with `.bot` attribute.
+        bot_obj = getattr(context_bot, 'bot', context_bot)
+        member: ChatMember = await bot_obj.get_chat_member(chat_id, user_id)
         return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
     except Exception:
         return False
@@ -110,8 +131,8 @@ async def create_route_api(payload: RouteIn, user=Depends(current_user)):
     # Mitgliedschaft + Admin-Gate in der Quelle
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    # Lazy Import um Zyklen zu vermeiden
-    ok = await is_admin(app_bot, user['user']['id'], payload.source_chat_id)
+    # Lazy Bot: use module-level app_bot if available, otherwise create a Bot via get_app_bot()
+    ok = await is_admin(get_app_bot() or Bot(token=BOT_TOKEN), user['user']['id'], payload.source_chat_id)
     if not ok:
         raise HTTPException(status_code=403, detail="Kein Admin in der Quellgruppe")
     row = await create_route(payload.tenant_id, user['user']['id'], payload.source_chat_id,
