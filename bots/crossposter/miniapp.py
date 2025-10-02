@@ -106,7 +106,7 @@ async def create_route_api(payload: RouteIn, user=Depends(current_user)):
     if not await user_in_tenant(payload.tenant_id, user['user']['id']):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
     try:
-        from bots.bot import app_bot  # global PTB instance expected
+        from common.bot import app_bot  # global PTB instance expected
     except Exception:
         app_bot = None
     if app_bot is not None:
