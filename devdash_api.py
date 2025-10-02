@@ -159,8 +159,12 @@ async def _auth_user(request: web.Request) -> int:
         raise web.HTTPUnauthorized(text=str(e))
 
 # ---------- routes ----------
-async def options_handler(request: web.Request):
-    return _json({}, request, status=204)
+async def options_handler(request):
+    return web.Response(status=200, headers={
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Telegram-Init-Data'
+    })
 
 async def healthz(request: web.Request):
     return _json({"status":"ok","time":int(time.time())}, request)
@@ -211,8 +215,17 @@ async def bots_add(request: web.Request):
     )
     return _json(row, request, status=201)
 
-def register_devdash_routes(app: web.Application):
-    # Preflight für alle /devdash/* Routen erlauben
+def register_devdash_routes(app):
+    # Check if app has webhook_webapp attribute
+    if not hasattr(app, 'webhook_webapp'):
+        app.webhook_webapp = web.Application()
+    
+    # Add routes to the webhook_webapp
+    app.webhook_webapp.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
+    
+    # Add your other routes here
+    app.webhook_webapp.router.add_get("/health", health)
+    app.webhook_webapp.router.add_get("/tenants", get_tenants)
     app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
     app.router.add_get   ("/devdash/healthz", healthz)
     app.router.add_post  ("/devdash/auth/telegram", auth_telegram)
