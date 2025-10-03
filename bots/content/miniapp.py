@@ -321,6 +321,31 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"Sprache: {e}")
 
+    # --- Clean Deleted: Scheduler speichern & Sofort-Aktion ---
+    try:
+        cd = data.get("clean_deleted") or None
+        if cd is not None:
+            hh, mm = 3, 0
+            try:
+                hh, mm = map(int, (cd.get("time") or "03:00").split(":"))
+            except Exception:
+                pass
+            wd = cd.get("weekday", None)
+            if wd == "" or wd is False:
+                wd = None
+            db["set_clean_deleted_settings"](cid,
+                enabled = bool(cd.get("enabled")),
+                hh = int(hh), mm = int(mm),
+                weekday = wd if wd is None else int(wd),
+                demote = bool(cd.get("demote")),
+                notify = bool(cd.get("notify")),
+            )
+        if data.get("clean_delete_now"):
+            from .utils import clean_delete_accounts_for_chat
+            asyncio.create_task(clean_delete_accounts_for_chat(cid, app.bot))
+    except Exception as e:
+        errors.append(f"CleanDelete: {e}")
+    
     # --- Nachtmodus ---
     try:
         night = data.get("night") or {}
@@ -759,6 +784,18 @@ async def _state_json(cid: int) -> dict:
     # Fix: call the function from db dict, not a string
     stats = db["get_group_stats"](cid, date.today()) if "get_group_stats" in db else {}
 
+    # Clean-Deleted aus DB lesen
+    try:
+        cds = db["get_clean_deleted_settings"](cid)
+    except Exception:
+        cds = {"enabled": False, "hh":3, "mm":0, "weekday": None, "demote": False, "notify": True}
+    clean_deleted = {
+        "enabled": bool(cds.get("enabled")),
+        "time": f"{int(cds.get('hh',3)):02d}:{int(cds.get('mm',0)):02d}",
+        "weekday": cds.get("weekday"),
+        "demote": bool(cds.get("demote")),
+        "notify": bool(cds.get("notify")),
+    }
     return {
       "welcome": _media_block_with_image(cid, "welcome"),
       "rules":   _media_block_with_image(cid, "rules"),
@@ -775,10 +812,8 @@ async def _state_json(cid: int) -> dict:
       "subscription": sub,
       "night":   night,
       "language": db.get("get_group_language", lambda *_: None)(cid),
-      "report": {
-        "enabled": True,
-        "stats": stats
-      },
+      "report": {"enabled": True, "stats": stats},
+      "clean_deleted": clean_deleted,
     }
 
 

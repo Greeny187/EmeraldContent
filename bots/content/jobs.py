@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes, Application
 from shared.telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
 from content.database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
-                    prune_pending_inputs_older_than, get_clean_deleted_settings,
+                    get_all_group_ids, get_clean_deleted_settings,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
 from .statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
@@ -429,3 +429,27 @@ def register_jobs(app):
             logger.warning(f"pending_inputs prune failed: {e}")
     jq.run_repeating(_prune, interval=86400, first=300, name="pending_inputs_prune")
     logger.info("Jobs registriert: daily_report, telethon_stats, purge_members, dev_stats_nightly, rollup_yesterday, night_mode_job")
+    
+    # --- Gelöschte Accounts aufräumen (Ticker alle 5 Minuten) ---
+    async def _clean_deleted_tick(ctx):
+        now = datetime.now(ZoneInfo("Europe/Berlin"))
+        for gid in (get_all_group_ids() or []):
+            cfg = get_clean_deleted_settings(gid) or {}
+            if not cfg.get("enabled"):
+                continue
+            if cfg.get("weekday") is not None and int(cfg["weekday"]) != now.weekday():
+                continue
+            hh = int(cfg.get("hh",3)); mm = int(cfg.get("mm",0))
+            # Auslösen in dem 5-Minuten-Fenster, in dem der Ticker läuft
+            if now.hour == hh and now.minute in {mm, (mm+1)%60, (mm+2)%60, (mm+3)%60, (mm+4)%60}:
+                try:
+                    cnt = await clean_delete_accounts_for_chat(gid, ctx.bot, demote_admins=bool(cfg.get("demote")))
+                    if cfg.get("notify"):
+                        try:
+                            await ctx.bot.send_message(gid, f"✅ Aufgeräumt: {cnt or 0} gelöschte Accounts entfernt.")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+    # alle 5 Minuten prüfen
+    app.job_queue.run_repeating(lambda c: app.create_task(_clean_deleted_tick(c)), interval=300, first=60)
