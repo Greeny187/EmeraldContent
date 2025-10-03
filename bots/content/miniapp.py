@@ -325,27 +325,44 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     # --- Nachtmodus ---
     try:
         night = data.get("night") or {}
-        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night):
+        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night) or ("override_until" in night):
             def _hm_to_min(s, default):
                 try:
-                    h,m = str(s or '').split(':'); return int(h)*60 + int(m)
-                except Exception: return default
+                    h, m = str(s or '').split(':'); return int(h)*60 + int(m)
+                except Exception:
+                    return default
+
             enabled = bool(night.get("on"))
             start_m = _hm_to_min(night.get("start") or "22:00", 1320)
             end_m   = _hm_to_min(night.get("end") or "07:00", 360)
-            # Leere Strings zu None für override_until
+
+            tz = (night.get("timezone") or "Europe/Berlin").strip() or "Europe/Berlin"
             override_until = night.get("override_until")
-            if isinstance(override_until, str) and override_until.strip() == "":
-                override_until = None
+            if isinstance(override_until, str):
+                s = override_until.strip()
+                if not s:
+                    override_until = None
+                else:
+                    # datetime-local ohne TZ → als lokale Zeit interpretieren und nach UTC konvertieren
+                    # Erwartete Formate: "YYYY-MM-DDTHH:MM" oder ISO mit Sekunden
+                    try:
+                        dt_local = datetime.fromisoformat(s)
+                        if dt_local.tzinfo is None:
+                            dt_local = dt_local.replace(tzinfo=ZoneInfo(tz))
+                        override_until = dt_local.astimezone(ZoneInfo("UTC"))
+                    except Exception:
+                        # Fallback: lieber None als kaputter String
+                        override_until = None
+
             db["set_night_mode"](cid,
                 enabled=enabled,
                 start_minute=start_m,
                 end_minute=end_m,
-                delete_non_admin_msgs = night.get("delete_non_admin_msgs"),
-                warn_once = night.get("warn_once"),
-                timezone = night.get("timezone"),
-                hard_mode = night.get("hard_mode"),
-                override_until = override_until
+                delete_non_admin_msgs=night.get("delete_non_admin_msgs"),
+                warn_once=night.get("warn_once"),
+                timezone=tz,
+                hard_mode=night.get("hard_mode"),
+                override_until=override_until
             )
     except Exception as e:
         errors.append(f"Nachtmodus: {e}")
