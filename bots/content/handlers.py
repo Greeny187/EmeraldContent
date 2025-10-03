@@ -21,7 +21,7 @@ except Exception:
 from .access import resolve_privileged_flags, get_visible_groups, cached_admins, is_admin_or_owner
 
 # DB-Import robust halten (Monorepo vs. Standalone)
-
+from . import database as db
 from .database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
     remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
     get_night_mode, set_night_mode, get_group_language, set_spam_policy_topic, get_spam_policy_topic,
@@ -86,25 +86,28 @@ async def safe_send_welcome(bot, db, chat_id, text, topic_id, file_id, parse_mod
     except BadRequest as e:
         msg = str(e).lower()
 
-        # Thread ungültig -> ohne thread erneut senden & DB heilen
+        # Forum-Topic ungültig -> ohne Topic erneut senden & Topic in DB leeren
         if "message_thread" in msg:
             if file_id:
                 await bot.send_photo(chat_id, file_id, caption=text, parse_mode=parse_mode)
             else:
                 await bot.send_message(chat_id, text, parse_mode=parse_mode)
-            try:
-                db.clear_welcome_topic(chat_id)  # kleiner DB-Helper: setzt welcome_topic_id=NULL
-            except Exception:
-                pass
+            try: db.clear_welcome_topic(chat_id)
+            except Exception: pass
             return
 
-        # Ungültiges file_id -> zumindest Text senden & Medienfelder leeren
+        # Caption zu lang -> Foto ohne Caption + Text separat
+        if "caption is too long" in msg or "too long" in msg:
+            if file_id:
+                await bot.send_photo(chat_id, file_id, parse_mode=parse_mode)
+            await bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return
+
+        # Ungültiges file_id -> wenigstens Text senden & Medienfelder in DB leeren
         if "wrong file identifier" in msg or "file not found" in msg:
             await bot.send_message(chat_id, text, parse_mode=parse_mode)
-            try:
-                db.clear_welcome_media(chat_id)  # setzt welcome_file_id/image_url=NULL
-            except Exception:
-                pass
+            try: db.clear_welcome_media(chat_id)
+            except Exception: pass
             return
 
         raise
@@ -1093,10 +1096,8 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
                 )
                 try:
-                    if photo_id:
-                        await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
-                    else:
-                        await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
+                    topic_id = getattr(update.effective_message, "message_thread_id", None) if update.effective_message else None
+                    await safe_send_welcome(context.bot, db, chat_id, text, topic_id, photo_id, parse_mode="HTML")
                 except Exception:
                     pass
 

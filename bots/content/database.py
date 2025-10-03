@@ -1662,6 +1662,15 @@ def get_mood_topic(cur, chat_id: int) -> Optional[int]:
     return int(row[0]) if row and row[0] else None
 
 # --- Welcome / Rules / Farewell ---
+
+@_with_cursor
+def clear_welcome_topic(cur, chat_id: int):
+    cur.execute("UPDATE group_settings SET welcome_topic_id=NULL WHERE chat_id=%s", [chat_id])
+
+@_with_cursor
+def clear_welcome_media(cur, chat_id: int):
+    cur.execute("UPDATE group_settings SET welcome_file_id=NULL, welcome_image_url=NULL WHERE chat_id=%s", [chat_id])
+
 @_with_cursor
 def set_welcome(cur, chat_id: int, photo_id: Optional[str], text: Optional[str]):
     try:
