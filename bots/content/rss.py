@@ -182,7 +182,7 @@ async def fetch_rss_feed(context: CallbackContext):
                     logger.info(f"AI summary skipped: {e}")
 
             # Nachricht senden
-            caption = f"ðŸ“° <b>{title}</b>\n{link}"
+            caption = f"📰 <b>{title}</b>\n{link}"
             if summary:
                 caption += f"\n\n<b>TL;DR</b> {summary}"
 
