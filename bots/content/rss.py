@@ -5,9 +5,7 @@ from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, MessageHandler, filters, ContextTypes
 from .database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic, get_rss_topic, 
-get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, 
-get_pending_input, clear_pending_input, _call_db_safe
-)
+get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input)
 from .utils import ai_summarize
 
 logger = logging.getLogger(__name__)
@@ -90,13 +88,6 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
         await update.message.reply_text("Alle RSS-Feeds entfernt.")
 
 async def fetch_rss_feed(context: CallbackContext):
-    """
-    Optimiert:
-    - If-Modified-Since / ETag (via feedparser)
-    - postet bis zu 3 neue EintrÃ¤ge pro Durchlauf (Ã¤lteste zuerst)
-    - optional: Bild-Vorschau (enclosure/media/erste <img>)
-    - optional: KI-Zusammenfassung (kurzer TL;DR in Gruppen-Sprache)
-    """
     start = time.time()
     for chat_id, url, topic_id, etag, last_mod, post_images, enabled in get_rss_feeds_full():
         if not enabled:
