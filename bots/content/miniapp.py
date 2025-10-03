@@ -1177,7 +1177,7 @@ def register_miniapp_routes(webapp, app):
     # GET
     webapp.router.add_route("GET",     "/miniapp/state",     route_state)
     webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
-    webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
+    webapp.router.add_route("GET", "/miniapp/file", route_file)
     webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
     # POST
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
