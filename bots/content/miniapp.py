@@ -147,7 +147,15 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         # Bild: Base64 aus Mini-App → Telegram-Upload → file_id speichern
         photo_id = None
         if app and _none_if_blank(w.get("img_base64")):
+            # neues Bild laden
             photo_id = await _upload_get_file_id(app, cid, w["img_base64"])
+        else:
+            # kein neues Bild gesendet → vorhandenes aus DB beibehalten
+            try:
+                existing = db["get_welcome"](cid) or (None, None)
+                photo_id = existing[0]  # kann None sein
+            except Exception:
+                photo_id = None
 
         if on and (text or photo_id):
             db["set_welcome"](cid, photo_id, text)   # (chat_id, photo_id, text)
@@ -173,6 +181,12 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         photo_id = None
         if app and _none_if_blank(r.get("img_base64")):
             photo_id = await _upload_get_file_id(app, cid, r["img_base64"])
+        else:
+            try:
+                existing = db["get_rules"](cid) or (None, None)
+                photo_id = existing[0]
+            except Exception:
+                photo_id = None
         if on and (text or photo_id):
             db["set_rules"](cid, photo_id, text)
         else:
@@ -188,6 +202,12 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         photo_id = None
         if app and _none_if_blank(f.get("img_base64")):
             photo_id = await _upload_get_file_id(app, cid, f["img_base64"])
+        else:
+            try:
+                existing = db["get_farewell"](cid) or (None, None)
+                photo_id = existing[0]
+            except Exception:
+                photo_id = None
         if on and (text or photo_id):
             db["set_farewell"](cid, photo_id, text)
         else:
