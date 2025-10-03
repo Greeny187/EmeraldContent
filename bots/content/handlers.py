@@ -11,6 +11,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType, ChatMemberStatus
+
+import bot
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
 except Exception:
@@ -103,7 +105,19 @@ async def safe_send_welcome(bot, db, chat_id, text, topic_id, file_id, parse_mod
             await bot.send_message(chat_id, text, parse_mode=parse_mode)
             return
 
-        # Ungültiges file_id -> wenigstens Text senden & Medienfelder in DB leeren
+        # Caption zu lang ODER HTML-Parsing-Fehler -> Foto ohne Caption + Text separat
+        if "caption is too long" in msg or ("too long" in msg and "caption" in msg) or "parse entities" in msg or "can't parse entities" in msg:
+            if file_id:
+                kwargs2 = {}
+                if topic_id is not None:
+                    kwargs2["message_thread_id"] = topic_id
+                # Foto ohne Caption senden
+                await bot.send_photo(chat_id, file_id, **kwargs2)
+            # Text gesondert senden (HTML darf hier länger sein)
+            await bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return
+
+        # Ungültiges/abgelaufenes file_id -> zumindest Text senden & Medienfelder heilen
         if "wrong file identifier" in msg or "file not found" in msg:
             await bot.send_message(chat_id, text, parse_mode=parse_mode)
             try: db.clear_welcome_media(chat_id)
@@ -111,6 +125,13 @@ async def safe_send_welcome(bot, db, chat_id, text, topic_id, file_id, parse_mod
             return
 
         raise
+    except Forbidden as e:
+        # Keine Medien-Rechte? -> versuche zumindest Text
+        try:
+            await bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return
+        except Exception:
+            raise
 
 def _is_anon_admin_message(msg) -> bool:
     """True, wenn Nachricht als anonymer Admin (sender_chat == chat) kam."""
@@ -1137,13 +1158,9 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (text or "👋 Auf Wiedersehen, {user}!").replace(
                 "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
             )
-            try:
-                if photo_id:
-                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
-                else:
-                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-            except Exception:
-                pass
+            topic_id = getattr(msg, "message_thread_id", None)
+            await safe_send_welcome(context.bot, db, chat_id, text, topic_id, photo_id, parse_mode="HTML")
+            
             try:
                 remove_member(chat_id, user.id)
             except Exception:
@@ -1166,13 +1183,9 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (text or "👋 Willkommen {user}!").replace(
                 "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
             )
-            try:
-                if photo_id:
-                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
-                else:
-                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-            except Exception:
-                pass
+            topic_id = getattr(update.effective_message, "message_thread_id", None) if update.effective_message else None
+            await safe_send_welcome(context.bot, db, chat_id, text, topic_id, photo_id, parse_mode="HTML")
+            
             try:
                 add_member(chat_id, user.id)
             except Exception:
@@ -1186,13 +1199,9 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (text or "👋 Auf Wiedersehen, {user}!").replace(
                 "{user}", f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
             )
-            try:
-                if photo_id:
-                    await context.bot.send_photo(chat_id, photo_id, caption=text, parse_mode="HTML")
-                else:
-                    await context.bot.send_message(chat_id, text=text, parse_mode="HTML")
-            except Exception:
-                pass
+            topic_id = getattr(update.effective_message, "message_thread_id", None) if update.effective_message else None
+            await safe_send_welcome(context.bot, db, chat_id, text, topic_id, photo_id, parse_mode="HTML")
+            
             try:
                 remove_member(chat_id, user.id)
             except Exception:
