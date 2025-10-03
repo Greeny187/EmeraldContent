@@ -35,7 +35,7 @@ from .patchnotes import __version__, PATCH_NOTES
 from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
     ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
     heuristic_link_risk, _apply_hard_permissions)
-from shared.statistic import log_spam_event, log_night_event
+from .statistic import log_spam_event, log_night_event
 from shared.translator import translate_hybrid
 
 logger = logging.getLogger(__name__)

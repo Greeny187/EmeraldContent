@@ -4,9 +4,9 @@ import datetime as dt
 from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
-from .telethon_client import telethon_client, start_telethon
+from shared.telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from bots.content.database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+from content.database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     prune_pending_inputs_older_than, get_clean_deleted_settings,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
 from .statistic import (
@@ -16,8 +16,8 @@ from .statistic import (
     migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day, get_group_language
 )
 from telegram.constants import ParseMode
-from .translator import translate_hybrid as tr
-from bots.content.utils import clean_delete_accounts_for_chat, _apply_hard_permissions
+from shared.translator import translate_hybrid as tr
+from content.utils import clean_delete_accounts_for_chat, _apply_hard_permissions
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]

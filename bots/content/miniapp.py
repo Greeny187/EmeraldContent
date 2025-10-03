@@ -9,13 +9,12 @@ from io import BytesIO
 from aiohttp import web
 from aiohttp.web_response import Response
 from typing import List, Tuple, Optional
+from zoneinfo import ZoneInfo
 from datetime import date, timedelta, datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InputFile
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from bots.content import database
-from shared import statistic
 
 logger = logging.getLogger(__name__)
 
@@ -1162,62 +1161,32 @@ def _attach_http_routes(app: Application) -> bool:
     webapp["_ptb_apps"].append(app)
     webapp.setdefault("ptb_app", app)
 
-def register_miniapp_routes(webapp: web.Application, app: Application) -> None:
-    """Registriert alle Miniapp-HTTP-Routen an der gegebenen aiohttp-App."""
-    # Alle PTB-Apps sammeln (Multi-Bot-Support)
+def register_miniapp_routes(webapp, app):
+    ALLOWED_ORIGIN = "https://greeny187.github.io"
+    async def _cors_ok(_request):
+        return web.json_response({}, status=204, headers={
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
+        })
+
     webapp.setdefault("_ptb_apps", [])
     webapp["_ptb_apps"].append(app)
-    # Erste App als Default beibehalten
     webapp.setdefault("ptb_app", app)
 
-    async def _cors_ok(_request):
-        return web.json_response(
-            {}, status=204,
-            headers={
-                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
-            }
-        )
-
-    # GET/OPTIONS
+    # GET
     webapp.router.add_route("GET",     "/miniapp/state",     route_state)
-    webapp.router.add_route("OPTIONS", "/miniapp/state",     _cors_ok)
-
     webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
-    webapp.router.add_route("OPTIONS", "/miniapp/stats",     _cors_ok)
-
     webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
-    webapp.router.add_route("OPTIONS", "/miniapp/file",      _cors_ok)
-
     webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
-    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", _cors_ok)
-
-    webapp.router.add_get("/miniapp/file", route_file)
-
-    # POST/OPTIONS (Speichern)
+    # POST
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
-    webapp.router.add_route("OPTIONS", "/miniapp/apply",     _cors_ok)
-    
-    # GET/OPTIONS für State/Stats/File/Send_mood
-    webapp.router.add_route("GET",     "/miniapp/state",     route_state)
-    webapp.router.add_route("OPTIONS", "/miniapp/state",     _cors_ok)
-
-    webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
-    webapp.router.add_route("OPTIONS", "/miniapp/stats",     _cors_ok)
-
-    webapp.router.add_route("GET",     "/miniapp/file",      _file_proxy)
-    webapp.router.add_route("OPTIONS", "/miniapp/file",      _cors_ok)
-
-    webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
-    webapp.router.add_route("OPTIONS", "/miniapp/send_mood", _cors_ok)
-
-    # POST/OPTIONS für Apply (Speichern)
-    webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
-    webapp.router.add_route("OPTIONS", "/miniapp/apply",     _cors_ok)
+    # OPTIONS (CORS)
+    for p in ("/miniapp/state","/miniapp/stats","/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
+        webapp.router.add_route("OPTIONS", p, _cors_ok)
 
     webapp["_miniapp_routes_attached"] = True
-    logger.info("[miniapp] HTTP-Routen registriert (late)")
+    logger.info("[miniapp] HTTP-Routen registriert")
     return True
 
 def register_miniapp(app: Application):

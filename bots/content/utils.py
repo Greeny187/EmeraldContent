@@ -143,11 +143,7 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
     return removed
 
 def tr(text: str, lang: str) -> str:
-    try:
-        return translate_hybrid(text, lang)
-    except Exception as e:
-        logger.error(f"Fehler in tr(): {e}")
-        return text
+    return translate_hybrid(text, target_lang=lang)
 
 def is_deleted_account(member) -> bool:
     """
