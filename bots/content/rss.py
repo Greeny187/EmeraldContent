@@ -16,9 +16,9 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Nur in Gruppen/Supergruppen zulassen
     if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("âŒ `/settopicrss` nur in Gruppen mÃ¶glich.")
+        return await msg.reply_text("âŒ `/settopicrss` nur in Gruppen möglich.")
 
-    # 1) Wenn im Thema ausgefÃ¼hrt, nimmt message_thread_id
+    # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
     topic_id = msg.message_thread_id or None
     # 2) Oder, falls als Reply in einem Thema
     if not topic_id and msg.reply_to_message:
