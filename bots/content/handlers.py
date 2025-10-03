@@ -22,17 +22,17 @@ from .access import resolve_privileged_flags, get_visible_groups, cached_admins,
 
 # DB-Import robust halten (Monorepo vs. Standalone)
 
-from .database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
+from database import (register_group, get_registered_groups, get_rules, set_welcome, set_rules, set_farewell, add_member, get_link_settings, 
     remove_member, inc_message_count, assign_topic, remove_topic, has_topic, set_mood_question, get_farewell, get_welcome, get_captcha_settings,
     get_night_mode, set_night_mode, get_group_language, set_spam_policy_topic, get_spam_policy_topic,
     add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
     toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
-    effective_spam_policy, count_topic_user_messages_today, set_spam_policy_topic, 
+    effective_spam_policy, count_topic_user_messages_today, 
     effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, add_strike_points, get_strike_points, top_strike_users, decay_strikes
     )
 from zoneinfo import ZoneInfo
-from .patchnotes import __version__, PATCH_NOTES
-from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
+from patchnotes import __version__, PATCH_NOTES
+from utils import (clean_delete_accounts_for_chat, ai_summarize, 
     ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
     heuristic_link_risk, _apply_hard_permissions)
 from shared.statistic import log_spam_event, log_night_event

@@ -3,6 +3,7 @@ import json
 import os
 import urllib.parse
 import logging
+import asyncio
 import hmac, hashlib
 from io import BytesIO
 from aiohttp import web
@@ -374,16 +375,18 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"Pro-Abo: {e}")
 
-    return errors
-
-    # --- Clean Deleted Accounts (Einmal-Aktion) ---
+        # --- Clean Deleted Accounts (Einmal-Aktion) ---
     try:
         if data.get("clean_delete_now"):
             from .utils import clean_delete_accounts_for_chat
             # nicht blockieren
-            asyncio.create_task(clean_delete_accounts_for_chat(app.bot, cid, notify=True))
+            asyncio.create_task(clean_delete_accounts_for_chat(cid, app.bot))
     except Exception as e:
         errors.append(f"CleanDelete: {e}")
+
+    return errors
+
+
 
 
 # ---------- HTTP-Fallback: /miniapp/apply ----------
