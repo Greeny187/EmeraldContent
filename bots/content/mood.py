@@ -77,10 +77,10 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         admins = await context.bot.get_chat_administrators(chat.id)
         admin_ids = {a.user.id for a in admins}
         if user.id not in admin_ids:
-            return await msg.reply_text("Nur Admins kÃ¶nnen das Mood-Topic setzen.")
+            return await msg.reply_text("Nur Admins können das Mood-Topic setzen.")
     except Exception:
         # Fallback: wenn die Abfrage scheitert, lieber abbrechen als falsch setzen
-        return await msg.reply_text("Konnte Adminrechte nicht prÃ¼fen. Bitte erneut versuchen.")
+        return await msg.reply_text("Konnte Adminrechte nicht prüfen. Bitte erneut versuchen.")
 
     # Topic-ID ermitteln
     topic_id = None
@@ -98,12 +98,12 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         if topic_id is None:
             return await msg.reply_text(
-                "Dies ist eine Foren-Gruppe. Bitte fÃ¼hre /setmoodtopic **im gewÃ¼nschten Thema** aus "
+                "Dies ist eine Foren-Gruppe. Bitte führe /setmoodtopic **im gewünschten Thema** aus "
                 "oder antworte mit dem Befehl auf eine Nachricht in diesem Thema.\n\n"
                 "Alternativ: /setmoodtopic <topic_id>",
             )
 
-    # 3) In Nicht-Foren-Gruppen ist 'kein Topic' zulÃ¤ssig (globale Nutzung)
+    # 3) In Nicht-Foren-Gruppen ist 'kein Topic' zulässig (globale Nutzung)
     # -> topic_id bleibt None
 
     # Speichern
@@ -115,8 +115,8 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Feedback
     if topic_id is None:
-        return await msg.reply_text("âœ… Mood-Topic entfernt (globale Nutzung in dieser Gruppe).")
-    return await msg.reply_text(f"âœ… Mood-Topic gesetzt auf Thread-ID {topic_id}.")
+        return await msg.reply_text("✅ Mood-Topic entfernt (globale Nutzung in dieser Gruppe).")
+    return await msg.reply_text(f"✅ Mood-Topic gesetzt auf Thread-ID {topic_id}.")
 
 async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reagiert auf Klicks der Mood-Buttons."""
