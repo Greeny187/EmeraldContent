@@ -251,14 +251,23 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         if (r.get("url") or "").strip():
             url = r.get("url").strip()
             topic = int(r.get("topic") or 0)
+            try: db["set_rss_topic"](cid, topic)
+            except Exception: pass
             db["add_rss_feed"](cid, url, topic)
             db["set_rss_feed_options"](cid, url, post_images=bool(r.get("post_images")), enabled=bool(r.get("enabled", True)))
+            logger.info(f"[miniapp] RSS add cid={cid} url={url} topic={topic} post_images={bool(r.get('post_images'))} enabled={bool(r.get('enabled', True))}")
         upd = data.get("rss_update") or None
         if upd and (upd.get("url") or "").strip():
             url=upd.get("url").strip()
             db["set_rss_feed_options"](cid, url, post_images=upd.get("post_images"), enabled=upd.get("enabled"))
         if data.get("rss_del"):
+            del_url = data.get("rss_del")
             db["remove_rss_feed"](cid, data.get("rss_del"))
+            logger.info(f"[miniapp] RSS add {cid}: {url} topic={topic} enabled={enabled}")
+        if "rss_update" in data:
+            u = data["rss_update"]; logger.info(f"[miniapp] RSS update cid={cid}: {u}")
+        if "rss_del" in data:
+            logger.info(f"[miniapp] RSS del {cid}: {data['rss_del']}")
     except Exception as e:
         errors.append(f"RSS: {e}")
 
@@ -312,25 +321,61 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
             db["set_daily_stats"](cid, bool(data.get("daily_stats")))
     except Exception as e:
         errors.append(f"Daily-Report: {e}")
+    try:
+        if data.get("report_send_now") and app:
+            cfg = data.get("report", {}) or {}
+            dest = (cfg.get("dest") or "dm").lower()
+            topic_id = int(cfg.get("topic") or 0) or None
 
+            d1 = date.today()
+            d0 = d1  # „heute“; optional auf 7d erweitern
+            summary = db["get_agg_summary"](cid, d0, d1)
+            top = db["get_top_responders"](cid, d0, d1, 5) or []
+
+            def _fmt_ms(ms):
+                if ms is None: return "–"
+                s = int(ms//1000)
+                return f"{s//60}m {s%60}s" if s>=60 else f"{s}s"
+
+            lines = [
+            "📊 <b>Statistik</b> (heute)",
+            f"• Nachrichten: <b>{summary['messages_total']}</b>",
+            f"• Aktive Nutzer: <b>{summary['active_users']}</b>",
+            f"• Joins/Leaves/Kicks: <b>{summary['joins']}/{summary['leaves']}/{summary['kicks']}</b>",
+            f"• Antwortzeiten p50/p90: <b>{_fmt_ms(summary['reply_median_ms'])}/{_fmt_ms(summary['reply_p90_ms'])}</b>",
+            f"• Assist-Hits/Helpful: <b>{summary['autoresp_hits']}/{summary['autoresp_helpful']}</b>",
+            f"• Moderation (Spam/Nacht): <b>{summary['spam_actions']}/{summary['night_deletes']}</b>",
+            ]
+            if top:
+                lines.append("<b>Top-Responder</b>")
+                for (u, answers, avg_ms) in top:
+                    s = int((avg_ms or 0)//1000)
+                    s_str = f"{s//60}m {s%60}s" if s>=60 else f"{s}s"
+                    lines.append(f"• <code>{u}</code>: <b>{answers}</b> Antworten, Ø {s_str}")
+            text = "\n".join(lines)
+
+            target_chat = cid if dest=="topic" else uid
+            kw = {}
+            if dest=="topic" and topic_id: kw["message_thread_id"] = topic_id
+
+            await app.bot.send_message(chat_id=target_chat, text=text, parse_mode="HTML", **kw)
+            logger.info(f"[miniapp] Statistik gesendet: dest={dest} chat={target_chat} topic={topic_id}")
+    except Exception as e:
+        logger.error(f"[miniapp] Fehler beim Senden der Statistik: {e}")
     # --- Mood ---
     try:
-        if (data.get("mood") or {}).get("question", "").strip():
-            db["set_mood_question"](cid, data["mood"]["question"].strip())
-        if str((data.get("mood") or {}).get("topic", "")).strip().isdigit():
-            db["set_mood_topic"](cid, int(str(data["mood"]["topic"]).strip()))
-        # Mood sofort senden
-        if data.get("mood_send_now"):
-            app = db.get("_telegram_app")
-            if app:
-                question = db["get_mood_question"](cid) or "Wie ist deine Stimmung?"
-                topic_id = db["get_mood_topic"](cid) or None
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("👍", callback_data="mood_like"),
-                     InlineKeyboardButton("👎", callback_data="mood_dislike"),
-                     InlineKeyboardButton("🤔", callback_data="mood_think")]
-                ])
-                await app.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
+        if data.get("mood_send_now") and app:
+            question = db["get_mood_question"](cid) or "Wie ist deine Stimmung?"
+            topic_id = db["get_mood_topic"](cid) or None
+            kb = InlineKeyboardMarkup([[  # wie gehabt …
+                InlineKeyboardButton("👍", callback_data="mood_like"),
+                InlineKeyboardButton("👎", callback_data="mood_dislike"),
+                InlineKeyboardButton("🤔", callback_data="mood_think"),
+            ]])
+            await app.bot.send_message(chat_id=cid, text=question,
+                                    message_thread_id=topic_id if topic_id else None,
+                                    reply_markup=kb)
+            logger.info(f"[miniapp] Mood prompt gesendet in {cid} (topic={topic_id})")
     except Exception as e:
         errors.append(f"Mood: {e}")
 
@@ -529,10 +574,10 @@ def _db():
     # Nur noch lokale DB – kein shared.database mehr
     try:
         from .database import (
-            get_registered_groups,
+            get_registered_groups,get_clean_deleted_settings, set_clean_deleted_settings,
             set_welcome, delete_welcome, get_welcome,
             set_rules, delete_rules, get_rules, get_group_stats,
-            set_farewell, delete_farewell, get_farewell,
+            set_farewell, delete_farewell, get_farewell, get_agg_summary, get_heatmap,
             get_link_settings, set_link_settings, set_spam_policy_topic,
             set_rss_topic, get_rss_topic, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
             get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
@@ -544,6 +589,10 @@ def _db():
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
+            "get_clean_deleted_settings": get_clean_deleted_settings,
+            "set_clean_deleted_settings": set_clean_deleted_settings,
+            "get_agg_summary": get_agg_summary,
+            "get_heatmap": get_heatmap,
             "get_registered_groups": get_registered_groups,
             "set_welcome": set_welcome,
             "delete_welcome": delete_welcome,
@@ -931,10 +980,11 @@ async def route_send_mood(request: web.Request):
     ]])
 
     try:
-        await webapp.bot.send_message(chat_id=cid, text=question, reply_markup=kb, message_thread_id=topic_id)
-        return _cors_json({"ok": True})
+        apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
+        await apps[0].bot.send_message(chat_id=cid, text=question, reply_markup=kb,
+                                       message_thread_id=topic_id)
     except Exception as e:
-        return _cors_json({"ok": False, "error": str(e)})
+        return _cors_json({"ok": True})
     
 # === Bot-Befehle & WebAppData speichern ======================================
 async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
