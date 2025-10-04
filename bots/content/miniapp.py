@@ -137,32 +137,21 @@ async def _upload_get_file_id(app: Application, chat_id: int, base64_str: str) -
 async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) -> list[str]:
     db = _db()
     errors: list[str] = []
-
-    # --- Welcome ---
+ 
+    # --- Vorverarbeitung: Kompatibilität für { images: { welcome|rules|farewell } } -----------
     try:
-        w = data.get("welcome") or {}
-        on   = bool(w.get("on"))
-        text = _none_if_blank(w.get("text"))
+        imgs = data.get("images") or {}
+        for k in ("welcome","rules","farewell"):
+            val = imgs.get(k)
+            if isinstance(val, dict):
+                d = data.setdefault(k, {})
+                if val.get("clear") is True:
+                    d["img_base64"] = ""   # explizit Foto löschen
+                elif val.get("img_base64"):
+                    d["img_base64"] = val["img_base64"]
+    except Exception:
+        pass
 
-        # Bild: Base64 aus Mini-App → Telegram-Upload → file_id speichern
-        photo_id = None
-        if app and _none_if_blank(w.get("img_base64")):
-            # neues Bild laden
-            photo_id = await _upload_get_file_id(app, cid, w["img_base64"])
-        else:
-            # kein neues Bild gesendet → vorhandenes aus DB beibehalten
-            try:
-                existing = db["get_welcome"](cid) or (None, None)
-                photo_id = existing[0]  # kann None sein
-            except Exception:
-                photo_id = None
-
-        if on and (text or photo_id):
-            db["set_welcome"](cid, photo_id, text)   # (chat_id, photo_id, text)
-        else:
-            db["delete_welcome"](cid)
-    except Exception as e:
-        errors.append(f"Welcome: {e}")
     # --- Captcha ---
     try:
         if "captcha" in data:
@@ -173,45 +162,103 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"Captcha: {e}")
 
+    # --- Welcome ---
+    try:
+        if "welcome" in data:
+            w = data.get("welcome") or {}
+            # Aktuell gespeicherte Werte holen (für Teil-Updates/Fallback)
+            try:
+                existing_photo, existing_text = db["get_welcome"](cid) or (None, None)
+            except Exception:
+                existing_photo, existing_text = (None, None)
+
+            # Text nur ändern, wenn er mitgeschickt wurde – sonst beibehalten
+            text = _none_if_blank(w.get("text")) if ("text" in w) else existing_text
+
+            # Bild-Logik:
+            photo_id = existing_photo
+            if "img_base64" in w:
+                v = w.get("img_base64")
+                if isinstance(v, str) and v == "":
+                    photo_id = None                        # explizit löschen
+                elif app and _none_if_blank(v):
+                    photo_id = await _upload_get_file_id(app, cid, v)  # neu hochladen
+
+            # Enabled/Disabled nur beachten, wenn "on" tatsächlich mitkam
+            on_flag_present = ("on" in w)
+            on = bool(w.get("on")) if on_flag_present else None
+
+            if on is False:
+                db["delete_welcome"](cid)
+            else:
+                # bei Teil-Update oder on=True: speichern, sofern noch Inhalt existiert
+                if text or photo_id:
+                    db["set_welcome"](cid, photo_id, text)
+                elif on is True:
+                    # on=True aber weder Text noch Bild → löschen
+                    db["delete_welcome"](cid)
+    except Exception as e:
+        errors.append(f"Welcome: {e}")
+
     # --- Rules ---
     try:
-        r = data.get("rules") or {}
-        on   = bool(r.get("on"))
-        text = _none_if_blank(r.get("text"))
-        photo_id = None
-        if app and _none_if_blank(r.get("img_base64")):
-            photo_id = await _upload_get_file_id(app, cid, r["img_base64"])
-        else:
+        if "rules" in data:
+            r = data.get("rules") or {}
             try:
-                existing = db["get_rules"](cid) or (None, None)
-                photo_id = existing[0]
+                existing_photo, existing_text = db["get_rules"](cid) or (None, None)
             except Exception:
-                photo_id = None
-        if on and (text or photo_id):
-            db["set_rules"](cid, photo_id, text)
-        else:
-            db["delete_rules"](cid)
+                existing_photo, existing_text = (None, None)
+
+            text = _none_if_blank(r.get("text")) if ("text" in r) else existing_text
+            photo_id = existing_photo
+            if "img_base64" in r:
+                v = r.get("img_base64")
+                if isinstance(v, str) and v == "":
+                    photo_id = None
+                elif app and _none_if_blank(v):
+                    photo_id = await _upload_get_file_id(app, cid, v)
+
+            on_flag_present = ("on" in r)
+            on = bool(r.get("on")) if on_flag_present else None
+
+            if on is False:
+                db["delete_rules"](cid)
+            else:
+                if text or photo_id:
+                    db["set_rules"](cid, photo_id, text)
+                elif on is True:
+                    db["delete_rules"](cid)
     except Exception as e:
         errors.append(f"Rules: {e}")
 
     # --- Farewell ---
     try:
-        f = data.get("farewell") or {}
-        on   = bool(f.get("on"))
-        text = _none_if_blank(f.get("text"))
-        photo_id = None
-        if app and _none_if_blank(f.get("img_base64")):
-            photo_id = await _upload_get_file_id(app, cid, f["img_base64"])
-        else:
+        if "farewell" in data:
+            f = data.get("farewell") or {}
             try:
-                existing = db["get_farewell"](cid) or (None, None)
-                photo_id = existing[0]
+                existing_photo, existing_text = db["get_farewell"](cid) or (None, None)
             except Exception:
-                photo_id = None
-        if on and (text or photo_id):
-            db["set_farewell"](cid, photo_id, text)
-        else:
-            db["delete_farewell"](cid)
+                existing_photo, existing_text = (None, None)
+
+            text = _none_if_blank(f.get("text")) if ("text" in f) else existing_text
+            photo_id = existing_photo
+            if "img_base64" in f:
+                v = f.get("img_base64")
+                if isinstance(v, str) and v == "":
+                    photo_id = None
+                elif app and _none_if_blank(v):
+                    photo_id = await _upload_get_file_id(app, cid, v)
+
+            on_flag_present = ("on" in f)
+            on = bool(f.get("on")) if on_flag_present else None
+
+            if on is False:
+                db["delete_farewell"](cid)
+            else:
+                if text or photo_id:
+                    db["set_farewell"](cid, photo_id, text)
+                elif on is True:
+                    db["delete_farewell"](cid)
     except Exception as e:
         errors.append(f"Farewell: {e}")
 
