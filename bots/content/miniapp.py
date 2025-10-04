@@ -122,15 +122,25 @@ def _topic_id_or_none(v):
 def _none_if_blank(v):
     return None if (v is None or (isinstance(v, str) and v.strip() == "")) else v
 
-async def _upload_get_file_id(app: Application, chat_id: int, base64_str: str) -> str | None:
-    """Nimmt eine Data-URL/Base64 und lädt das Bild via Bot hoch. Gibt file_id zurück."""
+async def _upload_get_file_id(app: Application, target_chat_id: int, base64_str: str) -> str | None:
+    """
+    Nimmt eine Data-URL/Base64 und lädt das Bild via Bot hoch. Gibt file_id zurück.
+    Wichtig: Upload NICHT mehr in die Gruppe, sondern per DM an den Admin (target_chat_id=uid),
+    damit nichts in der Gruppe gepostet wird.
+    """
     if not base64_str:
         return None
-    # data:image/jpeg;base64,AAAA...
     b64 = base64_str.split(",", 1)[-1]
     raw = base64.b64decode(b64)
     bio = BytesIO(raw); bio.name = "upload.jpg"
-    msg = await app.bot.send_photo(chat_id, InputFile(bio))
+    try:
+        # bevorzugt DM an den Admin (leise)
+        msg = await app.bot.send_photo(target_chat_id, InputFile(bio), disable_notification=True)
+    except Exception as e:
+        # Fallback: notfalls in die Gruppe, aber weiterhin leise – und sauber loggen
+        logger.warning(f"[miniapp] DM-Upload fehlgeschlagen, Fallback in Gruppe: {e}")
+        bio.seek(0)
+        msg = await app.bot.send_photo(target_chat_id, InputFile(bio), disable_notification=True)
     return msg.photo[-1].file_id if msg.photo else None
 
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
@@ -156,9 +166,17 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     try:
         if "captcha" in data:
             c = data["captcha"] or {}
-            enabled = bool(c.get("enabled", False))
-            # falls du nur Toggle willst:
-            db["set_captcha_settings"](cid, enabled, None, None)  # Signatur ggf. anpassen
+            # bestehende Werte holen, damit wir nie NOT NULL verletzen
+            try:
+                old_enabled, old_type, old_behavior = db["get_captcha_settings"](cid)
+            except Exception:
+                old_enabled, old_type, old_behavior = (False, "button", "kick")
+            enabled  = bool(c.get("enabled")) if ("enabled" in c) else bool(old_enabled)
+            ctype    = (c.get("type") or old_type or "button")
+            if ctype not in ("button", "math"): ctype = old_type or "button"
+            behavior = (c.get("behavior") or old_behavior or "kick")
+            if behavior not in ("kick", "mute", "none"): behavior = old_behavior or "kick"
+            db["set_captcha_settings"](cid, enabled, ctype, behavior)
     except Exception as e:
         errors.append(f"Captcha: {e}")
 
@@ -182,7 +200,8 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                 if isinstance(v, str) and v == "":
                     photo_id = None                        # explizit löschen
                 elif app and _none_if_blank(v):
-                    photo_id = await _upload_get_file_id(app, cid, v)  # neu hochladen
+                    # Upload nur noch per DM an den Admin (uid), nicht in die Gruppe
+                    photo_id = await _upload_get_file_id(app, uid, v)
 
             # Enabled/Disabled nur beachten, wenn "on" tatsächlich mitkam
             on_flag_present = ("on" in w)
@@ -216,7 +235,7 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                 if isinstance(v, str) and v == "":
                     photo_id = None
                 elif app and _none_if_blank(v):
-                    photo_id = await _upload_get_file_id(app, cid, v)
+                    photo_id = await _upload_get_file_id(app, uid, v)
 
             on_flag_present = ("on" in r)
             on = bool(r.get("on")) if on_flag_present else None
@@ -247,7 +266,7 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                 if isinstance(v, str) and v == "":
                     photo_id = None
                 elif app and _none_if_blank(v):
-                    photo_id = await _upload_get_file_id(app, cid, v)
+                    photo_id = await _upload_get_file_id(app, uid, v)
 
             on_flag_present = ("on" in f)
             on = bool(f.get("on")) if on_flag_present else None
@@ -597,10 +616,17 @@ async def route_file(request: web.Request):
     if lower.endswith(".png"): ctype = "image/png"
     elif lower.endswith(".gif"): ctype = "image/gif"
 
-    return web.Response(body=blob, content_type=ctype,
-                        headers={"Cache-Control": "public, max-age=86400"})
-    
-    
+    return web.Response(
+        body=blob,
+        content_type=ctype,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            # CORS fix für Bildvorschau in der Mini-App
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN
+        }
+    )
+
+
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
 def _origin(url: str) -> str:
     try:
@@ -628,12 +654,15 @@ def _db():
             set_mood_question, get_mood_question, set_mood_topic, get_mood_topic,
             set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
-            set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until
+            set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
+            get_captcha_settings, set_captcha_settings
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
             "get_clean_deleted_settings": get_clean_deleted_settings,
             "set_clean_deleted_settings": set_clean_deleted_settings,
+            "get_captcha_settings": get_captcha_settings,
+            "set_captcha_settings": set_captcha_settings,
             "get_agg_summary": get_agg_summary,
             "get_heatmap": get_heatmap,
             "get_registered_groups": get_registered_groups,
@@ -893,6 +922,13 @@ async def _state_json(cid: int) -> dict:
             image_url = f"/miniapp/file?cid={cid}&file_id={ph}"
         return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or "", "image_url": image_url}
 
+    # Captcha-Block aus DB lesen
+    try:
+        en, ctype, behavior = db["get_captcha_settings"](cid)
+        captcha = {"enabled": bool(en), "type": ctype, "behavior": behavior}
+    except Exception:
+        captcha = {"enabled": False, "type": "button", "behavior": "kick"}
+
     # Fix: call the function from db dict, not a string
     stats = db["get_group_stats"](cid, date.today()) if "get_group_stats" in db else {}
 
@@ -912,6 +948,7 @@ async def _state_json(cid: int) -> dict:
       "welcome": _media_block_with_image(cid, "welcome"),
       "rules":   _media_block_with_image(cid, "rules"),
       "farewell":_media_block_with_image(cid, "farewell"),
+      "captcha": captcha,
       "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
       "spam":    spam_block,
       "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
