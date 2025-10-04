@@ -246,7 +246,7 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         errors.append(f"Spam/Links: {e}")
 
     # --- RSS add/del/update ---
-    try:
+    if "rss" in data or "rss_update" in data or "rss_del" in data:
         r = data.get("rss") or {}
         if (r.get("url") or "").strip():
             url = r.get("url").strip()
@@ -262,14 +262,10 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
             db["set_rss_feed_options"](cid, url, post_images=upd.get("post_images"), enabled=upd.get("enabled"))
         if data.get("rss_del"):
             del_url = data.get("rss_del")
-            db["remove_rss_feed"](cid, data.get("rss_del"))
-            logger.info(f"[miniapp] RSS add {cid}: {url} topic={topic} enabled={enabled}")
+            db["remove_rss_feed"](cid, del_url)
+            logger.info(f"[miniapp] RSS del cid={cid} url={del_url}")
         if "rss_update" in data:
-            u = data["rss_update"]; logger.info(f"[miniapp] RSS update cid={cid}: {u}")
-        if "rss_del" in data:
-            logger.info(f"[miniapp] RSS del {cid}: {data['rss_del']}")
-    except Exception as e:
-        errors.append(f"RSS: {e}")
+            u = data["rss_update"]; logger.info(f"[miniapp] RSS update cid={cid} {u}")
 
     # --- KI (Assistent/FAQ) ---
     try:
@@ -983,9 +979,11 @@ async def route_send_mood(request: web.Request):
         apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
         await apps[0].bot.send_message(chat_id=cid, text=question, reply_markup=kb,
                                        message_thread_id=topic_id)
-    except Exception as e:
         return _cors_json({"ok": True})
-    
+    except Exception as e:
+        logger.error(f"[miniapp] send_mood failed: {e}")
+        return _cors_json({"error":"send_failed"}, 500)
+
 # === Bot-Befehle & WebAppData speichern ======================================
 async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # nur im Privatchat
@@ -1021,23 +1019,6 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text("❌ Du bist in keiner registrierten Gruppe Admin/Owner.")
 
     await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(rows))
-
-async def _upload_get_file_id(app, chat_id:int, base64_str:str) -> str|None:
-    if not base64_str:
-        return None
-    header, b64 = base64_str.split(',', 1) if ',' in base64_str else ('', base64_str)
-    raw = base64.b64decode(b64)
-    bio = BytesIO(raw); bio.name = "upload.jpg"
-    msg = await app.bot.send_photo(chat_id, bio)      # ← Upload
-    return msg.photo[-1].file_id if msg.photo else None
-
-    # Beispiel im Save:
-    w_img_b64 = (data.get("welcome_img") or "").strip()
-    if w_img_b64:
-        photo_id = await _upload_get_file_id(app, cid, w_img_b64)
-    else:
-        photo_id = None if data.get("welcome_img_clear") else EXISTING_OR_NONE
-    db["set_welcome"](cid, photo_id, welcome_text)
 
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
