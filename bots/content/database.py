@@ -6,7 +6,7 @@ import json
 import logging
 from urllib.parse import urlparse
 from datetime import date
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional
 from psycopg2 import pool, OperationalError, InterfaceError
 from psycopg2.extras import Json
 from datetime import datetime, timedelta
@@ -1764,19 +1764,26 @@ def set_captcha_settings(cur, chat_id: int, enabled: bool, ctype: str, behavior:
 
 # --- RSS Feeds & Deduplication ---
 @_with_cursor
-def set_rss_topic(cur, chat_id: int, topic_id: int):
-    cur.execute(
-        "INSERT INTO group_settings (chat_id, daily_stats_enabled, rss_topic_id) VALUES (%s, TRUE, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET rss_topic_id = EXCLUDED.rss_topic_id;",
-        (chat_id, topic_id)
-    )
+def set_rss_topic_for_feed(cur, chat_id: int, url: str, topic_id: int):
+    """Setzt das Topic nur für einen konkreten Feed (empfohlen)."""
+    cur.execute("UPDATE rss_feeds SET topic_id=%s WHERE chat_id=%s AND url=%s;", (topic_id, chat_id, url))
 
 @_with_cursor
-def get_rss_topic(cur, chat_id: int) -> int:
-    cur.execute("SELECT rss_topic_id FROM group_settings WHERE chat_id = %s;", (chat_id,))
-    row = cur.fetchone()
-    return row[0] if row else 0
+def set_rss_topic_for_group_feeds(cur, chat_id: int, topic_id: int):
+    """Setzt das Topic für alle Feeds einer Gruppe (Bulk)."""
+    cur.execute("UPDATE rss_feeds SET topic_id=%s WHERE chat_id=%s;", (topic_id, chat_id))
 
+# --- DEPRECATED: nur für Backwards-Compatibility (nicht mehr verwenden)
+@_with_cursor
+def set_rss_topic(cur, chat_id: int, topic_id: int):
+    """Veraltet – leitet auf rss_feeds.bulk um, damit Alt-Code nicht bricht."""
+    logging.getLogger(__name__).warning("DEPRECATED set_rss_topic(): schreibe in rss_feeds.topic_id (bulk).")
+    cur.execute("UPDATE rss_feeds SET topic_id=%s WHERE chat_id=%s;", (topic_id, chat_id))
+@_with_cursor
+def get_rss_topic(cur, chat_id: int) -> int:
+    """Veraltet – existiert nur noch, um Alt-Code nicht zu brechen. Gibt 0 zurück."""
+    logging.getLogger(__name__).warning("DEPRECATED get_rss_topic(): bitte rss_feeds.topic_id verwenden.")
+    return 0
 @_with_cursor
 def add_rss_feed(cur, chat_id: int, url: str, topic_id: int):
     cur.execute(

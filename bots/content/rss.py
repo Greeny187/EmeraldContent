@@ -4,7 +4,7 @@ import time, re
 from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, filters, ContextTypes
 from .database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
-prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic, get_rss_topic, 
+prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic_for_group_feeds, 
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input)
 from .utils import ai_summarize
 
@@ -31,8 +31,9 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # In DB speichern
-    set_rss_topic(chat.id, topic_id)
-    await msg.reply_text(f"âœ… RSS-Posting-Thema gesetzt auf Topic {topic_id}.")
+    # Für alle Feeds der Gruppe setzen (nur rss_feeds, kein group_settings)
+    set_rss_topic_for_group_feeds(chat.id, topic_id)
+    await msg.reply_text(f"✅ RSS-Topic aktualisiert: Alle Feeds posten nun in Topic {topic_id}.")
 
 async def set_rss_feed(update: Update, context: CallbackContext):
     """
@@ -40,11 +41,8 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     oder via MenÃ¼-Flow (ForceReply), dann nur URL.
     """
     chat_id = update.effective_chat.id
-    topic_id = get_rss_topic(chat_id)
-    if not topic_id:
-        return await update.message.reply_text(
-            "â— Kein RSS-Topic gesetzt. Bitte erst mit /settopicrss im gewÃ¼nschten Thread ausfÃ¼hren."
-        )
+    # Nur noch aktuelles Thread-Topic verwenden; wenn keiner, dann Hauptchat (0)
+    topic_id = getattr(update.effective_message, "message_thread_id", None) or 0
 
     url = None
     post_images = None
@@ -66,7 +64,7 @@ async def set_rss_feed(update: Update, context: CallbackContext):
     add_rss_feed(chat_id, url, topic_id)
     if post_images is not None:
         set_rss_feed_options(chat_id, url, post_images=post_images)
-    return await update.message.reply_text(f"âœ… RSS-Feed hinzugefÃ¼gt (Topic {topic_id}):\n{url}")
+    return await update.message.reply_text(f"✅ RSS-Feed hinzugefügt (Topic {topic_id}):\n{url}")
 
 async def list_rss_feeds(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
