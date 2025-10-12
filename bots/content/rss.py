@@ -3,9 +3,10 @@ import logging
 import time, re
 from telegram import Update, ForceReply
 from telegram.ext import CommandHandler, CallbackContext, filters, ContextTypes
+from telegram.error import BadRequest
 from .database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic_for_group_feeds, 
-get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input)
+get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, set_rss_topic_for_feed)
 from .utils import ai_summarize
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Nur in Gruppen/Supergruppen zulassen
     if chat.type not in ("group", "supergroup"):
-        return await msg.reply_text("âŒ `/settopicrss` nur in Gruppen möglich.")
+        return await msg.reply_text("❌ `/settopicrss` nur in Gruppen möglich.")
 
     # 1) Wenn im Thema ausgeführt, nimmt message_thread_id
     topic_id = msg.message_thread_id or None
@@ -26,7 +27,7 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not topic_id:
         return await msg.reply_text(
-            "âš ï¸ Bitte fÃ¼hre `/settopicrss` in dem gewÃ¼nschten Forum-Thema aus "
+            "⚠️ Bitte führe `/settopicrss` in dem gewünschten Forum-Thema aus "
             "oder antworte auf eine Nachricht darin."
         )
 
@@ -38,7 +39,7 @@ async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_rss_feed(update: Update, context: CallbackContext):
     """
     /setrss <URL> [images=on|off]
-    oder via MenÃ¼-Flow (ForceReply), dann nur URL.
+    oder via Menü-Flow (ForceReply), dann nur URL.
     """
     chat_id = update.effective_chat.id
     # Nur noch aktuelles Thread-Topic verwenden; wenn keiner, dann Hauptchat (0)
@@ -59,7 +60,7 @@ async def set_rss_feed(update: Update, context: CallbackContext):
         context.user_data["rss_group_id"] = chat_id
         set_pending_input(update.effective_chat.id, update.effective_user.id, "rss_url",
                           {"target_chat_id": chat_id})
-        return await update.message.reply_text("âž¡ Bitte sende jetzt die RSS-URL:", reply_markup=ForceReply(selective=True))
+        return await update.message.reply_text("➡️ Bitte sende jetzt die RSS-URL:", reply_markup=ForceReply(selective=True))
 
     add_rss_feed(chat_id, url, topic_id)
     if post_images is not None:
@@ -85,129 +86,152 @@ async def stop_rss_feed(update: Update, context: CallbackContext):
         db_remove_rss_feed(chat_id)
         await update.message.reply_text("Alle RSS-Feeds entfernt.")
 
-async def fetch_rss_feed(context: CallbackContext):
-    start = time.time()
-    for chat_id, url, topic_id, etag, last_mod, post_images, enabled in get_rss_feeds_full():
-        if not enabled:
-            continue
+async def _send_rss_entry(bot, chat_id: int, topic_id: int, caption: str, img_url: str | None) -> None:
+    """Versendet eine RSS-Nachricht; nutzt Topic nur wenn >0, mit sinnvollen Fallbacks."""
+    kwargs = {"parse_mode": "HTML"}
+    if isinstance(topic_id, int) and topic_id > 0:
+        kwargs["message_thread_id"] = topic_id
 
-        lang = get_group_language(chat_id) or "de"
-        ai_rss = get_ai_settings(chat_id)
-        kwargs = {}
-        if etag:      kwargs["etag"] = etag
-        if last_mod:  kwargs["modified"] = last_mod
+    if img_url:
+        await bot.send_photo(chat_id=chat_id, photo=img_url, caption=caption, **kwargs)
+    else:
+        await bot.send_message(chat_id=chat_id, text=caption, **kwargs)
 
+
+def _pick_image(entry) -> str | None:
+    """Extrahiert eine brauchbare Bild-URL aus einem feedparser-Entry (wenn vorhanden)."""
+    try:
+        if "media_content" in entry and entry.media_content:
+            u = entry.media_content[0].get("url")
+            if u: return u
+        if "image" in entry and isinstance(entry.image, dict):
+            u = entry.image.get("href") or entry.image.get("url")
+            if u: return u
+        for l in entry.get("links", []):
+            if l.get("rel") in ("enclosure", "alternate") and "image" in (l.get("type") or ""):
+                u = l.get("href")
+                if u: return u
+    except Exception:
+        pass
+    return None
+
+
+async def fetch_rss_feed(context):
+    """
+    Zyklischer Job: zieht Feeds aus der DB (rss_feeds) und postet neue Einträge.
+    Fixes:
+      - saubere Indentation
+      - definierte Variablen (chat_id, url, post_images, fail_streak etc.)
+      - Topic wird nur gesetzt, wenn >0 (Non-Forum-Gruppen funktionieren)
+      - Fallback bei Thread-Fehlern (posten ohne Topic) + Auto-Korrektur topic_id=0
+      - ai_rss korrekt aus get_ai_settings entpackt
+    """
+    logger = logging.getLogger(__name__)
+    rows = get_rss_feeds_full()  # [(chat_id, url, topic_id, etag, last_mod, post_images, enabled), ...]
+
+    for row in rows:
         try:
-            feed = feedparser.parse(url, **kwargs)
-        except Exception as e:
-            logger.error(f"RSS parse fail for {url}: {e}")
-            continue
-
-        # HTTP 304 / nichts Neues
-        if getattr(feed, "status", None) == 304:
-            continue
-
-        # HTTP-Cache aktualisieren
-        try:
-            update_rss_http_cache(chat_id, url, getattr(feed, "etag", None), getattr(feed, "modified", None))
+            chat_id, url, topic_id, last_etag, last_modified, post_images, enabled = row
         except Exception:
-            pass
+            logger.error("RSS: Unerwartetes Row-Format: %r", row)
+            continue
+
+        # NULL/False-Handling kommt bereits aus get_rss_feeds_full() per COALESCE, aber doppelt hält besser:
+        if enabled is False:
+            continue
+
+        # --- HTTP-Cache für feedparser
+        http_kwargs = {}
+        if last_etag:
+            http_kwargs["etag"] = last_etag
+        if last_modified:
+            http_kwargs["modified"] = last_modified
+
+        try:
+            feed = feedparser.parse(url, **http_kwargs)
+            # neue Cache-Werte speichern (wenn vorhanden)
+            if feed.get("etag") or feed.get("modified"):
+                update_rss_http_cache(chat_id, url, feed.get("etag"), feed.get("modified"))
+        except Exception as e:
+            logger.error("RSS parse fail for %s: %s", url, e)
+            continue
 
         entries = list(feed.entries or [])
         if not entries:
             continue
 
-        # robust sortieren (published/updated)
-        def _ts(e):
-            return getattr(e, "published_parsed", None) or getattr(e, "updated_parsed", None) or 0
-        entries.sort(key=_ts)
-
+        # Welche Einträge sind neu?
         last_link = get_last_posted_link(chat_id, url)
-        to_post, found_last = [], last_link is None
-        for entry in entries:
-            link = getattr(entry, "link", None)
-            if not link: 
-                continue
-            if not found_last:
-                if link == last_link: 
-                    found_last = True
-                continue
-            to_post.append(entry)
+        links = [e.get("link") for e in entries if e.get("link")]
+        if last_link and last_link in links:
+            idx = links.index(last_link)
+            new_entries = entries[:idx]  # feedparser: i.d.R. newest-first → alles vor last_link ist neu
+        else:
+            # noch nie gepostet → nur den neuesten Eintrag
+            new_entries = entries[:1]
 
-        # poste maximal 3 (Ã¤lteste zuerst, um Reihenfolge zu halten)
-        to_post = to_post[-3:] if to_post else ([] if last_link else [entries[-1]])
-        fail_streak = 0
-        for entry in to_post:
-            title = getattr(entry, "title", "Neuer Artikel")
-            link  = getattr(entry, "link", None)
-            if not link:
-                continue
+        # oldest-first posten, max. 3
+        new_entries = list(reversed(new_entries[-3:]))
 
-            # Bild extrahieren (falls gewÃ¼nscht)
-            img_url = None
-            if post_images:
-                try:
-                    if getattr(entry, "media_content", None):
-                        img_url = entry.media_content[0].get("url")
-                    if not img_url and getattr(entry, "media_thumbnail", None):
-                        img_url = entry.media_thumbnail[0].get("url")
-                    if not img_url and getattr(entry, "summary", None):
-                        m = re.search(r'<img[^>]+src="([^"]+)"', entry.summary, re.I)
-                        if m: img_url = m.group(1)
-                except Exception:
-                    img_url = None
+        # AI-Option korrekt entpacken
+        _, ai_rss = get_ai_settings(chat_id)
 
-            # optional KI-Zusammenfassung
-            summary = None
-            if ai_rss:
-                parts = []
-                if getattr(entry, "title", None): parts.append(entry.title)
-                if getattr(entry, "summary", None): parts.append(re.sub("<.*?>", " ", entry.summary))
-                if getattr(entry, "description", None): parts.append(re.sub("<.*?>", " ", entry.description))
-                base_text = "\n\n".join(p for p in parts if p)[:4000]
-                try:
-                    summary = await ai_summarize(base_text, lang=lang)
-                except Exception as e:
-                    logger.info(f"AI summary skipped: {e}")
+        fail_streak = 0  # ← jetzt definiert
+        for entry in new_entries:
+            title = (entry.get("title") or "").strip()
+            link = entry.get("link") or ""
+            summary = (entry.get("summary") or entry.get("description") or "").strip()
 
-            # Nachricht senden
-            caption = f"📰 <b>{title}</b>\n{link}"
-            if summary:
-                caption += f"\n\n<b>TL;DR</b> {summary}"
-
+            # Caption bauen
+            base_text = f"<b>{title}</b>\n{summary}\n\n<a href=\"{link}\">Weiterlesen</a>"
+            caption = base_text
             try:
-                if img_url:
-                    await context.bot.send_photo(
-                        chat_id=chat_id, photo=img_url, caption=caption,
-                        message_thread_id=topic_id, parse_mode="HTML"
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=chat_id, text=caption,
-                        message_thread_id=topic_id, parse_mode="HTML"
-                    )
-                set_last_posted_link(chat_id, url, link)
-                fail_streak = 0  # success -> reset
+                if ai_rss:
+                    # kurze KI-Zusammenfassung voranstellen
+                    short = await ai_summarize(base_text, lang="de")
+                    caption = f"<b>Kurzfassung</b>: {short}\n\n{base_text}"
             except Exception as e:
-                logger.error(f"Failed to post RSS entry: {e}")
+                logger.warning("AI summary failed for %s: %s", url, e)
+
+            img_url = _pick_image(entry) if post_images else None
+
+            # Senden mit Fallbacks
+            try:
+                await _send_rss_entry(context.bot, chat_id, int(topic_id), caption, img_url)
+                set_last_posted_link(chat_id, url, link)
+                fail_streak = 0
+            except BadRequest as e:
+                msg = str(e).lower()
+
+                # Ungültiger/gelöschter Thread → ohne Topic posten + Topic in DB auf 0 setzen
+                if "message thread" in msg or "message_thread_id" in msg or "not found" in msg:
+                    try:
+                        await _send_rss_entry(context.bot, chat_id, 0, caption, img_url)
+                        set_rss_topic_for_feed(chat_id, url, 0)
+                        set_last_posted_link(chat_id, url, link)
+                        fail_streak = 0
+                        continue
+                    except Exception as e2:
+                        logging.getLogger(__name__).error("RSS-Fallback (ohne Topic) scheiterte: %s", e2)
+
+                # Caption/HTML-Fehler → Foto ohne Caption + Text separat
+                if "caption is too long" in msg or "can't parse entities" in msg:
+                    try:
+                        if img_url:
+                            await context.bot.send_photo(chat_id=chat_id, photo=img_url)
+                        await context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML")
+                        set_last_posted_link(chat_id, url, link)
+                        fail_streak = 0
+                        continue
+                    except Exception as e2:
+                        logging.getLogger(__name__).error("RSS Caption/HTML Fallback scheiterte: %s", e2)
+
+                logging.getLogger(__name__).error("RSS send failed (%s): %s", url, e)
                 fail_streak += 1
-                continue
+            except Exception as e:
+                logging.getLogger(__name__).error("RSS unexpected send error (%s): %s", url, e)
+                fail_streak += 1
 
-        # Auto-Fallback: wenn Bilder dreimal in Folge scheitern -> post_images=False
-        try:
-            if fail_streak >= 3 and post_images:
-                set_rss_feed_options(chat_id, url, post_images=False)
-                logger.info(f"RSS auto-fallback: post_images disabled for {url} in chat {chat_id}")
-        except Exception:
-            pass
-
-        # optional Hausputz
-        try:
-            prune_posted_links(chat_id, keep_last=200)
-        except Exception:
-            pass
-
-    logger.debug(f"fetch_rss_feed took {(time.time()-start):.3f}s")
 
 def register_rss(app):
     # RSS-Befehle

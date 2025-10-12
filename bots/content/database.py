@@ -1845,8 +1845,14 @@ def update_rss_http_cache(cur, chat_id:int, url:str, etag:str|None, last_modifie
 @_with_cursor
 def get_rss_feeds_full(cur):
     cur.execute("""
-        SELECT chat_id, url, topic_id, last_etag, last_modified, post_images, enabled
-        FROM rss_feeds
+        SELECT chat_id,
+                url,
+                COALESCE(topic_id, 0)           AS topic_id,
+                last_etag,
+                last_modified,
+                COALESCE(post_images, TRUE)     AS post_images,
+                COALESCE(enabled, TRUE)         AS enabled
+         FROM rss_feeds
         ORDER BY chat_id, url;
     """)
     return cur.fetchall()
