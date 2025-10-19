@@ -35,6 +35,17 @@ pool = ConnectionPool(DB_URL, min_size=1, max_size=5, kwargs={"autocommit": True
 
 # ------------------------------ helpers ------------------------------
 
+@web.middleware
+async def cors_middleware(request, handler):
+    try:
+        resp = await handler(request)
+    except web.HTTPException as ex:
+        resp = ex
+    # CORS-Headers IMMER hinzufügen
+    for k, v in _cors_headers(request).items():
+        resp.headers[k] = v
+    return resp
+
 def _allow_origin(origin: Optional[str]) -> str:
     if not origin or "*" in ALLOWED_ORIGINS:
         return "*"
@@ -695,7 +706,7 @@ def register_devdash_routes(app: web.Application):
 # If you run this module standalone, boot a tiny aiohttp app for local testing
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    app = web.Application()
-    app.on_startup.append(lambda app: ensure_tables())
+    app = web.Application(middlewares=[cors_middleware])
     register_devdash_routes(app)
+    app.on_startup.append(lambda app: ensure_tables())
     web.run_app(app, port=int(os.getenv("PORT", 8080)))
