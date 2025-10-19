@@ -166,6 +166,9 @@ async def main():
     logging.info("DevDash mounting on: %r", type(webapp))
     
     # >>> HIER EINFÜGEN: DevDashboard-API registrieren <<<
+    from devdash_api import register_devdash_routes, ensure_tables
+    await ensure_tables()  # legt die Kern-Tabellen einmalig an
+    register_devdash_routes(webapp)
     
     webapp.router.add_get("/health", health_handler)
     webapp.router.add_get("/env", env_handler)
