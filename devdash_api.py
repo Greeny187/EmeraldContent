@@ -1,8 +1,8 @@
 import os, hmac, hashlib, time, asyncio, logging, base64, secrets, json
+import re, httpx
 from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
 from psycopg_pool import ConnectionPool
-import httpx
 from decimal import Decimal, getcontext
 
 try:
@@ -34,6 +34,9 @@ BOT_TOKEN = os.getenv("BOT1_TOKEN") or os.getenv("BOT_TOKEN")  # Bot‑Token fü
 NEAR_NETWORK = os.getenv("NEAR_NETWORK", "mainnet")  # "mainnet" | "testnet"
 NEAR_RPC_URL = os.getenv("NEAR_RPC_URL", "https://rpc.mainnet.near.org")
 NEAR_TOKEN_CONTRACT = os.getenv("NEAR_TOKEN_CONTRACT", "")  # z.B. token.emeraldcontent.near
+NEARBLOCKS_API = os.getenv("NEARBLOCKS_API", "https://api.nearblocks.io")
+TON_API_BASE   = os.getenv("TON_API_BASE", "https://tonapi.io")
+TON_API_KEY    = os.getenv("TON_API_KEY", "")
 
 pool = ConnectionPool(DB_URL, min_size=1, max_size=5, kwargs={"autocommit": True})
 
@@ -196,10 +199,11 @@ create table if not exists dashboard_users (
 
 create table if not exists dashboard_bots (
   id serial primary key,
-  name text not null,
-  slug text not null unique,
-  description text,
+  username text not null unique,
+  title text,
+  env_token_key text not null,
   is_active boolean not null default true,
+  meta jsonb default '{}'::jsonb,
   created_at timestamp not null default now(),
   updated_at timestamp not null default now()
 );
@@ -284,6 +288,40 @@ async def ensure_tables():
         on conflict do nothing;
     """)
 
+async def _telegram_getme(token: str) -> dict:
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.get(f"https://api.telegram.org/bot{token}/getMe")
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"getMe failed: {data}")
+        return data["result"]
+
+async def scan_env_bots() -> int:
+    """finde ENV-Variablen wie BOT1_TOKEN / BOT_XYZ_TOKEN, hole getMe und upserte in dashboard_bots"""
+    added = 0
+    for k, v in os.environ.items():
+        if not re.fullmatch(r"BOT[A-Z0-9_]*_TOKEN", k):
+            continue
+        token = v.strip()
+        if not token:
+            continue
+        try:
+            me = await _telegram_getme(token)
+            username = me.get("username") or me.get("first_name") or k
+            title = me.get("first_name") or username
+            await execute("""
+              insert into dashboard_bots(username, title, env_token_key, is_active, meta)
+              values (%s,%s,%s,true, %s::jsonb)
+              on conflict(username) do update set
+                title=excluded.title,
+                env_token_key=excluded.env_token_key,
+                updated_at=now()
+            """, (username, title, k, json.dumps({"id": me.get("id")})))
+            added += 1
+        except Exception as e:
+            logging.warning("scan_env_bots: %s -> %s", k, e)
+    return added
 
 # ------------------------------ tokens ------------------------------
 
@@ -461,6 +499,11 @@ async def bots_list(request: web.Request):
     rows = await fetch("select id, name, slug, description, is_active from dashboard_bots order by id asc")
     return _json(rows, request)
 
+async def bots_refresh(request: web.Request):
+    await _auth_user(request)
+    added = await scan_env_bots()
+    rows = await fetch("select id, username, title, env_token_key, is_active, meta, created_at, updated_at from dashboard_bots order by id asc")
+    return _json({"refreshed": added, "bots": rows}, request)
 
 async def bots_add(request: web.Request):
     await _auth_user(request)
@@ -664,6 +707,43 @@ async def near_account_overview(request: web.Request):
         out["tokens"][c] = bal
     return _json(out, request)
 
+# ---------- NEAR: Wallet verbinden & Zahlungen ----------
+async def set_near_account(request: web.Request):
+    uid = await _auth_user(request)
+    body = await request.json()
+    acc  = (body.get("account_id") or "").strip()
+    if not acc:
+        raise web.HTTPBadRequest(text="account_id required")
+    await execute("update dashboard_users set near_account_id=%s, near_connected_at=now(), updated_at=now() where telegram_id=%s",
+                  (acc, uid))
+    return _json({"ok": True, "near_account_id": acc}, request)
+
+async def near_payments(request: web.Request):
+    await _auth_user(request)
+    account_id = request.query.get("account_id")
+    limit = int(request.query.get("limit", "20"))
+    if not account_id:
+        raise web.HTTPBadRequest(text="account_id required")
+    url = f"{NEARBLOCKS_API}/v1/account/{account_id}/activity?limit={limit}&order=desc"
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.get(url, headers={"accept":"application/json"})
+        r.raise_for_status()
+        j = r.json()
+    # Filter: nur eingehende Native-NEAR Transfers
+    items = []
+    for it in j.get("activity", []):
+        if it.get("type") == "TRANSFER" and it.get("receiver") == account_id:
+            items.append({
+              "ts": it.get("block_timestamp"),
+              "tx_hash": it.get("tx_hash"),
+              "from": it.get("signer"),
+              "to": it.get("receiver"),
+              "amount_yocto": it.get("delta_amount") or it.get("amount") or "0",
+              "amount_near": _yocto_to_near(it.get("delta_amount") or it.get("amount") or "0"),
+            })
+    return _json({"account_id": account_id, "incoming": items[:limit]}, request)
+
+
 # ------------------------------ TON Wallet ------------------------------
 async def set_ton_address(request: web.Request):
     user_id = await _auth_user(request)
@@ -672,6 +752,32 @@ async def set_ton_address(request: web.Request):
     await execute("update dashboard_users set ton_address=%s, updated_at=now() where telegram_id=%s",
                     (address, user_id))
     return _json({"ok": True, "ton_address": address}, request)
+
+async def ton_payments(request: web.Request):
+    await _auth_user(request)
+    address = request.query.get("address", "").strip()
+    limit   = int(request.query.get("limit", "20"))
+    if not address:
+        raise web.HTTPBadRequest(text="address required")
+    headers={}
+    if TON_API_KEY: headers["Authorization"] = f"Bearer {TON_API_KEY}"
+    url = f"{TON_API_BASE}/v2/accounts/{address}/events?limit={limit}&subject_only=true"
+    async with httpx.AsyncClient(timeout=10.0) as cx:
+        r = await cx.get(url, headers=headers)
+        r.raise_for_status()
+        j = r.json()
+    items=[]
+    for ev in j.get("events", []):
+        for act in ev.get("actions", []):
+            if act.get("type")=="TonTransfer" and act.get("direction")=="in":
+                items.append({
+                  "ts": ev.get("timestamp"),
+                  "tx_hash": ev.get("event_id"),
+                  "from": act.get("from"),
+                  "to": act.get("to"),
+                  "amount_ton": act.get("amount"),  # nanotons/tons je nach API – direkt anzeigen
+                })
+    return _json({"address": address, "incoming": items[:limit]}, request)
 
 async def wallets_overview(request: web.Request):
     user_id = await _auth_user(request)
@@ -729,12 +835,16 @@ def register_devdash_routes(app: web.Application):
     app.router.add_get ("/devdash/metrics/overview",  overview)
     app.router.add_get ("/devdash/bots",              bots_list)
     app.router.add_post("/devdash/bots",              bots_add)
-
+    app.router.add_get ("/devdash/bots",              bots_list)
+    app.router.add_post("/devdash/bots",              bots_add)
+    app.router.add_post("/devdash/bots/refresh",      bots_refresh)
     app.router.add_get ("/devdash/near/account/overview", near_account_overview)
     app.router.add_post("/devdash/wallets/ton",           set_ton_address)
+    app.router.add_get ("/devdash/ton/payments",          ton_payments)
     app.router.add_get ("/devdash/wallets",               wallets_overview)
     app.router.add_post("/devdash/dev-login", dev_login)
-
+    app.router.add_post("/devdash/wallets/near",          set_near_account)
+    app.router.add_get ("/devdash/near/payments",         near_payments)
     app.router.add_get ("/devdash/near/challenge",    near_challenge)
     app.router.add_post("/devdash/near/verify",       near_verify)
     app.router.add_get ("/devdash/near/token/summary",near_token_summary)

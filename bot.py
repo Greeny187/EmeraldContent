@@ -166,7 +166,13 @@ async def main():
     
     logging.info("DevDash mounting on: %r", type(webapp))
     
-    await ensure_tables()  # legt die Kern-Tabellen einmalig an
+    await ensure_tables()
+    try:
+        from devdash_api import scan_env_bots
+        await scan_env_bots()
+        logging.info("Bot auto-discovery completed.")
+    except Exception as e:
+        logging.warning("Bot auto-discovery failed: %s", e)
     register_devdash_routes(webapp)
     
     webapp.router.add_get("/health", health_handler)
