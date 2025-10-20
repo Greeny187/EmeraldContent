@@ -5,16 +5,7 @@ from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
 from psycopg_pool import ConnectionPool
 from decimal import Decimal, getcontext
-
-try:
-    from jwt_tools import create_token as jwt_create_token, decode_token as jwt_decode_token
-except Exception:
-    import jwt  # PyJWT
-    def jwt_create_token(payload: dict) -> str:
-        data = {**payload, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
-        return jwt.encode(data, os.getenv("SECRET_KEY", "change-me"), algorithm="HS256")
-    def jwt_decode_token(token: str) -> dict:
-        return jwt.decode(token, os.getenv("SECRET_KEY", "change-me"), algorithms=["HS256"])
+import jwt
 
 try:
     from nacl.signing import VerifyKey
@@ -93,22 +84,6 @@ def _cors_headers(request: web.Request) -> Dict[str, str]:
         "Access-Control-Allow-Headers": "*, Authorization, Content-Type",
         "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
     }
-
-def yocto_to_near_str(yocto: str) -> str:
-    try:
-        return str(Decimal(yocto) / Decimal(10**24))
-    except Exception:
-        return "0"
-
-async def _rpc_view_account_near(account_id: str):
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        payload = {
-            "jsonrpc":"2.0","id":"view_account","method":"query",
-            "params":{"request_type":"view_account","finality":"final","account_id":account_id}
-        }
-        r = await client.post(NEAR_RPC_URL, json=payload)
-        r.raise_for_status()
-        return r.json()["result"]
 
 async def near_account_overview(request: web.Request):
     await _auth_user(request)
@@ -331,15 +306,14 @@ async def scan_env_bots() -> int:
     return added
 
 # ------------------------------ tokens (JWT) ------------------------------
-
 def _jwt_issue(telegram_id: int, role: str = "dev", tier: str = "pro") -> str:
-    # Standardisierte JWTs wie in jwt_tools.py / FastAPI
-    return jwt_create_token({"sub": str(telegram_id), "role": role, "tier": tier})
+    payload = {"sub": str(telegram_id), "role": role, "tier": tier,
+               "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 def _jwt_verify(token: str) -> int:
-    data = jwt_decode_token(token)   # wirft bei Ungültigkeit
+    data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     return int(data.get("sub"))
-
 
 # ----------------------- Telegram login verify -----------------------
 
@@ -784,7 +758,7 @@ async def mesh_health(request: web.Request):
                 out[r["bot_username"]] = {"status": resp.status_code, "body": resp.json() if resp.headers.get("content-type","" ).startswith("application/json") else await resp.aread()[:200].decode(errors='ignore')}
                 await execute("update dashboard_bot_endpoints set last_seen=now() where bot_username=%s and base_url=%s", (r["bot_username"], r["base_url"]))
             except Exception as e:
-                out[r["bot_slug"]] = {"error": str(e)}
+                out[r["bot_username"]] = {"error": str(e)}
     return _json(out, request)
 
 
@@ -823,6 +797,7 @@ def register_devdash_routes(app: web.Application):
 
     # WICHTIG: add_route("GET", ...) statt add_get(), damit kein automatisches HEAD registriert wird
     app.router.add_route("GET",  "/devdash/healthz",              healthz)
+    app.router.add_route("GET",  "/devdash/auth/check",           auth_check)
     app.router.add_post(        "/devdash/dev-login",             dev_login)
     app.router.add_post(        "/devdash/auth/telegram",         auth_telegram)
     app.router.add_route("GET", "/devdash/me",                    me)
