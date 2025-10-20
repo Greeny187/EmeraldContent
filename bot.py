@@ -159,14 +159,13 @@ async def main():
     if not APPLICATIONS:
         raise RuntimeError("No bots configured (no tokens found).")
 
-    webapp = web.Application()
+    from devdash_api import register_devdash_routes, ensure_tables, cors_middleware
+    webapp = web.Application(middlewares=[cors_middleware])
     if _register_content_miniapp_routes and "content" in APPLICATIONS:
         _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
     
     logging.info("DevDash mounting on: %r", type(webapp))
     
-    # >>> HIER EINFÜGEN: DevDashboard-API registrieren <<<
-    from devdash_api import register_devdash_routes, ensure_tables
     await ensure_tables()  # legt die Kern-Tabellen einmalig an
     register_devdash_routes(webapp)
     

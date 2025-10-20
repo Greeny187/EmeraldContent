@@ -41,6 +41,9 @@ async def cors_middleware(request, handler):
         resp = await handler(request)
     except web.HTTPException as ex:
         resp = ex
+    except Exception as ex:
+        # alle anderen Fehler in eine Response verwandeln
+        resp = web.Response(status=500, text=str(ex))
     # CORS-Headers IMMER hinzufügen
     for k, v in _cors_headers(request).items():
         resp.headers[k] = v
@@ -363,7 +366,10 @@ async def healthz(request: web.Request):
 async def auth_telegram(request: web.Request):
     log.info("auth_telegram hit from origin=%s ua=%s", request.headers.get("Origin"), request.headers.get("User-Agent"))
     payload = await request.json()
-    user = verify_telegram_auth(payload)
+    try:
+        user = verify_telegram_auth(payload)
+    except Exception as e:
+        return _json({"error": str(e)}, request, status=400)
     await execute(
         """
         insert into dashboard_users(telegram_id,username,first_name,last_name,photo_url)
