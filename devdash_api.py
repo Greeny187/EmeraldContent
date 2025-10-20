@@ -1,4 +1,4 @@
-import os, time, json, logging, hmac, hashlib, base64, struct, asyncio, datetime, sys, pathlib
+import os, time, json, logging, hmac, hashlib, base64, struct, asyncio, datetime, sys, pathlib, secrets
 sys.path.append(str(pathlib.Path(__file__).parent))  # lokales Modulverzeichnis sicherstellen
 import re, httpx
 from typing import Tuple, Dict, Any, List, Optional
@@ -218,7 +218,7 @@ create table if not exists dashboard_bots (
 -- Registry for fan‑out to each bot (mesh)
 create table if not exists dashboard_bot_endpoints (
   id serial primary key,
-  bot_slug text not null references dashboard_bots(slug) on delete cascade,
+  bot_username text not null references dashboard_bots(username) on delete cascade,
   base_url text not null,
   api_key text,
   metrics_path text not null default '/internal/metrics',
@@ -226,7 +226,7 @@ create table if not exists dashboard_bot_endpoints (
   is_active boolean not null default true,
   last_seen timestamp,
   notes text,
-  unique(bot_slug, base_url)
+  unique(bot_username, base_url)
 );
 
 -- Ads/FeatureFlags stay as before (might already exist in your DB)
@@ -491,16 +491,19 @@ async def bots_refresh(request: web.Request):
 async def bots_add(request: web.Request):
     await _auth_user(request)
     body = await request.json()
-    name = body.get("name")
-    slug = body.get("slug")
-    desc = body.get("description")
+    username = (body.get("slug") or body.get("name") or "").strip()
+    title    = (body.get("name") or username)
     is_active = bool(body.get("is_active", True))
-    if not name or not slug:
-        raise web.HTTPBadRequest(text="name and slug required")
-    row = await fetchrow(
-        "insert into dashboard_bots(name,slug,description,is_active) values(%s,%s,%s,%s) returning id,name,slug,description,is_active",
-        (name, slug, desc, is_active),
-    )
+    if not username:
+        raise web.HTTPBadRequest(text="slug/name required")
+    await execute("""
+      insert into dashboard_bots(username, title, env_token_key, is_active, meta)
+      values (%s,%s,%s,%s,%s::jsonb)
+      on conflict (username) do update set
+        title=excluded.title,
+        updated_at=now()
+    """, (username, title, None, is_active, json.dumps({})))
+    row = await fetchrow("select id,username,title,env_token_key,is_active,meta from dashboard_bots where username=%s", (username,))
     return _json(row, request, status=201)
 
 
@@ -722,7 +725,7 @@ async def near_payments(request: web.Request):
               "from": it.get("signer"),
               "to": it.get("receiver"),
               "amount_yocto": it.get("delta_amount") or it.get("amount") or "0",
-              "amount_near": _yocto_to_near(it.get("delta_amount") or it.get("amount") or "0"),
+              "amount_near": yocto_to_near_str(it.get("delta_amount") or it.get("amount") or "0"),
             })
     return _json({"account_id": account_id, "incoming": items[:limit]}, request)
 
@@ -770,7 +773,7 @@ async def wallets_overview(request: web.Request):
 # ------------------------------ Bot Mesh ------------------------------
 async def mesh_health(request: web.Request):
     await _auth_user(request)
-    rows = await fetch("select bot_slug, base_url, health_path, api_key from dashboard_bot_endpoints where is_active=true order by bot_slug")
+    rows = await fetch("select bot_username, base_url, health_path, api_key from dashboard_bot_endpoints where is_active=true order by bot_username")
     out = {}
     async with httpx.AsyncClient(timeout=5.0) as client:
         for r in rows:
@@ -778,8 +781,8 @@ async def mesh_health(request: web.Request):
             headers = {"x-api-key": r["api_key"]} if r["api_key"] else {}
             try:
                 resp = await client.get(url, headers=headers)
-                out[r["bot_slug"]] = {"status": resp.status_code, "body": resp.json() if resp.headers.get("content-type","" ).startswith("application/json") else await resp.aread()[:200].decode(errors='ignore')}
-                await execute("update dashboard_bot_endpoints set last_seen=now() where bot_slug=%s and base_url=%s", (r["bot_slug"], r["base_url"]))
+                out[r["bot_username"]] = {"status": resp.status_code, "body": resp.json() if resp.headers.get("content-type","" ).startswith("application/json") else await resp.aread()[:200].decode(errors='ignore')}
+                await execute("update dashboard_bot_endpoints set last_seen=now() where bot_username=%s and base_url=%s", (r["bot_username"], r["base_url"]))
             except Exception as e:
                 out[r["bot_slug"]] = {"error": str(e)}
     return _json(out, request)
@@ -787,7 +790,7 @@ async def mesh_health(request: web.Request):
 
 async def mesh_metrics(request: web.Request):
     await _auth_user(request)
-    rows = await fetch("select bot_slug, base_url, metrics_path, api_key from dashboard_bot_endpoints where is_active=true order by bot_slug")
+    rows = await fetch("select bot_username, base_url, metrics_path, api_key from dashboard_bot_endpoints where is_active=true order by bot_username")
     out = {}
     async with httpx.AsyncClient(timeout=8.0) as client:
         for r in rows:
@@ -795,11 +798,17 @@ async def mesh_metrics(request: web.Request):
             headers = {"x-api-key": r["api_key"]} if r["api_key"] else {}
             try:
                 resp = await client.get(url, headers=headers)
-                out[r["bot_slug"]] = resp.json()
+                out[r["bot_username"]] = resp.json()
             except Exception as e:
-                out[r["bot_slug"]] = {"error": str(e)}
+                out[r["bot_username"]] = {"error": str(e)}
     return _json(out, request)
 
+async def auth_check(request: web.Request):
+    try:
+        uid = await _auth_user(request)
+        return _json({"ok": True, "sub": uid}, request)
+    except web.HTTPUnauthorized as e:
+        return _json({"ok": False, "error": e.text}, request, status=401)
 
 # ------------------------------ route wiring ------------------------------
 async def options_root(request: web.Request):
