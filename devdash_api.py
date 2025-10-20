@@ -196,18 +196,17 @@ create table if not exists dashboard_users (
   created_at timestamp not null default now(),
   updated_at timestamp not null default now()
 );
--- Bots-Tabelle (neu) + ALTERs für Altbestände
-create table if not exists dashboard_bots (
-  id bigserial primary key,
-  username       text not null unique,
-  title          text,
-  env_token_key  text not null,
-  is_active      boolean not null default true,
-  meta           jsonb default '{}'::jsonb,
-  created_at     timestamptz not null default now(),
-  updated_at     timestamptz not null default now()
-);
 
+create table if not exists dashboard_bots (
+   id bigserial primary key,
+   username       text not null unique,
+   title          text,
+   env_token_key  text not null,
+   is_active      boolean not null default true,
+   meta           jsonb default '{}'::jsonb,
+   created_at     timestamptz not null default now(),
+   updated_at     timestamptz not null default now()
+);
 
 -- Registry for fan‑out to each bot (mesh)
 create table if not exists dashboard_bot_endpoints (
@@ -825,34 +824,27 @@ async def options_root(request: web.Request):
 
 
 def register_devdash_routes(app: web.Application):
-    if not isinstance(app, web.Application) or not hasattr(app, "router"):
-        raise TypeError(f"register_devdash_routes erwartet aiohttp.web.Application, bekam: {type(app)}")
+    # Doppelte Registrierung verhindern (Heroku Reloads, mehrfacher Aufruf)
+    if app.get("_devdash_routes_registered"):
+        return
+    app["_devdash_routes_registered"] = True
 
+    # WICHTIG: add_route("GET", ...) statt add_get(), damit kein automatisches HEAD registriert wird
+    app.router.add_route("GET",  "/devdash/healthz",              healthz)
+    app.router.add_post(        "/devdash/dev-login",             dev_login)
+    app.router.add_post(        "/devdash/auth/telegram",         auth_telegram)
+    app.router.add_route("GET", "/devdash/me",                    me)
+    app.router.add_route("GET", "/devdash/metrics/overview",      overview)
+    app.router.add_route("GET", "/devdash/bots",                  bots_list)
+    app.router.add_post(        "/devdash/bots",                  bots_add)
+    app.router.add_post(        "/devdash/bots/refresh",          bots_refresh)
+    app.router.add_route("GET", "/devdash/near/account/overview", near_account_overview)
+    app.router.add_post(        "/devdash/wallets/near",          set_near_account)
+    app.router.add_route("GET", "/devdash/near/payments",         near_payments)
+    app.router.add_post(        "/devdash/wallets/ton",           set_ton_address)
+    app.router.add_route("GET", "/devdash/ton/payments",          ton_payments)
+    app.router.add_route("GET", "/devdash/wallets",               wallets_overview)
     app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
-
-    app.router.add_get ("/devdash/healthz",           healthz)
-    app.router.add_post("/devdash/auth/telegram",     auth_telegram)
-    app.router.add_get ("/devdash/me",                me)
-    app.router.add_get ("/devdash/metrics/overview",  overview)
-    app.router.add_get ("/devdash/bots",              bots_list)
-    app.router.add_post("/devdash/bots",              bots_add)
-    app.router.add_get ("/devdash/bots",              bots_list)
-    app.router.add_post("/devdash/bots",              bots_add)
-    app.router.add_post("/devdash/bots/refresh",      bots_refresh)
-    app.router.add_get ("/devdash/near/account/overview", near_account_overview)
-    app.router.add_post("/devdash/wallets/ton",           set_ton_address)
-    app.router.add_get ("/devdash/ton/payments",          ton_payments)
-    app.router.add_get ("/devdash/wallets",               wallets_overview)
-    app.router.add_post("/devdash/dev-login", dev_login)
-    app.router.add_post("/devdash/wallets/near",          set_near_account)
-    app.router.add_get ("/devdash/near/payments",         near_payments)
-    app.router.add_get ("/devdash/near/challenge",    near_challenge)
-    app.router.add_post("/devdash/near/verify",       near_verify)
-    app.router.add_get ("/devdash/near/token/summary",near_token_summary)
-
-    app.router.add_get ("/devdash/mesh/health",       mesh_health)
-    app.router.add_get ("/devdash/mesh/metrics",      mesh_metrics)
-
 
 # If you run this module standalone, boot a tiny aiohttp app for local testing
 if __name__ == "__main__":
