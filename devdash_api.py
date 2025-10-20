@@ -1,9 +1,14 @@
 import os, hmac, hashlib, time, asyncio, logging, base64, secrets, json
 from typing import Tuple, Dict, Any, List, Optional
-
 from aiohttp import web
 from psycopg_pool import ConnectionPool
 import httpx
+from decimal import Decimal, getcontext
+
+try:
+    from jwt_tools import decode_token as decode_jwt
+except Exception:
+    decode_jwt = None
 
 try:
     from nacl.signing import VerifyKey
@@ -11,8 +16,6 @@ try:
 except Exception:  # optional; we only raise if verify is actually used
     VerifyKey = None
     BadSignatureError = Exception
-
-from decimal import Decimal, getcontext
 
 getcontext().prec = 40
 
@@ -43,9 +46,7 @@ async def cors_middleware(request, handler):
     except web.HTTPException as ex:
         resp = ex
     except Exception as ex:
-        # alle anderen Fehler in eine Response verwandeln
         resp = web.Response(status=500, text=str(ex))
-    # CORS-Headers IMMER hinzufügen
     for k, v in _cors_headers(request).items():
         resp.headers[k] = v
     return resp
@@ -341,14 +342,27 @@ def _json(data: Any, request: web.Request, status: int = 200):
 
 
 async def _auth_user(request: web.Request) -> int:
-    auth = request.headers.get("Authorization", "")
+    auth = request.headers.get("Authorization","")
     if not auth.lower().startswith("bearer "):
         raise web.HTTPUnauthorized(text="Missing bearer token")
-    token = auth.split(" ", 1)[1].strip()
+    token = auth.split(" ",1)[1].strip()
+
+    # 1) HMAC-Token (user_id.exp.sig)
     try:
         return verify_token(token)
-    except Exception as e:
-        raise web.HTTPUnauthorized(text=str(e))
+    except Exception as e_hmac:
+        # 2) Fallback: JWT (HS256) – z.B. aus FastAPI-Endpoints
+        if decode_jwt:
+            try:
+                payload = decode_jwt(token)
+                sub = payload.get("sub") or payload.get("user_id") or payload.get("uid")
+                if not sub:
+                    raise ValueError("missing sub")
+                return int(sub)
+            except Exception as e_jwt:
+                raise web.HTTPUnauthorized(text=f"invalid token: {e_jwt}")
+        # kein JWT-Decoder verfügbar
+        raise web.HTTPUnauthorized(text=str(e_hmac))
 
 
 # ------------------------------ base58 ------------------------------
