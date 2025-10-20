@@ -4,11 +4,7 @@ from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
 from psycopg_pool import ConnectionPool
 from decimal import Decimal, getcontext
-
-try:
-    from jwt_tools import decode_token as decode_jwt
-except Exception:
-    decode_jwt = None
+from jwt_tools import create_token as jwt_create_token, decode_token as jwt_decode_token
 
 try:
     from nacl.signing import VerifyKey
@@ -59,24 +55,25 @@ def _allow_origin(origin: Optional[str]) -> str:
         return "*"
     return origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0]
 
+# -------- Dev-Login (Code+Telegram-ID) für dich, liefert JWT --------
 async def dev_login(request: web.Request):
     body = await request.json()
     code = (body.get("code") or "").strip()
-    if not DEV_LOGIN_CODE or code != DEV_LOGIN_CODE:
-        raise web.HTTPUnauthorized(text="invalid dev code")
     tg_id = int(body.get("telegram_id") or 0)
-    if tg_id <= 0:
+    if not tg_id:
         raise web.HTTPBadRequest(text="telegram_id required")
-    username = (body.get("username") or None)
-    await execute(
-        "insert into dashboard_users (telegram_id, username, role, tier) "
-        "values (%s,%s,'dev','pro') "
-        "on conflict (telegram_id) do update set username=coalesce(EXCLUDED.username, dashboard_users.username), updated_at=now()",
-        (tg_id, username)
-    )
-    token = create_token({"sub": str(tg_id), "role": "dev"})
-    return _json({"access_token": token, "token_type": "bearer"}, request)
-
+    expected = os.getenv("DEV_LOGIN_CODE", "")
+    if not expected or code != expected:
+        raise web.HTTPUnauthorized(text="bad dev code")
+    await execute("""
+      insert into dashboard_users(telegram_id, username, role, tier)
+      values (%s, %s, 'dev', 'pro')
+      on conflict (telegram_id) do update set
+        username=coalesce(excluded.username, dashboard_users.username),
+        updated_at=now()
+    """, (tg_id, body.get("username")))
+    tok = _jwt_issue(tg_id, role="dev", tier="pro")
+    return _json({"access_token": tok, "token_type": "bearer"}, request)
 
 def _cors_headers(request: web.Request) -> Dict[str, str]:
     origin = request.headers.get("Origin")
@@ -323,27 +320,15 @@ async def scan_env_bots() -> int:
             logging.warning("scan_env_bots: %s -> %s", k, e)
     return added
 
-# ------------------------------ tokens ------------------------------
+# ------------------------------ tokens (JWT) ------------------------------
 
-def create_token(user_id: int, ttl_sec: int = 7 * 24 * 3600) -> str:
-    exp = int(time.time()) + ttl_sec
-    payload = f"{user_id}.{exp}"
-    sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}.{sig}"
+def _jwt_issue(telegram_id: int, role: str = "dev", tier: str = "pro") -> str:
+    # Standardisierte JWTs wie in jwt_tools.py / FastAPI
+    return jwt_create_token({"sub": str(telegram_id), "role": role, "tier": tier})
 
-
-def verify_token(token: str) -> int:
-    try:
-        user_id_s, exp_s, sig = token.split(".")
-        payload = f"{user_id_s}.{exp_s}"
-        check = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        if check != sig:
-            raise ValueError("bad signature")
-        if time.time() > int(exp_s):
-            raise ValueError("expired")
-        return int(user_id_s)
-    except Exception as e:
-        raise ValueError(f"invalid token: {e}")
+def _jwt_verify(token: str) -> int:
+    data = jwt_decode_token(token)   # wirft bei Ungültigkeit
+    return int(data.get("sub"))
 
 
 # ----------------------- Telegram login verify -----------------------
@@ -387,21 +372,9 @@ async def _auth_user(request: web.Request) -> int:
 
     # 1) HMAC-Token (user_id.exp.sig)
     try:
-        return verify_token(token)
-    except Exception as e_hmac:
-        # 2) Fallback: JWT (HS256) – z.B. aus FastAPI-Endpoints
-        if decode_jwt:
-            try:
-                payload = decode_jwt(token)
-                sub = payload.get("sub") or payload.get("user_id") or payload.get("uid")
-                if not sub:
-                    raise ValueError("missing sub")
-                return int(sub)
-            except Exception as e_jwt:
-                raise web.HTTPUnauthorized(text=f"invalid token: {e_jwt}")
-        # kein JWT-Decoder verfügbar
-        raise web.HTTPUnauthorized(text=str(e_hmac))
-
+        return _jwt_verify(token)
+    except Exception as e:
+        raise web.HTTPUnauthorized(text=f"invalid token: {e}")
 
 # ------------------------------ base58 ------------------------------
 _B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -455,7 +428,7 @@ async def auth_telegram(request: web.Request):
         (user["id"], user.get("username"), user.get("first_name"), user.get("last_name"), user.get("photo_url")),
     )
     row = await fetchrow("select role,tier from dashboard_users where telegram_id=%s", (user["id"],))
-    token = create_token(user["id"])
+    token = _jwt_issue(user["id"], role=row["role"] if row else "dev", tier=row["tier"] if row else "pro")
     return _json(
         {
             "access_token": token,
@@ -496,8 +469,8 @@ async def overview(request: web.Request):
 
 async def bots_list(request: web.Request):
     await _auth_user(request)
-    rows = await fetch("select id, name, slug, description, is_active from dashboard_bots order by id asc")
-    return _json(rows, request)
+    rows = await fetch("select id, username, title, env_token_key, is_active, meta, created_at, updated_at from dashboard_bots order by id asc")
+    return _json({"bots": rows}, request)
 
 async def bots_refresh(request: web.Request):
     await _auth_user(request)
@@ -845,7 +818,10 @@ def register_devdash_routes(app: web.Application):
     app.router.add_route("GET", "/devdash/ton/payments",          ton_payments)
     app.router.add_route("GET", "/devdash/wallets",               wallets_overview)
     app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
-
+    app.router.add_route("GET", "/devdash/mesh/health",         mesh_health)
+    app.router.add_route("GET", "/devdash/mesh/metrics",        mesh_metrics)
+    
+    
 # If you run this module standalone, boot a tiny aiohttp app for local testing
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
