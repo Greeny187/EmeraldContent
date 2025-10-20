@@ -22,7 +22,8 @@ DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
     raise RuntimeError("DATABASE_URL ist nicht gesetzt")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")  # setze in Heroku!
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me")  # setze in Heroku!DEV_LOGIN_CODE = os.getenv("DEV_LOGIN_CODE")
+DEV_LOGIN_CODE = os.getenv("DEV_LOGIN_CODE")
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 BOT_TOKEN = os.getenv("BOT1_TOKEN") or os.getenv("BOT_TOKEN")  # Bot‑Token für Telegram-Login Verify
 
@@ -53,6 +54,24 @@ def _allow_origin(origin: Optional[str]) -> str:
     if not origin or "*" in ALLOWED_ORIGINS:
         return "*"
     return origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0]
+
+async def dev_login(request: web.Request):
+    body = await request.json()
+    code = (body.get("code") or "").strip()
+    if not DEV_LOGIN_CODE or code != DEV_LOGIN_CODE:
+        raise web.HTTPUnauthorized(text="invalid dev code")
+    tg_id = int(body.get("telegram_id") or 0)
+    if tg_id <= 0:
+        raise web.HTTPBadRequest(text="telegram_id required")
+    username = (body.get("username") or None)
+    await execute(
+        "insert into dashboard_users (telegram_id, username, role, tier) "
+        "values (%s,%s,'dev','pro') "
+        "on conflict (telegram_id) do update set username=coalesce(EXCLUDED.username, dashboard_users.username), updated_at=now()",
+        (tg_id, username)
+    )
+    token = create_token({"sub": str(tg_id), "role": "dev"})
+    return _json({"access_token": token, "token_type": "bearer"}, request)
 
 
 def _cors_headers(request: web.Request) -> Dict[str, str]:
@@ -700,6 +719,7 @@ def register_devdash_routes(app: web.Application):
     app.router.add_get ("/devdash/near/account/overview", near_account_overview)
     app.router.add_post("/devdash/wallets/ton",           set_ton_address)
     app.router.add_get ("/devdash/wallets",               wallets_overview)
+    app.router.add_post("/devdash/dev-login", dev_login)
 
     app.router.add_get ("/devdash/near/challenge",    near_challenge)
     app.router.add_post("/devdash/near/verify",       near_verify)
