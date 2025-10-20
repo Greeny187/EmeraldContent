@@ -196,17 +196,18 @@ create table if not exists dashboard_users (
   created_at timestamp not null default now(),
   updated_at timestamp not null default now()
 );
-
+-- Bots-Tabelle (neu) + ALTERs für Altbestände
 create table if not exists dashboard_bots (
-  id serial primary key,
-  username text not null unique,
-  title text,
-  env_token_key text not null,
-  is_active boolean not null default true,
-  meta jsonb default '{}'::jsonb,
-  created_at timestamp not null default now(),
-  updated_at timestamp not null default now()
+  id bigserial primary key,
+  username       text not null unique,
+  title          text,
+  env_token_key  text not null,
+  is_active      boolean not null default true,
+  meta           jsonb default '{}'::jsonb,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
 );
+
 
 -- Registry for fan‑out to each bot (mesh)
 create table if not exists dashboard_bot_endpoints (
