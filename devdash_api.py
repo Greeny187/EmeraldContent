@@ -1,10 +1,20 @@
-import os, hmac, hashlib, time, asyncio, logging, base64, secrets, json
+import os, time, json, logging, hmac, hashlib, base64, struct, asyncio, datetime, sys, pathlib
+sys.path.append(str(pathlib.Path(__file__).parent))  # lokales Modulverzeichnis sicherstellen
 import re, httpx
 from typing import Tuple, Dict, Any, List, Optional
 from aiohttp import web
 from psycopg_pool import ConnectionPool
 from decimal import Decimal, getcontext
-from jwt_tools import create_token as jwt_create_token, decode_token as jwt_decode_token
+
+try:
+    from jwt_tools import create_token as jwt_create_token, decode_token as jwt_decode_token
+except Exception:
+    import jwt  # PyJWT
+    def jwt_create_token(payload: dict) -> str:
+        data = {**payload, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
+        return jwt.encode(data, os.getenv("SECRET_KEY", "change-me"), algorithm="HS256")
+    def jwt_decode_token(token: str) -> dict:
+        return jwt.decode(token, os.getenv("SECRET_KEY", "change-me"), algorithms=["HS256"])
 
 try:
     from nacl.signing import VerifyKey
@@ -13,7 +23,7 @@ except Exception:  # optional; we only raise if verify is actually used
     VerifyKey = None
     BadSignatureError = Exception
 
-getcontext().prec = 40
+getcontext().prec = 50
 
 log = logging.getLogger("devdash")
 
