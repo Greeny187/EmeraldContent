@@ -718,10 +718,9 @@ def _db():
         def dummy(*args, **kwargs):
             return None
         return {name: dummy for name in [
-            'get_registered_groups', 'set_welcome', 'delete_welcome', 'get_welcome',
+            'get_registered_groups', 'set_welcome', 'delete_welcome', 'get_welcome']
             # ... alle anderen benötigten Funktionen ...
-        ]}
-    
+        }
     return locals()
 
 # === Helpers =================================================================
