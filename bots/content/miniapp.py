@@ -1018,8 +1018,12 @@ async def route_stats(request: web.Request):
     d_end = date.today()
     d_start = d_end - timedelta(days=days - 1)
 
+    RATE = float(os.getenv("EMRLD_PER_ANSWER", "0.01"))
     top_rows = db["get_top_responders"](cid, d_start, d_end, 10) or []
-    top = [{"user_id": u, "answers": n, "avg_ms": a} for (u, n, a) in top_rows]
+    top = []
+    for (u, n, a) in top_rows:
+        reward = round((n or 0) * RATE, 4)
+        top.append({"user_id": u, "answers": n, "avg_ms": a, "emrld": reward})
 
     agg_raw = db["get_agg_rows"](cid, d_start, d_end) or []
     agg = [{"date": str(d), "messages": m, "active": au, "joins": j, "leaves": l, "kicks": k,
