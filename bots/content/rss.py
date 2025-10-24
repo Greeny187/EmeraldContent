@@ -8,8 +8,28 @@ from .database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic_for_group_feeds, 
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, set_rss_topic_for_feed)
 from .utils import ai_summarize
+import html
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED = {"b","strong","i","em","u","s","del","ins","code","pre","a","br"}
+
+def _sanitize_html(t: str) -> str:
+    if not t: return ""
+    # p/br zu Zeilenumbrüchen
+    t = re.sub(r"</?p[^>]*>", "\n", t, flags=re.I)
+    t = re.sub(r"<br\s*/?>", "\n", t, flags=re.I)
+    # Links normalisieren: nur href behalten
+    def _a_repl(m):
+        href = m.group("href"); text = m.group("text")
+        return f'<a href="{href}">{text}</a>' if href else text
+    t = re.sub(r'<a\b[^>]*?href="(?P<href>[^"]+)"[^>]*>(?P<text>.*?)</a>', _a_repl, t, flags=re.I|re.S)
+    # Alle anderen Tags killen, außer erlaubten
+    def _tag_repl(m):
+        tag = m.group(1).lower()
+        return m.group(0) if tag in _ALLOWED else ""
+    t = re.sub(r"</?([a-z0-9]+)(\s[^>]*?)?>", _tag_repl, t, flags=re.I)
+    return html.unescape(t).strip()
 
 async def set_rss_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -182,8 +202,9 @@ async def fetch_rss_feed(context):
             link = entry.get("link") or ""
             summary = (entry.get("summary") or entry.get("description") or "").strip()
 
-            # Caption bauen
-            base_text = f"<b>{title}</b>\n{summary}\n\n<a href=\"{link}\">Weiterlesen</a>"
+            # Caption bauen (sanitizen!)
+            clean_summary = _sanitize_html(summary)
+            base_text = f"<b>{_sanitize_html(title)}</b>\n{clean_summary}\n\n<a href=\"{link}\">Weiterlesen</a>"
             caption = base_text
             try:
                 if ai_rss:

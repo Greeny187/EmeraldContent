@@ -1053,6 +1053,12 @@ def count_forum_topics(cur, chat_id:int) -> int:
     cur.execute("SELECT COUNT(*) FROM forum_topics WHERE chat_id=%s;", (chat_id,))
     return cur.fetchone()[0]
 
+@_with_cursor
+def get_forum_topic_name(cur, chat_id:int, topic_id:int) -> Optional[str]:
+    cur.execute("SELECT name FROM forum_topics WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
 # --- Themenzuweisung für Linksperre-Ausnahme ---
 @_with_cursor
 def assign_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name: Optional[str] = None):

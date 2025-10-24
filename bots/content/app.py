@@ -1,5 +1,5 @@
 from telegram.ext import Application
-from . import handlers, rss, mood
+from . import handlers, rss, mood, jobs as content_jobs
 import os
 import logging
 from .miniapp import register_miniapp
@@ -40,6 +40,10 @@ def register(app):
 def register_jobs(app: Application):
     if hasattr(ads, "register_ads_jobs"):
         ads.register_ads_jobs(app)
+
+    # ➕ WICHTIG: Content-Jobs (Rollups, Telethon-Import etc.) registrieren
+    if hasattr(content_jobs, "register_jobs"):
+        content_jobs.register_jobs(app)
 
     async def _notify_startup(ctx):
         chat_id = os.getenv("ADMIN_CHAT_ID")

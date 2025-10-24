@@ -980,7 +980,9 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Kein Nutzer erkannt. Antworte auf eine Nachricht oder nutze @username.")
 
     try:
-        assign_topic(chat.id, target_user.id, topic_id, None)
+        from .database import get_forum_topic_name
+        tname = get_forum_topic_name(chat.id, topic_id) or None
+        assign_topic(chat.id, target_user.id, topic_id, tname)
         return await update.message.reply_text(
             f"âœ… Ausnahme gesetzt: {target_user.mention_html()} â†’ Topic {topic_id}",
             parse_mode="HTML"
