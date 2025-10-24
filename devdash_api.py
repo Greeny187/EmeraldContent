@@ -40,16 +40,29 @@ pool = ConnectionPool(DB_URL, min_size=1, max_size=5, kwargs={"autocommit": True
 # ------------------------------ helpers ------------------------------
 
 @web.middleware
-async def cors_middleware(request, handler):
-    try:
-        resp = await handler(request)
-    except web.HTTPException as ex:
-        resp = ex
-    except Exception as ex:
-        resp = web.Response(status=500, text=str(ex))
-    for k, v in _cors_headers(request).items():
-        resp.headers[k] = v
-    return resp
+async def cors_middleware(app, handler):
+    async def impl(request):
+        # Preflight sofort beantworten
+        if request.method == "OPTIONS":
+            return web.Response(status=204, headers=app.get('cors_headers', {}))
+        try:
+            resp = await handler(request)
+        except web.HTTPException as he:
+            # auch aiohttp-HTTPExceptions bekommen CORS
+            resp = web.json_response({"error": he.reason}, status=he.status)
+        except Exception as e:
+            # niemals None durchlassen
+            app['logger'].exception(f"[cors] unhandled error: {e}")
+            resp = web.json_response({"error": "internal_error"}, status=500)
+        # falls Handler None zurückgab → leere 204 vermeiden
+        if resp is None:
+            resp = web.json_response({"error":"empty_response"}, status=500)
+        # CORS-Header sicher setzen
+        for k, v in app.get('cors_headers', {}).items():
+            try: resp.headers[k] = v
+            except Exception: pass
+        return resp
+    return impl
 
 def _allow_origin(origin: Optional[str]) -> str:
     if not origin or "*" in ALLOWED_ORIGINS:

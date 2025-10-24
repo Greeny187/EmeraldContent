@@ -566,13 +566,14 @@ async def route_file(request: web.Request):
             body=blob, content_type=ctype,
             headers={
                 "Cache-Control":"public, max-age=86400",
-                "Access-Control-Allow-Origin": webapp["allowed_origin"]
-            }
-        )
+                "Access-Control-Allow-Origin": webapp.get("allowed_origin","*"),
+            })
     except Exception as e:
         logger.warning(f"[miniapp] file proxy failed: {e}")
-        return web.Response(status=404, text="not found",
-                            headers={"Access-Control-Allow-Origin": request.app.get("allowed_origin","*")})
+        return web.Response(
+           status=404, text="not found",
+           headers={"Access-Control-Allow-Origin": webapp.get("allowed_origin","*")}
+        )
 
 
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
@@ -947,10 +948,10 @@ async def route_state(request: web.Request):
             logger.warning(f"User {uid} is not admin in {cid}")
             return _cors_json({"error": "forbidden"}, 403)
 
+        data = await _state_json(cid)
+        return _cors_json(data)
     except Exception as e:
-        # NIE 500 werfen wegen Bildproblemen – UI soll weiter funktionieren
-        logger.exception(f"[miniapp] state failed for cid={cid}: {e}")
-        # minimaler Fallback, damit UI nicht blockiert
+        logger.exception(f"[miniapp] state failed for cid={locals().get('cid','?')}: {e}")
         return _cors_json({"error":"state_failed", "welcome":{}, "rules":{}, "farewell":{}}, 200)
 
 async def route_stats(request: web.Request):
@@ -1293,13 +1294,12 @@ def _attach_http_routes(app: Application) -> bool:
     webapp.setdefault("ptb_app", app)
 
 def register_miniapp_routes(webapp, app):
-    ALLOWED_ORIGIN = "https://greeny187.github.io"
-    async def _cors_ok(_request):
-        return web.json_response({}, status=204, headers={
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
-        })
+    # global berechneten Origin (aus MINIAPP_URL) verwenden
+    global ALLOWED_ORIGIN
+    if not ALLOWED_ORIGIN:
+        ALLOWED_ORIGIN = "https://greeny187.github.io"
+    # für andere Handler verfügbar machen:
+    webapp["allowed_origin"] = ALLOWED_ORIGIN
 
     webapp.setdefault("_ptb_apps", [])
     webapp["_ptb_apps"].append(app)
