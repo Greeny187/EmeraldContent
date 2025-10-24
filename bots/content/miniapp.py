@@ -137,10 +137,9 @@ async def _upload_get_file_id(app: Application, target_chat_id: int, base64_str:
         # bevorzugt DM an den Admin (leise)
         msg = await app.bot.send_photo(target_chat_id, InputFile(bio), disable_notification=True)
     except Exception as e:
-        # Fallback: notfalls in die Gruppe, aber weiterhin leise – und sauber loggen
-        logger.warning(f"[miniapp] DM-Upload fehlgeschlagen, Fallback in Gruppe: {e}")
-        bio.seek(0)
-        msg = await app.bot.send_photo(target_chat_id, InputFile(bio), disable_notification=True)
+        # Fallback: versuche nochmal den gleichen Chat (kein Gruppen-Spam!)
+        logger.warning(f"[miniapp] DM-Upload fehlgeschlagen: {e}")
+        return None
     return msg.photo[-1].file_id if msg.photo else None
 
 # ---------- Gemeinsame Speicherroutine (von beiden Wegen nutzbar) ----------
@@ -162,6 +161,48 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception:
         pass
 
+    # Hilfsfunktion: nie auto-löschen, nur bei expliziten Flags
+    async def _upsert_media(kind:str, block:dict):
+        # bestehende Werte laden
+        try:
+            getter = {"welcome":"get_welcome","rules":"get_rules","farewell":"get_farewell"}[kind]
+            setter = {"welcome":"set_welcome","rules":"set_rules","farewell":"set_farewell"}[kind]
+            deleter= {"welcome":"delete_welcome","rules":"delete_rules","farewell":"delete_farewell"}[kind]
+        except KeyError:
+            return
+        try:
+            existing_photo, existing_text = db[getter](cid) or (None, None)
+        except Exception:
+            existing_photo, existing_text = (None, None)
+
+        on_present = ("on" in block)
+        on_value   = bool(block.get("on")) if on_present else None
+
+        # Text: nur übernehmen, wenn im Payload vorhanden, sonst beibehalten
+        text = (block.get("text") if "text" in block else existing_text)
+        if text is not None:
+            text = _none_if_blank(text)
+
+        # Bild: nur ändern, wenn img_base64 im Payload vorhanden
+        photo_id = existing_photo
+        if "img_base64" in block:
+            v = block.get("img_base64")
+            if isinstance(v, str) and v == "":
+                photo_id = None                       # nur Foto löschen
+            elif app and _none_if_blank(v):
+                tmp = await _upload_get_file_id(app, uid, v)  # DM-Upload
+                if tmp: photo_id = tmp
+
+        # Löschen NUR wenn explizit on:false
+        if on_present and on_value is False:
+            db[deleter](cid)
+            return
+
+        # Speichern, falls Text oder Foto da ist – sonst NIX (kein Auto-Delete!)
+        if (text or photo_id):
+            db[setter](cid, photo_id, text)
+        # Falls explizit on:true aber ohne Inhalt → trotzdem nichts löschen    
+        
     # --- Captcha ---
     try:
         if "captcha" in data:
@@ -183,101 +224,21 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     # --- Welcome ---
     try:
         if "welcome" in data:
-            w = data.get("welcome") or {}
-            # Aktuell gespeicherte Werte holen (für Teil-Updates/Fallback)
-            try:
-                existing_photo, existing_text = db["get_welcome"](cid) or (None, None)
-            except Exception:
-                existing_photo, existing_text = (None, None)
-
-            # Text nur ändern, wenn er mitgeschickt wurde – sonst beibehalten
-            text = _none_if_blank(w.get("text")) if ("text" in w) else existing_text
-
-            # Bild-Logik:
-            photo_id = existing_photo
-            if "img_base64" in w:
-                v = w.get("img_base64")
-                if isinstance(v, str) and v == "":
-                    photo_id = None                        # explizit löschen
-                elif app and _none_if_blank(v):
-                    # Upload nur noch per DM an den Admin (uid), nicht in die Gruppe
-                    photo_id = await _upload_get_file_id(app, uid, v)
-
-            # Enabled/Disabled nur beachten, wenn "on" tatsächlich mitkam
-            on_flag_present = ("on" in w)
-            on = bool(w.get("on")) if on_flag_present else None
-
-            if on is False:
-                db["delete_welcome"](cid)
-            else:
-                # bei Teil-Update oder on=True: speichern, sofern noch Inhalt existiert
-                if text or photo_id:
-                    db["set_welcome"](cid, photo_id, text)
-                elif on is True:
-                    # on=True aber weder Text noch Bild → löschen
-                    db["delete_welcome"](cid)
+            await _upsert_media("welcome", data.get("welcome") or {})
     except Exception as e:
         errors.append(f"Welcome: {e}")
 
     # --- Rules ---
     try:
         if "rules" in data:
-            r = data.get("rules") or {}
-            try:
-                existing_photo, existing_text = db["get_rules"](cid) or (None, None)
-            except Exception:
-                existing_photo, existing_text = (None, None)
-
-            text = _none_if_blank(r.get("text")) if ("text" in r) else existing_text
-            photo_id = existing_photo
-            if "img_base64" in r:
-                v = r.get("img_base64")
-                if isinstance(v, str) and v == "":
-                    photo_id = None
-                elif app and _none_if_blank(v):
-                    photo_id = await _upload_get_file_id(app, uid, v)
-
-            on_flag_present = ("on" in r)
-            on = bool(r.get("on")) if on_flag_present else None
-
-            if on is False:
-                db["delete_rules"](cid)
-            else:
-                if text or photo_id:
-                    db["set_rules"](cid, photo_id, text)
-                elif on is True:
-                    db["delete_rules"](cid)
+            await _upsert_media("rules", data.get("rules") or {})
     except Exception as e:
         errors.append(f"Rules: {e}")
 
     # --- Farewell ---
     try:
         if "farewell" in data:
-            f = data.get("farewell") or {}
-            try:
-                existing_photo, existing_text = db["get_farewell"](cid) or (None, None)
-            except Exception:
-                existing_photo, existing_text = (None, None)
-
-            text = _none_if_blank(f.get("text")) if ("text" in f) else existing_text
-            photo_id = existing_photo
-            if "img_base64" in f:
-                v = f.get("img_base64")
-                if isinstance(v, str) and v == "":
-                    photo_id = None
-                elif app and _none_if_blank(v):
-                    photo_id = await _upload_get_file_id(app, uid, v)
-
-            on_flag_present = ("on" in f)
-            on = bool(f.get("on")) if on_flag_present else None
-
-            if on is False:
-                db["delete_farewell"](cid)
-            else:
-                if text or photo_id:
-                    db["set_farewell"](cid, photo_id, text)
-                elif on is True:
-                    db["delete_farewell"](cid)
+            await _upsert_media("farewell", data.get("farewell") or {})
     except Exception as e:
         errors.append(f"Farewell: {e}")
 
@@ -591,40 +552,27 @@ async def route_apply(request):
     return web.Response(text="✅ Einstellungen gespeichert.")
 
 async def route_file(request: web.Request):
+    """Proxy für Telegram-Bilder per file_id – robust & CORS-freundlich."""
     webapp = request.app
-    cid = int(request.query.get("cid", "0") or 0)
-
-    # Auth wie bei /miniapp/state: Header X-Telegram-Init-Data ODER ?init_data=
-    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
-    uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
-
-    if uid <= 0 or not await _is_admin(webapp, cid, uid):
-        return web.Response(status=403, text="forbidden")
-
-    file_id = request.query.get("file_id")
-    if not file_id:
-        return web.Response(status=400, text="file_id required")
-
-    # irgendeine PTB-App nehmen
-    apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
-    bot = apps[0].bot
-    f = await bot.get_file(file_id)
-    blob = await bot.request.retrieve(f.file_path)
-
-    ctype = "image/jpeg"
-    lower = f.file_path.lower()
-    if lower.endswith(".png"): ctype = "image/png"
-    elif lower.endswith(".gif"): ctype = "image/gif"
-
-    return web.Response(
-        body=blob,
-        content_type=ctype,
-        headers={
-            "Cache-Control": "public, max-age=86400",
-            # CORS fix für Bildvorschau in der Mini-App
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN
-        }
-    )
+    try:
+        file_id = request.query.get("id")
+        if not file_id:
+            raise ValueError("missing file_id")
+        app = webapp["ptb_app"]
+        f = await app.bot.get_file(file_id)
+        blob = await f.download_as_bytearray()
+        ctype = "image/jpeg"
+        return web.Response(
+            body=blob, content_type=ctype,
+            headers={
+                "Cache-Control":"public, max-age=86400",
+                "Access-Control-Allow-Origin": webapp["allowed_origin"]
+            }
+        )
+    except Exception as e:
+        logger.warning(f"[miniapp] file proxy failed: {e}")
+        return web.Response(status=404, text="not found",
+                            headers={"Access-Control-Allow-Origin": request.app.get("allowed_origin","*")})
 
 
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
@@ -908,18 +856,28 @@ async def _state_json(cid: int) -> dict:
 
     # Welcome/Rules/Farewell mit Bild-URL
     def _media_block_with_image(cid, kind):
-        loader = {"welcome": "get_welcome", "rules": "get_rules", "farewell":"get_farewell"}[kind]
-        ph, tx = (None, None)
+        """Bildfelder defensiv aufbauen – nie Exceptions werfen."""
         try:
-            r = db[loader](cid)
-            if r: ph, tx = r
+            if kind=="welcome":
+                ph, tx = _db()["get_welcome"](cid) or (None, None)
+            elif kind=="rules":
+                ph, tx = _db()["get_rules"](cid) or (None, None)
+            else:
+                ph, tx = _db()["get_farewell"](cid) or (None, None)
+        except Exception as e:
+            logger.warning(f"[miniapp] _media_block DB failed kind={kind}: {e}")
+            ph, tx = (None, None)
+        try:
+            image_url = (f"/miniapp/file?id={ph}" if ph else None)
         except Exception:
-            pass
-        image_url = None
-        if ph:
-            # File-Proxy-URL für Bild
-            image_url = f"/miniapp/file?cid={cid}&file_id={ph}"
-        return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or "", "image_url": image_url}
+            image_url = None
+        return {
+            "on": bool(tx) or bool(ph),          # aktiv, wenn Text ODER Bild vorhanden
+            "text": tx or "",
+            "photo": bool(ph),
+            "photo_id": ph or "",
+            "image_url": image_url
+        }
 
     # Captcha-Block aus DB lesen
     try:
@@ -990,10 +948,10 @@ async def route_state(request: web.Request):
             return _cors_json({"error": "forbidden"}, 403)
 
     except Exception as e:
-        logger.error(f"Error in route_state: {e}")
-        return _cors_json({"error": "bad_params"}, 400)
-
-    return _cors_json(await _state_json(cid))
+        # NIE 500 werfen wegen Bildproblemen – UI soll weiter funktionieren
+        logger.exception(f"[miniapp] state failed for cid={cid}: {e}")
+        # minimaler Fallback, damit UI nicht blockiert
+        return _cors_json({"error":"state_failed", "welcome":{}, "rules":{}, "farewell":{}}, 200)
 
 async def route_stats(request: web.Request):
     webapp = request.app
