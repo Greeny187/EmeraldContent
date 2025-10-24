@@ -1,6 +1,7 @@
 import os
 import logging
 import datetime as dt
+import asyncio
 from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
@@ -19,9 +20,37 @@ from telegram.constants import ParseMode
 from shared.translator import translate_hybrid as tr
 from .utils import clean_delete_accounts_for_chat, _apply_hard_permissions
 
+
+
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
 TIMEZONE = os.getenv("TZ", "Europe/Berlin")
+
+async def backfill_agg_range(app, d_start: date, d_end: date, sleep_ms: int = 10) -> int:
+    """
+    Schreibt Tagesrollups für alle registrierten Gruppen von d_start..d_end (inkl.).
+    Gibt die Anzahl erfolgreicher Upserts zurück.
+    """
+    migrate_stats_rollup()
+    try:
+        chat_ids = [cid for (cid, _) in get_registered_groups()]
+    except Exception:
+        chat_ids = []
+
+    total = 0
+    d = d_start
+    while d <= d_end:
+        for cid in chat_ids:
+            try:
+                payload = compute_agg_group_day(cid, d)
+                upsert_agg_group_day(cid, d, payload)
+                total += 1
+            except Exception as e:
+                # bewusst nur warnen und weitermachen, damit Range durchläuft
+                print(f"[backfill] {cid} {d}: {e}")
+            await asyncio.sleep(sleep_ms / 1000.0)
+        d += timedelta(days=1)
+    return total
 
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     today = date.today()

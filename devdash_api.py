@@ -42,22 +42,29 @@ pool = ConnectionPool(DB_URL, min_size=1, max_size=5, kwargs={"autocommit": True
 # ✔ Moderne, stabile Form – KEINE async-Factory!
 @web.middleware
 async def cors_middleware(request, handler):
-    app = request.app
+    # immer dynamisch per Origin entscheiden
+    cors = _cors_headers(request)
     if request.method == "OPTIONS":
-        return web.Response(status=204, headers=app.get('cors_headers', {}))
+        # sauberes Preflight mit allen nötigen Headern
+        resp = web.Response(status=204, headers=cors)
+        resp.headers["Vary"] = "Origin"
+        return resp
     try:
         resp = await handler(request)
     except web.HTTPException as he:
         resp = web.json_response({"error": he.reason}, status=he.status)
     except Exception as e:
-        app.get('logger', None) and app['logger'].exception(f"[cors] unhandled error: {e}")
+        request.app.get('logger', None) and request.app['logger'].exception(f"[cors] unhandled error: {e}")
         resp = web.json_response({"error": "internal_error"}, status=500)
     if resp is None:
         resp = web.json_response({"error":"empty_response"}, status=500)
-    # CORS-Header sicher setzen
-    for k, v in app.get('cors_headers', {}).items():
-        try: resp.headers[k] = v
-        except Exception: pass
+    # CORS-Header immer hinzufügen (+ Vary)
+    try:
+        for k, v in cors.items():
+            resp.headers[k] = v
+        resp.headers["Vary"] = "Origin"
+    except Exception:
+        pass
     return resp
 
 def _allow_origin(origin: Optional[str]) -> str:

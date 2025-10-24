@@ -193,8 +193,11 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                 tmp = await _upload_get_file_id(app, uid, v)  # DM-Upload
                 if tmp: photo_id = tmp
 
-        # Löschen NUR wenn explizit on:false
-        if on_present and on_value is False:
+        # Nur löschen, wenn Nutzer *bewusst* in diesem Block agiert hat:
+        # - on:false und (Text-Feld vorhanden ODER img_base64-Feld vorhanden)
+        # So vermeiden wir, dass fehlende UI-Initialisierung (Checkbox = false)
+        # bestehende Inhalte wegputzt.
+        if on_present and on_value is False and (("text" in block) or ("img_base64" in block)):
             db[deleter](cid)
             return
 
