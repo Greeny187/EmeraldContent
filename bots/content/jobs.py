@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from shared.telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
-from database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
+from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     get_all_group_ids, get_clean_deleted_settings,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
-from statistic import (
+from .statistic import (
     DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
     compute_response_times, fetch_media_and_poll_stats, get_member_stats, 
     get_message_insights, get_engagement_metrics, get_trend_analysis, update_group_activity_score, 
@@ -17,7 +17,7 @@ from statistic import (
 )
 from telegram.constants import ParseMode
 from shared.translator import translate_hybrid as tr
-from utils import clean_delete_accounts_for_chat, _apply_hard_permissions
+from .utils import clean_delete_accounts_for_chat, _apply_hard_permissions
 
 logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
