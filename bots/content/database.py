@@ -101,7 +101,6 @@ def clear_welcome_topic(cur, chat_id: int):
 def clear_welcome_media(cur, chat_id: int):
     cur.execute("UPDATE group_settings SET welcome_file_id=NULL, welcome_image_url=NULL WHERE chat_id=%s", [chat_id])
 
-
 async def _call_db_safe(fn, *args, **kwargs):
     """
     Führt eine (synchrone) DB-Funktion sicher aus, loggt Exceptions
@@ -1915,6 +1914,23 @@ def log_auto_response(cur, chat_id:int, trigger:str, matched:float, snippet:str,
       INSERT INTO auto_responses (chat_id, trigger, matched_confidence, used_snippet, latency_ms, ts, was_helpful)
       VALUES (%s,%s,%s,%s,%s,NOW(),%s);
     """, (chat_id, trigger, matched, snippet, latency_ms, was_helpful))
+
+@_with_cursor
+def get_last_agg_stat_date(cur, chat_id: int):
+    cur.execute("SELECT MAX(stat_date) FROM agg_group_day WHERE chat_id=%s;", (chat_id,))
+    row = cur.fetchone()
+    return row[0]  # date | None
+
+@_with_cursor
+def guess_agg_start_date(cur, chat_id: int):
+    # frühestes Datum aus daily_stats oder message_logs
+    cur.execute("SELECT MIN(stat_date) FROM daily_stats WHERE chat_id=%s;", (chat_id,))
+    ds = (cur.fetchone() or [None])[0]
+    cur.execute("SELECT MIN(created_at)::date FROM message_logs WHERE chat_id=%s;", (chat_id,))
+    ml = (cur.fetchone() or [None])[0]
+    if ds and ml:
+        return ds if ds <= ml else ml
+    return ds or ml or date.today()
 
 @_with_cursor
 def set_pro_until(cur, chat_id: int, until: datetime | None, tier: str = "pro"):

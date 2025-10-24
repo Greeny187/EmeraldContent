@@ -26,31 +26,34 @@ logger = logging.getLogger(__name__)
 CHANNEL_USERNAMES = [u.strip() for u in os.getenv("STATS_CHANNELS", "").split(",") if u.strip()]
 TIMEZONE = os.getenv("TZ", "Europe/Berlin")
 
-async def backfill_agg_range(app, d_start: date, d_end: date, sleep_ms: int = 10) -> int:
+async def reconcile_agg_recent(context: ContextTypes.DEFAULT_TYPE, days: int = 45):
     """
-    Schreibt Tagesrollups für alle registrierten Gruppen von d_start..d_end (inkl.).
-    Gibt die Anzahl erfolgreicher Upserts zurück.
+    Füllt automatisch Lücken in agg_group_day für die letzten `days` Tage.
+    Läuft täglich (nach dem normalen Rollup) und einmal direkt nach Start.
     """
-    migrate_stats_rollup()
+    tz = ZoneInfo(TIMEZONE)
+    today = datetime.now(tz).date()
+    d_start: date = today - timedelta(days=days)
+    d_end:   date = today - timedelta(days=1)
+
     try:
         chat_ids = [cid for (cid, _) in get_registered_groups()]
     except Exception:
         chat_ids = []
 
-    total = 0
-    d = d_start
-    while d <= d_end:
-        for cid in chat_ids:
-            try:
-                payload = compute_agg_group_day(cid, d)
-                upsert_agg_group_day(cid, d, payload)
-                total += 1
-            except Exception as e:
-                # bewusst nur warnen und weitermachen, damit Range durchläuft
-                print(f"[backfill] {cid} {d}: {e}")
-            await asyncio.sleep(sleep_ms / 1000.0)
-        d += timedelta(days=1)
-    return total
+    for cid in chat_ids:
+        try:
+            # vorhandene Tage laden → nur fehlende berechnen
+            existing = {row[0] for row in get_agg_rows(cid, d_start, d_end)}  # stat_date, …
+            d = d_start
+            while d <= d_end:
+                if d not in existing:
+                    payload = compute_agg_group_day(cid, d)
+                    upsert_agg_group_day(cid, d, payload)
+                d += timedelta(days=1)
+            await asyncio.sleep(0.1)  # sanft drosseln
+        except Exception as e:
+            logger.warning(f"[agg-backfill] chat {cid}: {e}")
 
 async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     today = date.today()
@@ -358,8 +361,34 @@ async def rollup_yesterday(context):
         except Exception as e:
             print(f"[rollup] Fehler bei chat {cid}: {e}")
             
-# Rate-Limiting: Warte kurz zwischen Nachrichten in verschiedenen Chats
-import asyncio
+async def backfill_missing_agg(context: ContextTypes.DEFAULT_TYPE):
+    """Füllt fehlende agg_group_day-Tage pro Chat automatisch bis gestern auf."""
+    migrate_stats_rollup()
+    tz = ZoneInfo(TIMEZONE)
+    today = datetime.now(tz).date()
+    end_day = today - timedelta(days=1)
+
+    try:
+        chats = [cid for (cid, _) in get_registered_groups()]
+    except Exception:
+        chats = []
+
+    for cid in chats:
+        try:
+            last = get_last_agg_stat_date(cid)  # date | None
+            start_day = (last + timedelta(days=1)) if last else guess_agg_start_date(cid)
+            if not start_day or start_day > end_day:
+                continue
+
+            d = start_day
+            while d <= end_day:
+                payload = compute_agg_group_day(cid, d)
+                upsert_agg_group_day(cid, d, payload)
+                # leichtes Yield, um Blocken zu vermeiden
+                await asyncio.sleep(0)
+                d += timedelta(days=1)
+        except Exception as e:
+            logger.error(f"[agg-backfill] Chat {cid} fehlgeschlagen: {e}")
 
 async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot
@@ -438,6 +467,11 @@ def register_jobs(app):
         time(hour=4, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
         name="dev_stats_nightly"
     )
+    
+    jq.run_once(backfill_missing_agg, when=timedelta(seconds=20), name="agg_backfill_boot")
+
+    # Täglich in der Nacht: evtl. Lücken automatisch schließen
+    jq.run_daily(backfill_missing_agg, time(hour=4, minute=30, tzinfo=ZoneInfo(TIMEZONE)), name="agg_backfill_daily")
     
     jq.run_repeating(import_all_forum_topics, interval=86400, first=60, name="import_forum_topics")
     
