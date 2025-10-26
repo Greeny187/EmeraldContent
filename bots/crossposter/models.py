@@ -1,6 +1,6 @@
 
 from typing import List, Dict, Any
-from database import get_pool
+from bots.crossposter.database import get_pool
 
 async def user_in_tenant(tenant_id: int, user_id: int) -> bool:
     pool = await get_pool()
