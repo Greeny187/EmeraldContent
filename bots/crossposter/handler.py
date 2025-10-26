@@ -3,8 +3,8 @@ import hashlib, os
 from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes
-from database import get_pool
-from x_client import post_text as x_post_text
+from .database import get_pool
+from .x_client import post_text as x_post_text
 import httpx
 
 async def _hash_message(update: Update) -> str:
