@@ -1,10 +1,14 @@
+import os, sys
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # .../app
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
-import hashlib, os
+import hashlib
 from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes
-from .database import get_pool
-from .x_client import post_text as x_post_text
+from database import get_pool
+from x_client import post_text as x_post_text
 import httpx
 
 async def _hash_message(update: Update) -> str:
