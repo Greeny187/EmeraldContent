@@ -2,7 +2,7 @@
 from aiohttp import web
 import json, httpx, hmac, hashlib, time
 import os
-from models import (                                          # nutzt deine DB-API
+from bots.crossposter.models import (                                          # nutzt deine DB-API
     list_tenants_for_user, ensure_default_tenant_for_user,
     list_routes, create_route, update_route, delete_route,
     stats, list_connectors, upsert_connector
