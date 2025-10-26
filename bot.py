@@ -157,6 +157,18 @@ async def main():
             webapp = app
         await app.initialize()
         await app.start()
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+        except Exception:
+            pass
+        webhook_url = f"{APP_BASE_URL}/webhook/{cfg['route_key']}"
+        await app.bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=[
+                "message","edited_message","channel_post","edited_channel_post",
+                "chat_member","my_chat_member"
+            ]
+        )
         APPLICATIONS[cfg["route_key"]] = app
         ROUTEKEY_TO_NAME[cfg["route_key"]] = cfg["name"]
         WEBHOOK_URLS[cfg["name"]] = f"{APP_BASE_URL}/webhook/{cfg['route_key']}"
