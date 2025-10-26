@@ -1,11 +1,11 @@
 from telegram.ext import MessageHandler, filters
 # robuste Importe aus dem Projekt-Root
 try:
-    from .worker import route_message
+    from .handler import route_message
 except ImportError:
     import os, sys
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    from worker import route_message
+    from bots.crossposter.handler import route_message
 try:
     from .miniapp import crossposter_handler
 except ImportError:
