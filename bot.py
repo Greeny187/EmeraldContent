@@ -13,6 +13,11 @@ try:
     from bots.content.miniapp import register_miniapp_routes as _register_content_miniapp_routes
 except Exception:
     _register_content_miniapp_routes = None
+try:
+    from bots.crossposter.miniapp import register_miniapp_routes as _register_crossposter_miniapp_routes
+except Exception:
+    _register_crossposter_miniapp_routes = None
+
 
 DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")
@@ -161,8 +166,18 @@ async def main():
 
     from devdash_api import register_devdash_routes, ensure_tables, cors_middleware
     webapp = web.Application(middlewares=[cors_middleware])
+    
+    # Register miniapp routes if available (beide Varianten erlauben: (app) oder (app, application))
     if _register_content_miniapp_routes and "content" in APPLICATIONS:
-        _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
+        try:
+            _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
+        except TypeError:
+            _register_content_miniapp_routes(webapp)
+    if _register_crossposter_miniapp_routes and "crossposter" in APPLICATIONS:
+        try:
+            _register_crossposter_miniapp_routes(webapp, APPLICATIONS["crossposter"])
+        except TypeError:
+            _register_crossposter_miniapp_routes(webapp)
     
     logging.info("DevDash mounting on: %r", type(webapp))
     

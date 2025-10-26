@@ -1,16 +1,8 @@
-import os
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
-from .worker import route_message  # use local worker
+from telegram.ext import MessageHandler, filters
+from worker import route_message
+from miniapp import crossposter_handler
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
-
-def build_app():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    # source filter: groups/channels with text or media
-    src_filter = (filters.ChatType.GROUPS | filters.ChatType.CHANNEL) & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
-    app.add_handler(MessageHandler(src_filter, route_message))
-    return app
-
-if __name__ == "__main__":
-    app = build_app()
-    app.run_polling()
+def register(app):
+    flt = (filters.ChatType.GROUPS | filters.ChatType.CHANNEL) & (filters.TEXT | filters.PHOTO | filters.Document.ALL)
+    app.add_handler(MessageHandler(flt, route_message))
+    app.add_handler(crossposter_handler)

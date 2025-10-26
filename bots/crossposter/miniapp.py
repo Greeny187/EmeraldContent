@@ -1,162 +1,204 @@
 
-import hmac, hashlib, json, time, os
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, ChatMember
-from telegram.ext import ContextTypes, CommandHandler
-from telegram.constants import ChatMemberStatus
+from aiohttp import web
+import json, httpx, hmac, hashlib, time
+import os
+from models import (                                          # nutzt deine DB-API
+    list_tenants_for_user, ensure_default_tenant_for_user,
+    list_routes, create_route, update_route, delete_route,
+    stats, list_connectors, upsert_connector
+)
 
-from .models import user_in_tenant, list_tenants_for_user, ensure_default_tenant_for_user, create_tenant_for_user, create_route, update_route, delete_route, list_routes, stats, upsert_connector, get_connector, list_connectors
+BOT_TOKEN = (
+    os.environ.get("BOT2_TOKEN")                     # primär: dein Crossposter (wie von dir gewünscht)
+    or os.environ.get("TELEGRAM_BOT_TOKEN_CROSSPOSTER")  # optionaler Alias, falls du ihn nutzt
+)
+if not BOT_TOKEN:
+    raise RuntimeError("BOT2_TOKEN (Crossposter-Bot-Token) ist nicht gesetzt.")
 
-API = FastAPI(title="Emerald Crossposter API", version="0.3")
-MINIAPP_URL = os.environ.get("CROSSPOSTER_MINIAPP_URL", "https://example.com/miniapp/crossposter.html")
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "SET_ME")
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# PTB command button
-async def cmd_crossposter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(text="Crossposter öffnen", web_app=WebAppInfo(url=MINIAPP_URL))]])
-    if update.message:
-        await update.message.reply_text("Öffne die Crossposter MiniApp.", reply_markup=kb)
-
-crossposter_handler = CommandHandler("crossposter", cmd_crossposter)
-
-def verify_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
+def verify_init_data(init_data: str, bot_token: str) -> dict:
+    """
+    Telegram WebApp Login-Verify (Serverseite).
+    Erwartet raw initData (querystring-ähnlich) aus Header X-Telegram-Init-Data.
+    """
+    if not init_data:
+        raise web.HTTPUnauthorized(text="missing initData")
+    # in key=value&... zerlegen
+    pairs = {}
+    for kv in init_data.split("&"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            pairs[k] = v
+    if "hash" not in pairs:
+        raise web.HTTPUnauthorized(text="missing hash")
+    data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs.keys()) if k != "hash")
+    secret = hashlib.sha256(bot_token.encode()).digest()
+    calc = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
+    if calc != pairs["hash"]:
+        raise web.HTTPUnauthorized(text="bad hash")
+    if "auth_date" in pairs and time.time() - int(pairs["auth_date"]) > int(os.getenv("TELEGRAM_LOGIN_TTL_SECONDS", "86400")):
+        raise web.HTTPUnauthorized(text="login expired")
+    # minimal user-Objekt zusammensetzen
+    user_json = pairs.get("user", "{}")
     try:
-        from urllib.parse import parse_qsl
-        data = dict(parse_qsl(init_data, keep_blank_values=True))
-        if 'hash' not in data:
-            raise ValueError('hash missing')
-        check_hash = data.pop('hash')
-        secret_key = hashlib.sha256(bot_token.encode()).digest()
-        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(data.items()))
-        h = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        if h != check_hash:
-            raise ValueError('bad hash')
-        if 'auth_date' in data and (time.time() - int(data['auth_date'])) > 86400:
-            raise ValueError('stale auth')
-        user = json.loads(data.get('user', '{}'))
-        data['user'] = user
-        return data
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"initData invalid: {e}")
-
-class Destination(BaseModel):
-    type: str = Field(example="telegram")
-    chat_id: Optional[int] = None
-    webhook_url: Optional[str] = None
-    username: Optional[str] = None
-    avatar_url: Optional[str] = None
-
-class RouteIn(BaseModel):
-    tenant_id: int
-    source_chat_id: int
-    destinations: List[Destination]
-    transform: Dict[str, Any] = Field(default_factory=lambda: {"prefix":"","suffix":"","plain_text":False})
-    filters: Dict[str, Any] = Field(default_factory=lambda: {"hashtags_whitelist":[],"hashtags_blacklist":[]})
-    active: bool = True
-
-class RouteOut(RouteIn):
-    id: int
-
-# Admin check
-async def is_admin(context_bot, user_id: int, chat_id: int) -> bool:
-    try:
-        member: ChatMember = await context_bot.getChatMember(chat_id, user_id)
-        return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
+        user = json.loads(user_json)
     except Exception:
-        return False
+        user = {}
+    if not user.get("id"):
+        raise web.HTTPUnauthorized(text="no user in initData")
+    return {"user": user}
 
-async def current_user(x_telegram_init_data: str = Header(...)):
-    return verify_init_data(x_telegram_init_data, BOT_TOKEN)
+async def _current_user(request: web.Request):
+    init = request.headers.get("X-Telegram-Init-Data", "")
+    return verify_init_data(init, BOT_TOKEN)
 
-@API.get("/health")
-async def health():
-    return {"ok": True}
+async def _tg_get(method: str, params: dict):
+    async with httpx.AsyncClient(timeout=20) as cx:
+        r = await cx.get(f"{TELEGRAM_API}/{method}", params=params)
+        r.raise_for_status()
+        j = r.json()
+        if not j.get("ok"):
+            raise web.HTTPBadRequest(text=json.dumps(j))
+        return j["result"]
 
-@API.get("/tenants")
-async def get_tenants(user=Depends(current_user)):
-    rows = await list_tenants_for_user(user['user']['id'])
+# ----- Handlers -----
+async def health(_): return web.json_response({"ok": True})
+# ---- (optional) statisches Ausliefern der Mini-App-HTML, falls keine CDN-URL gesetzt ist
+_HTML_CACHE = None
+def _load_html():
+    global _HTML_CACHE
+    if _HTML_CACHE is None:
+        # relative Pfade okay, wenn appcrossposter.html im Projekt-Root liegt
+        with open(os.path.join(os.path.dirname(__file__), "appcrossposter.html"), "r", encoding="utf-8") as f:
+            _HTML_CACHE = f.read()
+    return _HTML_CACHE
+
+async def crossposter_page(request: web.Request):
+    html = _load_html()
+    return web.Response(text=html, content_type="text/html; charset=utf-8")
+
+async def tenants(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    rows = await list_tenants_for_user(uid)
     if not rows:
-        await ensure_default_tenant_for_user(user['user'])
-        rows = await list_tenants_for_user(user['user']['id'])
-    return [dict(r) for r in rows]
+        await ensure_default_tenant_for_user(user["user"])
+        rows = await list_tenants_for_user(uid)
+    return web.json_response([dict(r) for r in rows])
 
-class TenantIn(BaseModel):
-    name: str
-    slug: str
+async def routes_get(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    tenant_id = int(request.query.get("tenant_id"))
+    rows = await list_routes(tenant_id, uid)
+    out = [dict(id=r["id"], tenant_id=tenant_id, source_chat_id=r["source_chat_id"],
+                destinations=r["destinations"], transform=r["transform"],
+                filters=r["filters"], active=r["active"]) for r in rows]
+    return web.json_response(out)
 
-@API.post("/tenants")
-async def create_tenants(payload: TenantIn, user=Depends(current_user)):
-    row = await create_tenant_for_user(user['user']['id'], payload.name, payload.slug)
-    return dict(row)
+async def routes_post(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    p = await request.json()
+    row = await create_route(p["tenant_id"], uid, p["source_chat_id"],
+                             p["destinations"], p.get("transform", {}),
+                             p.get("filters", {}), p.get("active", True))
+    return web.json_response(dict(
+        id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"],
+        destinations=row["destinations"], transform=row["transform"],
+        filters=row["filters"], active=row["active"]
+    ))
 
-@API.get("/routes", response_model=List[RouteOut])
-async def list_routes_api(tenant_id: int = Query(...), user=Depends(current_user)):
-    if not await user_in_tenant(tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    rows = await list_routes(tenant_id, user['user']['id'])
-    out = []
-    for r in rows:
-        out.append(RouteOut(id=r["id"], tenant_id=tenant_id, source_chat_id=r["source_chat_id"], destinations=r["destinations"], transform=r["transform"], filters=r["filters"], active=r["active"]))
-    return out
-
-@API.post("/routes", response_model=RouteOut)
-async def create_route_api(payload: RouteIn, user=Depends(current_user)):
-    if not await user_in_tenant(payload.tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    try:
-        from bot import app_bot  # global PTB instance expected
-    except Exception:
-        app_bot = None
-    if app_bot is not None:
-        ok = await is_admin(app_bot, user['user']['id'], payload.source_chat_id)
-        if not ok:
-            raise HTTPException(status_code=403, detail="Kein Admin in der Quellgruppe")
-    row = await create_route(payload.tenant_id, user['user']['id'], payload.source_chat_id, json.loads(payload.json())['destinations'], payload.transform, payload.filters, payload.active)
-    return RouteOut(id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"], destinations=row["destinations"], transform=row["transform"], filters=row["filters"], active=row["active"])
-
-@API.patch("/routes/{route_id}", response_model=RouteOut)
-async def update_route_api(route_id: int, payload: RouteIn, user=Depends(current_user)):
-    if not await user_in_tenant(payload.tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    row = await update_route(route_id, payload.tenant_id, user['user']['id'], payload.source_chat_id, json.loads(payload.json())['destinations'], payload.transform, payload.filters, payload.active)
+async def routes_patch(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    rid = int(request.match_info["route_id"])
+    p = await request.json()
+    row = await update_route(rid, p["tenant_id"], uid, p["source_chat_id"],
+                             p["destinations"], p.get("transform", {}),
+                             p.get("filters", {}), p.get("active", True))
     if not row:
-        raise HTTPException(status_code=404, detail="Route nicht gefunden")
-    return RouteOut(id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"], destinations=row["destinations"], transform=row["transform"], filters=row["filters"], active=row["active"])
+        raise web.HTTPNotFound(text="Route nicht gefunden")
+    return web.json_response(dict(
+        id=row["id"], tenant_id=row["tenant_id"], source_chat_id=row["source_chat_id"],
+        destinations=row["destinations"], transform=row["transform"],
+        filters=row["filters"], active=row["active"]
+    ))
 
-@API.delete("/routes/{route_id}")
-async def delete_route_api(route_id: int, tenant_id: int = Query(...), user=Depends(current_user)):
-    if not await user_in_tenant(tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    await delete_route(route_id, tenant_id, user['user']['id'])
-    return {"ok": True}
+async def routes_delete(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    rid = int(request.match_info["route_id"])
+    tenant_id = int(request.query.get("tenant_id"))
+    await delete_route(rid, tenant_id, uid)
+    return web.json_response({"ok": True})
 
-@API.get("/stats")
-async def stats_api(tenant_id: int = Query(...), user=Depends(current_user)):
-    if not await user_in_tenant(tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    total, by_status = await stats(tenant_id, user['user']['id'])
-    return {"routes": total, "by_status": by_status}
+async def stats_get(request: web.Request):
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    tenant_id = int(request.query.get("tenant_id"))
+    total, by_status = await stats(tenant_id, uid)
+    return web.json_response({"routes": total, "by_status": by_status})
 
-# Connectors
-class ConnectorIn(BaseModel):
-    tenant_id: int
-    type: str
-    label: str = "default"
-    config: Dict[str, Any]
-    active: bool = True
-
-@API.get("/connectors")
-async def connectors_list(tenant_id: int = Query(...), user=Depends(current_user)):
-    if not await user_in_tenant(tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
+async def connectors_get(request: web.Request):
+    user = await _current_user(request)
+    tenant_id = int(request.query.get("tenant_id"))
     rows = await list_connectors(tenant_id)
-    return [dict(r) for r in rows]
+    return web.json_response([dict(r) for r in rows])
 
-@API.post("/connectors")
-async def connectors_upsert(payload: ConnectorIn, user=Depends(current_user)):
-    if not await user_in_tenant(payload.tenant_id, user['user']['id']):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf diesen Mandanten")
-    row = await upsert_connector(payload.tenant_id, payload.type, payload.label, payload.config, payload.active)
-    return {"ok": True, "id": row["id"]}
+async def connectors_post(request: web.Request):
+    user = await _current_user(request)
+    p = await request.json()
+    row = await upsert_connector(p["tenant_id"], p["type"], p.get("label","default"),
+                                 p["config"], p.get("active", True))
+    return web.json_response({"ok": True, "id": row["id"]})
+
+# --- Gruppen-Tools: @username auflösen + Rechte prüfen ---
+async def chat_resolve(request: web.Request):
+    q = request.query.get("q","")
+    if q.startswith("@"):
+        res = await _tg_get("getChat", {"chat_id": q})
+        return web.json_response({"chat_id": res["id"], "title": res.get("title")})
+    return web.json_response({"chat_id": int(q)})
+
+async def chat_check_admin(request: web.Request):
+    user = await _current_user(request)
+    chat_id = int(request.query.get("chat_id"))
+    you = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": user["user"]["id"]})
+    me  = await _tg_get("getMe", {})
+    bot = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": me["id"]})
+    can_post = bot.get("status") in ("creator","administrator","member")
+    return web.json_response({"you_status": you.get("status"), "bot_status": bot.get("status"), "can_post": can_post})
+
+def register_miniapp_routes(app: web.Application):
+    r = app.router
+    r.add_get("/miniapi/health", health)
+    r.add_get("/miniapi/tenants", tenants)
+    r.add_get("/miniapi/routes", routes_get)
+    r.add_post("/miniapi/routes", routes_post)
+    r.add_patch(r"/miniapi/routes/{route_id:\d+}", routes_patch)
+    r.add_delete(r"/miniapi/routes/{route_id:\d+}", routes_delete)
+    r.add_get("/miniapi/stats", stats_get)
+    r.add_get("/miniapi/connectors", connectors_get)
+    r.add_post("/miniapi/connectors", connectors_post)
+    r.add_get("/miniapi/chat/resolve", chat_resolve)
+    r.add_get("/miniapi/chat/check_admin", chat_check_admin)
+
+    # Static HTML fallback (Mini-App-Seite)
+    r.add_get("/crossposter-app", crossposter_page)
+
+# ---- Telegram-Handler für /crossposter (WebApp öffnen)
+from telegram import Update, WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import CommandHandler, ContextTypes
+
+async def _miniapp_url() -> str:
+    return os.getenv("CROSSPOSTER_MINIAPP_URL") or (os.getenv("APP_BASE_URL","").rstrip("/") + "/crossposter-app")
+
+async def cmd_crossposter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = await _miniapp_url()
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🟢 Crossposter öffnen", web_app=WebAppInfo(url=url))]])
+    await update.effective_message.reply_text("Crossposter Mini-App", reply_markup=kb)
+
+# Export für bots/crossposter/app.py
+crossposter_handler = CommandHandler("crossposter", cmd_crossposter)
