@@ -8,7 +8,7 @@ from typing import Dict, Any
 import sql as store  # <— lokal importieren
 
 router = APIRouter(prefix="/api/support", tags=["support"])
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT6_TOKEN")
 
 def _verify_init_data(init_data: str) -> Dict[str, Any]:
     if not init_data:
