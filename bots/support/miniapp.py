@@ -11,7 +11,7 @@ log = logging.getLogger("bot.support.miniapp")
 WEBAPP_URL = os.getenv(
     "SUPPORT_WEBAPP_URL",
     # z.B. GitHub Pages Pfad auf appsupport.html
-    "https://greeny187.github.io/EmeraldContentBots/support-miniapp/appsupport.html"
+    "https://greeny187.github.io/EmeraldContentBots/miniapp/appsupport.html"
 )
 
 async def cmd_support(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
