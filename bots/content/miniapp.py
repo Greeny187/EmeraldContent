@@ -549,6 +549,9 @@ async def route_apply(request):
     # Optional: Hier könnte man get_chat_member aufrufen, um Adminrechte zu prüfen
     # Für die Mini-App-Entwicklung erlauben wir den HTTP-Save.
 
+    # Optional: Rewards global speichern
+    if isinstance(data.get("rewards"), dict):
+        request.app["db"]["set_global_config"]("rewards", data["rewards"])
     errors = await _save_from_payload(cid, uid, data, request.app["ptb_app"])
     if errors:
         return web.Response(status=207, text="Teilweise gespeichert:\n- " + "\n- ".join(errors))
@@ -622,7 +625,7 @@ def _db():
             set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
-            get_captcha_settings, set_captcha_settings
+            get_captcha_settings, set_captcha_settings, get_global_config, set_global_config
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
@@ -677,6 +680,8 @@ def _db():
             "list_topic_router_rules": list_topic_router_rules,
             "get_night_mode": get_night_mode,
             "set_pro_until": set_pro_until,
+            "get_global_config": get_global_config,
+            "set_global_config": set_global_config,
             # ggf. weitere Funktionen ergänzen
         }
     except ImportError as e:
@@ -738,12 +743,14 @@ def _hm_to_min(hhmm: str, default_min: int) -> int:
         return default_min
 
 def _cors_json(data: dict, status: int = 200):
+    # Vary: Origin verhindert CORS-Caching-Fails bei verschiedenen Origins
     return web.json_response(
         data, status=status,
         headers={
             "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
             "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, X-Dev-Token, X-Dev-User-Id",
+            "Vary": "Origin",
         }
     )
 
@@ -890,12 +897,13 @@ async def _state_json(cid: int) -> dict:
             image_url = (f"/miniapp/file?id={ph}" if ph else None)
         except Exception:
             image_url = None
+        # Nur ID zurückgeben – URL wird in route_state absolut gesetzt
         return {
-            "on": bool(tx) or bool(ph),          # aktiv, wenn Text ODER Bild vorhanden
+            "on": bool(tx) or bool(ph),
             "text": tx or "",
             "photo": bool(ph),
             "photo_id": ph or "",
-            "image_url": image_url
+            "image_url": None
         }
 
     # Captcha-Block aus DB lesen
@@ -937,6 +945,8 @@ async def _state_json(cid: int) -> dict:
       "subscription": sub,
       "night":   night,
       "language": db.get("get_group_language", lambda *_: None)(cid),
+      "rewards": (db.get("get_global_config", lambda *_: None)("rewards") or
+                  {"token": "", "network": "NEAR", "decimals": 24}),
       "report": {"enabled": True, "stats": stats},
       "clean_deleted": clean_deleted,
     }
@@ -967,7 +977,15 @@ async def route_state(request: web.Request):
             return _cors_json({"error": "forbidden"}, 403)
 
         data = await _state_json(cid)
+        # Bild-URLs absolut machen (GitHub Pages lädt sonst relativ vom falschen Host)
+        base = (MINIAPP_API_BASE or f"{request.scheme}://{request.host}").rstrip("/")
+        for key in ("welcome", "rules", "farewell"):
+            blk = data.get(key) or {}
+            fid = blk.get("photo_id")
+            blk["image_url"] = f"{base}/miniapp/file?cid={cid}&file_id={fid}" if fid else None
+            data[key] = blk
         return _cors_json(data)
+    
     except Exception as e:
         logger.exception(f"[miniapp] state failed for cid={locals().get('cid','?')}: {e}")
         return _cors_json({"error":"state_failed", "welcome":{}, "rules":{}, "farewell":{}}, 200)
@@ -1108,6 +1126,11 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await _is_admin_or_owner(context, cid, update.effective_user.id):
         return await msg.reply_text("❌ Du bist in dieser Gruppe kein Admin.")
 
+    # Optional: Rewards global speichern (MiniApp-Submit)
+    db = _db()
+    if isinstance(data.get("rewards"), dict) and "set_global_config" in db:
+        db["set_global_config"]("rewards", data["rewards"])
+        
     errors = await _save_from_payload(cid, update.effective_user.id, data, context.application)
 
     if errors:

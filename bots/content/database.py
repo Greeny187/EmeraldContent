@@ -230,6 +230,16 @@ def init_db(cur):
         """
     )
     
+    # Globale Key/Value-Config (für bot-übergreifende Settings wie Rewards/Token)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS global_config (
+            key   TEXT PRIMARY KEY,
+            value JSONB NOT NULL
+        );
+        """
+    )
+    
     cur.execute("""
         CREATE TABLE IF NOT EXISTS adv_settings (
           chat_id           BIGINT PRIMARY KEY,
@@ -812,6 +822,22 @@ def count_ai_hits_today(cur, chat_id:int, user_id:int) -> int:
        WHERE chat_id=%s AND user_id=%s AND ts::date=NOW()::date AND action IN ('delete','warn','mute','ban')
     """, (chat_id, user_id))
     return int(cur.fetchone()[0])
+
+# --- Rewards ---
+
+@_with_cursor
+def get_global_config(cur, key: str) -> dict | None:
+    cur.execute("SELECT value FROM global_config WHERE key=%s;", (key,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+@_with_cursor
+def set_global_config(cur, key: str, value: dict):
+    cur.execute("""
+      INSERT INTO global_config(key, value)
+      VALUES (%s,%s)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+    """, (key, Json(value)))
 
 # --- Group Management ---
 @_with_cursor
