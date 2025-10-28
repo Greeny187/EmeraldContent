@@ -555,29 +555,44 @@ async def route_apply(request):
     return web.Response(text="✅ Einstellungen gespeichert.")
 
 async def route_file(request: web.Request):
-    """Proxy für Telegram-Bilder per file_id – robust & CORS-freundlich."""
+    """
+    Proxy für Telegram-Bilder. Akzeptiert ?file_id= (präferiert) ODER ?id= (Legacy).
+    Auth wie /miniapp/state: X-Telegram-Init-Data ODER ?init_data=; Fallback ?uid=.
+    """
     webapp = request.app
+    cid = int(request.query.get("cid", "0") or 0)
+
+    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+    uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
+    if uid <= 0 or not await _is_admin(webapp, cid, uid):
+        return web.Response(status=403, text="forbidden",
+                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+
+    file_id = request.query.get("file_id") or request.query.get("id")
+    if not file_id:
+        return web.Response(status=400, text="file_id required",
+                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+
+    # irgendeine PTB-App verwenden
+    apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
+    bot = apps[0].bot
     try:
-        file_id = request.query.get("id")
-        if not file_id:
-            raise ValueError("missing file_id")
-        app = webapp["ptb_app"]
-        f = await app.bot.get_file(file_id)
-        blob = await f.download_as_bytearray()
+        tf = await bot.get_file(file_id)
+        blob = await bot.request.retrieve(tf.file_path)
         ctype = "image/jpeg"
+        lower = (tf.file_path or "").lower()
+        if lower.endswith(".png"): ctype = "image/png"
+        elif lower.endswith(".gif"): ctype = "image/gif"
         return web.Response(
-            body=blob, content_type=ctype,
-            headers={
-                "Cache-Control":"public, max-age=86400",
-                "Access-Control-Allow-Origin": webapp.get("allowed_origin","*"),
-            })
+            body=blob,
+            content_type=ctype,
+            headers={"Cache-Control": "public, max-age=86400",
+                     "Access-Control-Allow-Origin": ALLOWED_ORIGIN}
+        )
     except Exception as e:
         logger.warning(f"[miniapp] file proxy failed: {e}")
-        return web.Response(
-           status=404, text="not found",
-           headers={"Access-Control-Allow-Origin": webapp.get("allowed_origin","*")}
-        )
-
+        return web.Response(status=404, text="not found",
+                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
 
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
 def _origin(url: str) -> str:
@@ -979,12 +994,8 @@ async def route_stats(request: web.Request):
     d_end = date.today()
     d_start = d_end - timedelta(days=days - 1)
 
-    RATE = float(os.getenv("EMRLD_PER_ANSWER", "0.01"))
     top_rows = db["get_top_responders"](cid, d_start, d_end, 10) or []
-    top = []
-    for (u, n, a) in top_rows:
-        reward = round((n or 0) * RATE, 4)
-        top.append({"user_id": u, "answers": n, "avg_ms": a, "emrld": reward})
+    top = [{"user_id": u, "answers": n, "avg_ms": a} for (u, n, a) in top_rows]
 
     agg_raw = db["get_agg_rows"](cid, d_start, d_end) or []
     agg = [{"date": str(d), "messages": m, "active": au, "joins": j, "leaves": l, "kicks": k,
