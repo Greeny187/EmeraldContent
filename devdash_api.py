@@ -6,7 +6,7 @@ from aiohttp import web
 from psycopg_pool import ConnectionPool
 from decimal import Decimal, getcontext
 import jwt
-
+from functools import partial
 try:
     from nacl.signing import VerifyKey
     from nacl.exceptions import BadSignatureError
@@ -282,7 +282,6 @@ async def ensure_tables():
     await execute("""
         insert into dashboard_watch_accounts(chain, account_id, label)
         values ('near','emeraldcontent.near','Main Wallet'),
-            ('near','pay.emeraldcontent.near','Payments')
         on conflict do nothing;
     """)
 
@@ -357,12 +356,20 @@ def verify_telegram_auth(auth: Dict[str, Any]) -> Dict[str, Any]:
 
 # ------------------------------ utils ------------------------------
 
+def _json_default(o):
+    if isinstance(o, (datetime.datetime, datetime.date)):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return str(o)
+    return str(o)
+
+_json_dumps = partial(json.dumps, default=_json_default, ensure_ascii=False)
+
 def _json(data: Any, request: web.Request, status: int = 200):
-    resp = web.json_response(data, status=status)
+    resp = web.json_response(data, status=status, dumps=_json_dumps)
     for k, v in _cors_headers(request).items():
         resp.headers[k] = v
     return resp
-
 
 async def _auth_user(request: web.Request) -> int:
     auth = request.headers.get("Authorization","")
