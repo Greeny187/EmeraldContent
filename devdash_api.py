@@ -282,7 +282,7 @@ async def ensure_tables():
     await execute("""
         insert into dashboard_watch_accounts(chain, account_id, label)
         values ('near','emeraldcontent.near','Main Wallet'),
-        on conflict do nothing;
+        ON CONFLICT ON CONSTRAINT constraint_name DO NOTHING
     """)
 
 async def _telegram_getme(token: str) -> dict:
