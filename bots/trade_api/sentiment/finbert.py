@@ -1,5 +1,4 @@
 def analyze(texts: list[str]) -> dict:
-    """Return dict with avg sentiment. If transformers unavailable, neutral fallback."""
     try:
         from transformers import AutoTokenizer, AutoModelForSequenceClassification, TextClassificationPipeline
         import torch
