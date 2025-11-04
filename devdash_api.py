@@ -341,13 +341,13 @@ async def scan_env_bots() -> int:
             username = me.get("username") or me.get("first_name") or k
             title = me.get("first_name") or username
             await execute("""
+              await execute("""
                 INSERT INTO dashboard_bots (username, title, bot_id, enabled)
                 VALUES (%s, %s, %s, TRUE)
                 ON CONFLICT (username) DO UPDATE
                 SET title = EXCLUDED.title,
                     bot_id = EXCLUDED.bot_id,
                     enabled = TRUE;""", (bot_username, bot_title, bot_id))
-            """, (username, title, k, json.dumps({"id": me.get("id")})))
             added += 1
         except Exception as e:
             logging.warning("scan_env_bots: %s -> %s", k, e)
