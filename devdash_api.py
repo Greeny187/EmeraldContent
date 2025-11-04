@@ -263,60 +263,94 @@ create table if not exists dashboard_token_events (
 """
 
 async def ensure_tables():
-    # nutzt die DB-Helfer _execute/execute aus deiner Datei
+    # users (singular → plural fix)
     await execute("""
-    CREATE TABLE IF NOT EXISTS dashboard_user (
-      id           BIGSERIAL PRIMARY KEY,
-      telegram_id  BIGINT UNIQUE,
-      username     TEXT,
-      is_admin     BOOLEAN DEFAULT FALSE,
-      ton_address  TEXT,
-      near_account TEXT,
-      created_at   TIMESTAMPTZ DEFAULT NOW()
-    );""")
+    CREATE TABLE IF NOT EXISTS dashboard_users (
+        telegram_id      BIGINT PRIMARY KEY,
+        username         TEXT,
+        first_name       TEXT,
+        last_name        TEXT,
+        photo_url        TEXT,
+        role             TEXT NOT NULL DEFAULT 'dev',
+        tier             TEXT NOT NULL DEFAULT 'pro',
+        ton_address      TEXT,
+        near_account_id  TEXT,
+        near_public_key  TEXT,
+        near_connected_at TIMESTAMPTZ,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """)
 
+    # bots (enabled → is_active fix)
     await execute("""
     CREATE TABLE IF NOT EXISTS dashboard_bots (
-      id         BIGSERIAL PRIMARY KEY,
-      username   TEXT UNIQUE,
-      title      TEXT,
-      bot_id     BIGINT,
-      enabled    BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );""")
+        id            BIGSERIAL PRIMARY KEY,
+        username      TEXT UNIQUE,
+        title         TEXT,
+        env_token_key TEXT,
+        is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+        meta          JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """)
 
-    # fehlende Spalte/Unique-Constraint robust nachrüsten
-    await execute("""ALTER TABLE dashboard_bots
-                     ADD COLUMN IF NOT EXISTS username TEXT;""")
+    # endpoints for health/metrics (used by /devdash/bots later)
     await execute("""
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'dashboard_bots'::regclass
-          AND conname  = 'uq_dashboard_bots_username'
-      ) THEN
-        ALTER TABLE dashboard_bots
-          ADD CONSTRAINT uq_dashboard_bots_username UNIQUE (username);
-      END IF;
-    END$$;""")
+    CREATE TABLE IF NOT EXISTS dashboard_bot_endpoints (
+        id           BIGSERIAL PRIMARY KEY,
+        bot_username TEXT NOT NULL REFERENCES dashboard_bots(username) ON DELETE CASCADE,
+        base_url     TEXT NOT NULL,
+        api_key      TEXT,
+        metrics_path TEXT NOT NULL DEFAULT '/internal/metrics',
+        health_path  TEXT NOT NULL DEFAULT '/internal/health',
+        is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+        last_seen    TIMESTAMPTZ,
+        notes        TEXT,
+        UNIQUE(bot_username, base_url)
+    );
+    """)
 
+    # watchlist for wallet pages
+    await execute("""
+    CREATE TABLE IF NOT EXISTS dashboard_watch_accounts (
+        id         BIGSERIAL PRIMARY KEY,
+        chain      TEXT NOT NULL CHECK (chain IN ('near','ton')),
+        account_id TEXT NOT NULL,
+        label      TEXT,
+        meta       JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(chain, account_id)
+    );
+    """)
+
+    # singleton settings we can edit from code (TON/NEAR defaults)
     await execute("""
     CREATE TABLE IF NOT EXISTS devdash_settings (
-      id                 SMALLINT PRIMARY KEY DEFAULT 1,
-      near_watch_account TEXT,
-      ton_address        TEXT,
-      updated_at         TIMESTAMPTZ DEFAULT NOW()
-    );""")
+        id                SMALLINT PRIMARY KEY DEFAULT 1,
+        near_watch_account TEXT,
+        ton_address        TEXT,
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """)
 
-    # Defaults: nur emeraldcontent.near & deine feste TON-Adresse
+    # defaults: ONLY emeraldcontent.near, TON hard-bound to you
     await execute("""
     INSERT INTO devdash_settings (id, near_watch_account, ton_address)
     VALUES (1, 'emeraldcontent.near', 'UQBVG-RRn7l5QZkfS4yhy8M3yhu-uniUrJc4Uy4Qkom-RFo2')
     ON CONFLICT (id) DO UPDATE
     SET near_watch_account = EXCLUDED.near_watch_account,
         ton_address        = EXCLUDED.ton_address,
-        updated_at         = NOW();""")
+        updated_at         = NOW();
+    """)
+
+    # make sure watchlist contains the one near account we care about
+    await execute("""
+    INSERT INTO dashboard_watch_accounts (chain, account_id, label)
+    VALUES ('near', 'emeraldcontent.near', 'emeraldcontent.near')
+    ON CONFLICT (chain, account_id) DO NOTHING;
+    """)
 
 async def _telegram_getme(token: str) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as cx:
@@ -328,29 +362,35 @@ async def _telegram_getme(token: str) -> dict:
         return data["result"]
 
 async def scan_env_bots() -> int:
-    """finde ENV-Variablen wie BOT1_TOKEN / BOT_XYZ_TOKEN, hole getMe und upserte in dashboard_bots"""
+    """
+    Pick up all BOT*_TOKEN envs, call getMe, upsert into dashboard_bots.
+    """
+    import re
     added = 0
-    for k, v in os.environ.items():
-        if not re.fullmatch(r"BOT[A-Z0-9_]*_TOKEN", k):
+    for key, token in os.environ.items():
+        if not re.fullmatch(r'BOT([A-Z0-9_]+)?_TOKEN', key):
             continue
-        token = v.strip()
+        token = (token or '').strip()
         if not token:
             continue
         try:
             me = await _telegram_getme(token)
-            username = me.get("username") or me.get("first_name") or k
-            title = me.get("first_name") or username
+            username = me.get("username") or me.get("first_name") or key
+            title    = me.get("first_name") or username
+
             await execute("""
-              await execute("""
-                INSERT INTO dashboard_bots (username, title, bot_id, enabled)
-                VALUES (%s, %s, %s, TRUE)
+                INSERT INTO dashboard_bots (username, title, env_token_key, is_active, meta)
+                VALUES (%s, %s, %s, TRUE, '{}'::jsonb)
                 ON CONFLICT (username) DO UPDATE
                 SET title = EXCLUDED.title,
-                    bot_id = EXCLUDED.bot_id,
-                    enabled = TRUE;""", (bot_username, bot_title, bot_id))
+                    env_token_key = EXCLUDED.env_token_key,
+                    is_active = TRUE,
+                    updated_at = NOW();
+            """, (username, title, key))
             added += 1
         except Exception as e:
-            logging.warning("scan_env_bots: %s -> %s", k, e)
+            logging.warning("scan_env_bots: %s -> %s", key, e)
+    logging.info("Bot auto-discovery completed (%d).", added)
     return added
 
 # ------------------------------ tokens (JWT) ------------------------------
