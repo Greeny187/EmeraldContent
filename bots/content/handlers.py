@@ -12,7 +12,6 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType, ChatMemberStatus
 
-import bot
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
 except Exception:

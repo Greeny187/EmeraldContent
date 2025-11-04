@@ -1,5 +1,5 @@
 import base64
-import json, datetime, decimal
+import json
 import os
 import urllib.parse
 import logging
@@ -11,9 +11,11 @@ from aiohttp.web_response import Response
 from typing import List, Tuple, Optional
 from zoneinfo import ZoneInfo
 from datetime import date, timedelta, datetime
+import datetime as dt
+from decimal import Decimal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InputFile
 from telegram.constants import ChatMemberStatus
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
 
@@ -128,13 +130,36 @@ async def _upload_get_file_id(app: Application, target_chat_id: int, base64_str:
     Nimmt eine Data-URL/Base64 und lädt das Bild via Bot hoch. Gibt file_id zurück.
     Wichtig: Upload NICHT mehr in die Gruppe, sondern per DM an den Admin (target_chat_id=uid),
     damit nichts in der Gruppe gepostet wird.
+    
+    Validiert:
+    - Maximale Bildgröße (10MB)
+    - Erlaubte Bildformate (JPG, PNG, GIF)
+    - Base64-Format
     """
     if not base64_str:
         return None
-    b64 = base64_str.split(",", 1)[-1]
-    raw = base64.b64decode(b64)
-    bio = BytesIO(raw); bio.name = "upload.jpg"
+        
+    # Format-Validierung
     try:
+        content_type = base64_str.split(";")[0].split(":")[1].lower()
+        if not any(fmt in content_type for fmt in ["jpeg", "jpg", "png", "gif"]):
+            logger.warning(f"[miniapp] Ungültiges Bildformat: {content_type}")
+            return None
+    except Exception:
+        logger.warning("[miniapp] Ungültiges Base64-Format")
+        return None
+        
+    try:
+        b64 = base64_str.split(",", 1)[-1]
+        raw = base64.b64decode(b64)
+        
+        # Größen-Check (10MB)
+        if len(raw) > 10 * 1024 * 1024:
+            logger.warning(f"[miniapp] Bild zu groß: {len(raw)} bytes")
+            return None
+            
+        bio = BytesIO(raw)
+        bio.name = f"upload.{content_type.split('/')[-1]}"
         # bevorzugt DM an den Admin (leise)
         msg = await app.bot.send_photo(target_chat_id, InputFile(bio), disable_notification=True)
     except Exception as e:
@@ -755,9 +780,11 @@ def _hm_to_min(hhmm: str, default_min: int) -> int:
         return default_min
 
 def _json_default(o):
-    if isinstance(o, (datetime.datetime, datetime.date)):
+    # datetime/date → ISO8601
+    if isinstance(o, (dt.datetime, dt.date)):
         return o.isoformat()
-    if isinstance(o, decimal.Decimal):
+    # Decimal → float (für Stats/Counts)
+    if isinstance(o, Decimal):
         return float(o)
     return str(o)
 
@@ -1096,6 +1123,9 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.effective_message
     db = _db()
+    
+    # Optional: Suchparameter aus Command extrahieren
+    search_term = " ".join(context.args).lower() if context.args else ""
 
     try:
         all_groups: List[Tuple[int, str]] = db["get_registered_groups"]() or []
@@ -1103,20 +1133,58 @@ async def miniapp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"[miniapp] get_registered_groups failed: {e}")
         all_groups = []
 
+    # Gruppen nach Namen sortieren
+    all_groups.sort(key=lambda x: str(x[1] or x[0]).lower())
+    
+    # Suchfilter anwenden wenn vorhanden
+    if search_term:
+        all_groups = [g for g in all_groups if search_term in str(g[1] or g[0]).lower()]
+
     rows: List[List[InlineKeyboardButton]] = []
+    admin_groups = []
+    
+    # Erst Admin-Status für alle Gruppen prüfen
     for cid, title in all_groups:
         try:
             cid = int(cid)
+            if await _is_admin_or_owner(context, cid, user.id):
+                admin_groups.append((cid, title))
         except Exception:
             continue
-        if not await _is_admin_or_owner(context, cid, user.id):
-            continue
-        rows.append([InlineKeyboardButton(
-            f"{title or cid} – Mini-App öffnen",
-            web_app=WebAppInfo(url=_webapp_url(cid, title))
-        )])
+    
+    # Paginierung implementieren (10 Gruppen pro Seite)
+    page = getattr(context.user_data, 'miniapp_page', 0)
+    items_per_page = 10
+    total_pages = (len(admin_groups) + items_per_page - 1) // items_per_page
+    
+    if total_pages > 0:
+        # Gruppen für aktuelle Seite
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(admin_groups))
+        current_groups = admin_groups[start_idx:end_idx]
+        
+        # Gruppen-Buttons erstellen
+        for cid, title in current_groups:
+            rows.append([InlineKeyboardButton(
+                f"{title or cid} – Mini-App öffnen",
+                web_app=WebAppInfo(url=_webapp_url(cid, title))
+            )])
+        
+        # Navigations-Buttons hinzufügen wenn nötig
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Zurück", callback_data="miniapp_prev"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("Weiter ➡️", callback_data="miniapp_next"))
+        if nav_buttons:
+            rows.append(nav_buttons)
+            
+        # Suchbutton hinzufügen
+        rows.append([InlineKeyboardButton("🔍 Gruppe suchen", switch_inline_query_current_chat="")])
 
     if not rows:
+        if search_term:
+            return await msg.reply_text(f"❌ Keine passenden Gruppen gefunden für: {search_term}")
         return await msg.reply_text("❌ Du bist in keiner registrierten Gruppe Admin/Owner.")
 
     await msg.reply_text("Wähle eine Gruppe:", reply_markup=InlineKeyboardMarkup(rows))
@@ -1380,6 +1448,22 @@ def register_miniapp_routes(webapp, app):
     logger.info("[miniapp] HTTP-Routen registriert")
     return True
 
+async def miniapp_pagination_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler für die Paginierungs-Callbacks der Gruppen-Liste"""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+        
+    # Seite aktualisieren
+    if query.data == "miniapp_next":
+        context.user_data['miniapp_page'] = context.user_data.get('miniapp_page', 0) + 1
+    elif query.data == "miniapp_prev":
+        context.user_data['miniapp_page'] = max(0, context.user_data.get('miniapp_page', 0) - 1)
+    
+    # Neue Liste anzeigen
+    await miniapp_cmd(update, context)
+    await query.answer()
+
 def register_miniapp(app: Application):
     # Bot-Token dynamisch sammeln (für die Init-Data-Verifikation)
     try:
@@ -1392,4 +1476,7 @@ def register_miniapp(app: Application):
     # 1) Handler wie gehabt
     app.add_handler(CommandHandler("miniapp", miniapp_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE, webapp_data_handler, block=False), group=-4)
+    
+    # 2) Neuer Handler für Paginierung
+    app.add_handler(CallbackQueryHandler(miniapp_pagination_handler, pattern="^miniapp_"))
 
