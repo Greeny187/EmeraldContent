@@ -1,5 +1,5 @@
 import base64
-import json
+import json, datetime, decimal
 import os
 import urllib.parse
 import logging
@@ -15,6 +15,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppI
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from functools import partial
 
 logger = logging.getLogger(__name__)
 
@@ -558,22 +559,33 @@ async def route_apply(request):
     return web.Response(text="✅ Einstellungen gespeichert.")
 
 async def route_file(request: web.Request):
-    """
-    Proxy für Telegram-Bilder. Akzeptiert ?file_id= (präferiert) ODER ?id= (Legacy).
-    Auth wie /miniapp/state: X-Telegram-Init-Data ODER ?init_data=; Fallback ?uid=.
-    """
-    webapp = request.app
-    cid = int(request.query.get("cid", "0") or 0)
+    appweb = request.app
+    try:
+        # Auth wie bei /miniapp/state
+        cid = int(request.query.get("cid", "0") or 0)
+        init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+        uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
+        if uid <= 0 or not await _is_admin(appweb, cid, uid):
+            return web.Response(status=403, text="forbidden",
+                                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
 
-    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
-    uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
-    if uid <= 0 or not await _is_admin(webapp, cid, uid):
-        return web.Response(status=403, text="forbidden",
-                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+        file_id = request.query.get("file_id") or request.query.get("id")
+        if not file_id:
+            return web.Response(status=400, text="file_id required",
+                                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
 
-    file_id = request.query.get("file_id") or request.query.get("id")
-    if not file_id:
-        return web.Response(status=400, text="file_id required",
+        botapp = appweb["ptb_app"]
+        f = await botapp.bot.get_file(file_id)
+        blob = await botapp.bot.request.retrieve(f.file_path)
+        lower = (f.file_path or "").lower()
+        ctype = "image/png" if lower.endswith(".png") else "image/gif" if lower.endswith(".gif") else "image/jpeg"
+        return web.Response(
+            body=blob, content_type=ctype,
+            headers={"Cache-Control":"public, max-age=86400",
+                     "Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+    except Exception as e:
+        logger.warning(f"[miniapp] file proxy failed: {e}")
+        return web.Response(status=404, text="not found",
                             headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
 
     # irgendeine PTB-App verwenden
@@ -742,6 +754,15 @@ def _hm_to_min(hhmm: str, default_min: int) -> int:
     except Exception:
         return default_min
 
+def _json_default(o):
+    if isinstance(o, (datetime.datetime, datetime.date)):
+        return o.isoformat()
+    if isinstance(o, decimal.Decimal):
+        return float(o)
+    return str(o)
+
+_dumps = partial(json.dumps, default=_json_default, ensure_ascii=False)
+
 def _cors_json(data: dict, status: int = 200):
     # Vary: Origin verhindert CORS-Caching-Fails bei verschiedenen Origins
     return web.json_response(
@@ -751,8 +772,7 @@ def _cors_json(data: dict, status: int = 200):
             "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, X-Dev-Token, X-Dev-User-Id",
             "Vary": "Origin",
-        }
-    )
+        }, dumps=_dumps)
 
 async def _file_proxy(request):
     app = request.app["ptb_app"]
@@ -783,15 +803,18 @@ async def _file_proxy(request):
         return _cors_json({"error":"not_found"}, 404)
 
 # --- kleine Helferblöcke (DB-Aufrufe sauber gekapselt) -----------------------
-def _mk_media_block(cid:int, kind:str):
-    loader = {"welcome": "get_welcome", "rules": "get_rules", "farewell":"get_farewell"}[kind]
-    ph, tx = (None, None)
-    try:
-        r = _db()[loader](cid)
-        if r: ph, tx = r
-    except Exception:
-        pass
-    return {"on": bool(tx), "text": tx or "", "photo": bool(ph), "photo_id": ph or ""}
+def _media_block_with_image(cid, kind):
+    db = _db()
+    ph = db["get_photo_id"](cid, kind)  # sinngemäß
+    tx = db["get_text"](cid, kind)      # sinngemäß
+    image_url = (f"/miniapp/file?file_id={ph}" if ph else None)
+    return {
+         "on": bool(tx) or bool(ph),
+         "text": tx or "",
+         "photo": bool(ph),
+         "photo_id": ph or "",
+         "image_url": image_url
+     }
 
 async def _state_json(cid: int) -> dict:
     db = _db()
