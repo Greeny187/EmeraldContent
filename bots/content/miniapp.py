@@ -1421,6 +1421,36 @@ def _attach_http_routes(app: Application) -> bool:
     webapp["_ptb_apps"].append(app)
     webapp.setdefault("ptb_app", app)
 
+async def route_groups(request):
+    """Route für die Gruppenliste der Mini-App"""
+    if request.method == "OPTIONS":
+        return _cors_json({})
+        
+    uid = _resolve_uid(request)
+    if uid <= 0:
+        return _cors_json({"error": "auth_required"}, 403)
+        
+    try:
+        db = _db()
+        all_groups = db["get_registered_groups"]() or []
+        
+        # Gruppen filtern, in denen User Admin ist
+        admin_groups = []
+        for cid, title in all_groups:
+            try:
+                if await _is_admin(request.app, int(cid), uid):
+                    admin_groups.append({
+                        "id": int(cid),
+                        "title": title or str(cid)
+                    })
+            except Exception:
+                continue
+                
+        return _cors_json({"groups": admin_groups})
+    except Exception as e:
+        logger.error(f"[miniapp] Fehler beim Laden der Gruppen: {e}")
+        return _cors_json({"error": "failed_to_load"}, 500)
+
 def register_miniapp_routes(webapp, app):
     # global berechneten Origin (aus MINIAPP_URL) verwenden
     global ALLOWED_ORIGIN
@@ -1434,14 +1464,15 @@ def register_miniapp_routes(webapp, app):
     webapp.setdefault("ptb_app", app)
 
     # GET
-    webapp.router.add_route("GET",     "/miniapp/state",     route_state)
-    webapp.router.add_route("GET",     "/miniapp/stats",     route_stats)
-    webapp.router.add_route("GET", "/miniapp/file", route_file)
-    webapp.router.add_route("GET",     "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("GET", "/miniapp/groups",    route_groups)
+    webapp.router.add_route("GET", "/miniapp/state",     route_state)
+    webapp.router.add_route("GET", "/miniapp/stats",     route_stats)
+    webapp.router.add_route("GET", "/miniapp/file",      route_file)
+    webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
     # POST
     webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
     # OPTIONS (CORS)
-    for p in ("/miniapp/state","/miniapp/stats","/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
+    for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats","/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
 
     webapp["_miniapp_routes_attached"] = True
