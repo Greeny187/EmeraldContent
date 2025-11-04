@@ -263,27 +263,60 @@ create table if not exists dashboard_token_events (
 """
 
 async def ensure_tables():
-    # Basis-Schema (bestehendes INIT_SQL)
-    for stmt in [s.strip() for s in INIT_SQL.split(";") if s.strip()]:
-        await execute(stmt + ";")
-    # --- Migrations: TON + Watchlist (idempotent) ---
-    await execute("alter table if exists dashboard_users add column if not exists ton_address text;")
+    # nutzt die DB-Helfer _execute/execute aus deiner Datei
     await execute("""
-        create table if not exists dashboard_watch_accounts (
-            id serial primary key,
-            chain text not null check (chain in ('near','ton')),
-            account_id text not null,
-            label text,
-            meta jsonb default '{}'::jsonb,
-            created_at timestamp not null default now(),
-            unique(chain, account_id)
-         );
-    """)
+    CREATE TABLE IF NOT EXISTS dashboard_user (
+      id           BIGSERIAL PRIMARY KEY,
+      telegram_id  BIGINT UNIQUE,
+      username     TEXT,
+      is_admin     BOOLEAN DEFAULT FALSE,
+      ton_address  TEXT,
+      near_account TEXT,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    );""")
+
     await execute("""
-        insert into dashboard_watch_accounts(chain, account_id, label)
-        values ('near','emeraldcontent.near','Main Wallet'),
-        ON CONFLICT ON CONSTRAINT constraint_name DO NOTHING
-    """)
+    CREATE TABLE IF NOT EXISTS dashboard_bots (
+      id         BIGSERIAL PRIMARY KEY,
+      username   TEXT UNIQUE,
+      title      TEXT,
+      bot_id     BIGINT,
+      enabled    BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );""")
+
+    # fehlende Spalte/Unique-Constraint robust nachrüsten
+    await execute("""ALTER TABLE dashboard_bots
+                     ADD COLUMN IF NOT EXISTS username TEXT;""")
+    await execute("""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'dashboard_bots'::regclass
+          AND conname  = 'uq_dashboard_bots_username'
+      ) THEN
+        ALTER TABLE dashboard_bots
+          ADD CONSTRAINT uq_dashboard_bots_username UNIQUE (username);
+      END IF;
+    END$$;""")
+
+    await execute("""
+    CREATE TABLE IF NOT EXISTS devdash_settings (
+      id                 SMALLINT PRIMARY KEY DEFAULT 1,
+      near_watch_account TEXT,
+      ton_address        TEXT,
+      updated_at         TIMESTAMPTZ DEFAULT NOW()
+    );""")
+
+    # Defaults: nur emeraldcontent.near & deine feste TON-Adresse
+    await execute("""
+    INSERT INTO devdash_settings (id, near_watch_account, ton_address)
+    VALUES (1, 'emeraldcontent.near', 'UQBVG-RRn7l5QZkfS4yhy8M3yhu-uniUrJc4Uy4Qkom-RFo2')
+    ON CONFLICT (id) DO UPDATE
+    SET near_watch_account = EXCLUDED.near_watch_account,
+        ton_address        = EXCLUDED.ton_address,
+        updated_at         = NOW();""")
 
 async def _telegram_getme(token: str) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as cx:
@@ -308,12 +341,12 @@ async def scan_env_bots() -> int:
             username = me.get("username") or me.get("first_name") or k
             title = me.get("first_name") or username
             await execute("""
-              insert into dashboard_bots(username, title, env_token_key, is_active, meta)
-              values (%s,%s,%s,true, %s::jsonb)
-              on conflict(username) do update set
-                title=excluded.title,
-                env_token_key=excluded.env_token_key,
-                updated_at=now()
+                INSERT INTO dashboard_bots (username, title, bot_id, enabled)
+                VALUES (%s, %s, %s, TRUE)
+                ON CONFLICT (username) DO UPDATE
+                SET title = EXCLUDED.title,
+                    bot_id = EXCLUDED.bot_id,
+                    enabled = TRUE;""", (bot_username, bot_title, bot_id))
             """, (username, title, k, json.dumps({"id": me.get("id")})))
             added += 1
         except Exception as e:
