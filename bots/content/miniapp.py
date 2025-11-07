@@ -179,7 +179,7 @@ async def route_groups(request):
             # Wenn wir nur get_registered_groups haben, erwartet diese keinen uid:
             import inspect
             arity = len(inspect.signature(fetch).parameters)
-            rows = fetch(uid) if arity == 1
+            rows = fetch(uid) if arity == 1 else fetch(uid)
             # rows kann Liste[dict] oder Liste[tuple] sein
             for r in rows or []:
                 if isinstance(r, dict):
