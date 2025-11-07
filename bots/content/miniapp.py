@@ -44,6 +44,8 @@ TOKENS = [t for t in TOKENS if t]  # nur gesetzte Tokens
 # Sammelbecken für alle Tokens (auch dynamisch von PTB-Apps)
 _ALL_TOKENS: set[str] = set(TOKENS)
 
+routes = web.RouteTableDef()
+
 def _all_token_secrets() -> list[bytes]:
     secs: list[bytes] = []
     for t in list(_ALL_TOKENS):
@@ -106,6 +108,99 @@ def _resolve_uid(request: web.Request) -> int:
     if os.getenv("ALLOW_BROWSER_DEV") == "1" and request.headers.get("X-Dev-Token") == os.getenv("DEV_TOKEN", ""):
         return int(request.headers.get("X-Dev-User-Id", "0") or 0)
     return 0
+
+# Helfer für JSON (datetime-fest) + CORS
+def _json_default(o):
+    # Einheitlich über 'dt' (das Modul) prüfen – kein Shadowing mehr:
+    if isinstance(o, (dt.datetime, dt.date)):
+        return o.isoformat()
+    return None
+
+def _cors_json(data, status=200):
+    return web.json_response(
+        data,
+        dumps=lambda obj, **kw: json.dumps(obj, default=_json_default, **kw),
+        status=status,
+        headers={
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            "Vary": "Origin"
+        }
+    )
+
+def _parse_init_user(request):
+    """
+    Liest X-Telegram-Init-Data und gibt (uid, ok) zurück.
+    Falls du bereits eine eigene verify/parse-Funktion hast, nutze die hier.
+    """
+    init = request.headers.get("X-Telegram-Init-Data", "")
+    try:
+        # Minimal-Parse auf user.id (die Signatur-Prüfung machst du evtl. schon in Middleware)
+        from urllib.parse import parse_qs
+        qs = parse_qs(init, keep_blank_values=True)
+        user_json = qs.get("user", [None])[0]
+        if not user_json:
+            return (None, False)
+        import json as _json
+        uid = _json.loads(user_json)["id"]
+        return (int(uid), True)
+    except Exception:
+        return (None, False)
+
+@routes.options('/miniapp/groups')
+async def route_groups_preflight(request):
+    return _cors_json({"ok": True})
+
+@routes.get('/miniapp/groups')
+async def route_groups(request):
+    """
+    Gibt alle Gruppen zurück, die der aktuelle WebApp-User verwalten darf.
+    Erwartetes Format:
+      { "groups": [ { "id": <chat_id>, "title": "<name oder ''>" }, ... ] }
+    """
+    uid, ok = _parse_init_user(request)
+    if not ok or not uid:
+        # Fallback: leere Liste statt 401, damit die App nicht "hängen" bleibt
+        return _cors_json({ "groups": [] })
+
+    # DB-Kompatibilität: nimm die erste existierende Funktion
+    # DB-Kompatibilität: robustes Fallback auf get_registered_groups
+    db = _db()
+    get = db.get
+    fetch = (
+        get("get_admin_groups", None)
+        or get("get_user_groups", None)
+        or get("get_groups_by_admin", None)
+        or get("get_registered_groups", None)  # ← WICHTIGER FALLBACK
+    )
+
+    groups = []
+    try:
+        if fetch:
+            # Wenn wir nur get_registered_groups haben, erwartet diese keinen uid:
+            import inspect
+            arity = len(inspect.signature(fetch).parameters)
+            rows = fetch(uid) if arity == 1
+            # rows kann Liste[dict] oder Liste[tuple] sein
+            for r in rows or []:
+                if isinstance(r, dict):
+                    gid = r.get("chat_id") or r.get("id")
+                    title = r.get("title") or r.get("name") or ""
+                else:
+                    # tuple: (chat_id, title?) -> robust mappen
+                    gid = r[0]
+                    title = r[1] if len(r) > 1 else ""
+                if gid:
+                    groups.append({"id": int(gid), "title": title})
+        else:
+            # letzter Fallback: einzelne aktuell geöffnete Gruppe via ?cid
+            cid = request.query.get("cid")
+            if cid:
+                groups = [{"id": int(cid), "title": ""}]
+    except Exception as e:
+        logging.error("[miniapp] groups failed: %s", e)
+        groups = []
+
+    return _cors_json({ "groups": groups })
 
 def _clean_dict_empty_to_none(d: dict) -> dict:
     """Konvertiert leere Strings in einem dict zu None."""
@@ -778,28 +873,6 @@ def _hm_to_min(hhmm: str, default_min: int) -> int:
         return int(hh) * 60 + int(mm)
     except Exception:
         return default_min
-
-def _json_default(o):
-    # datetime/date → ISO8601
-    if isinstance(o, (dt.datetime, dt.date)):
-        return o.isoformat()
-    # Decimal → float (für Stats/Counts)
-    if isinstance(o, Decimal):
-        return float(o)
-    return str(o)
-
-_dumps = partial(json.dumps, default=_json_default, ensure_ascii=False)
-
-def _cors_json(data: dict, status: int = 200):
-    # Vary: Origin verhindert CORS-Caching-Fails bei verschiedenen Origins
-    return web.json_response(
-        data, status=status,
-        headers={
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, X-Dev-Token, X-Dev-User-Id",
-            "Vary": "Origin",
-        }, dumps=_dumps)
 
 async def _file_proxy(request):
     app = request.app["ptb_app"]
