@@ -126,6 +126,74 @@ def _cors_json(data, status=200):
             "Vary": "Origin"
         }
     )
+# (neu/vereinheitlicht) – belasse die Funktion wie sie ist:
+
+async def _cors_ok(request):
+    return web.json_response(
+        {}, status=204,
+        headers={
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
+        }
+    )
+
+# Für jede Route zusätzlich:
+@routes.options('/miniapp/groups')
+async def route_groups_preflight(request):
+    return await _cors_ok(request)
+
+@routes.options('/miniapp/state')
+async def route_state_preflight(request):
+    return await _cors_ok(request)
+
+@routes.options('/miniapp/stats')
+async def route_stats_preflight(request):
+    return await _cors_ok(request)
+
+@routes.options('/miniapp/apply')
+async def route_apply_preflight(request):
+    return await _cors_ok(request)
+
+@routes.options('/miniapp/file')
+async def route_file_preflight(request):
+    return await _cors_ok(request)
+
+@routes.get('/miniapp/groups')
+async def route_groups(request: web.Request):
+    # Auth via Telegram init data (Header, Query oder x-telegram-web-app-data)
+    uid = _resolve_uid(request)
+    if uid <= 0:
+        # UI nicht blockieren – leere Liste statt 403 (MiniApp Startseite bleibt bedienbar)
+        return _cors_json({"groups": []})
+    try:
+        db = _db()
+        fetch = (db.get("get_admin_groups") or
+                 db.get("get_user_groups") or
+                 db.get("get_groups_by_admin") or
+                 db.get("get_registered_groups"))
+
+        groups = []
+        if fetch:
+            import inspect
+            rows = fetch(uid) if len(inspect.signature(fetch).parameters) == 1 else fetch()
+            for r in rows or []:
+                if isinstance(r, dict):
+                    gid = r.get("chat_id") or r.get("id")
+                    title = r.get("title") or r.get("name") or ""
+                else:
+                    gid = r[0]; title = r[1] if len(r) > 1 else ""
+                if gid:
+                    # optional: Admincheck via Bot
+                    try:
+                        if await _is_admin(request.app, int(gid), uid):
+                            groups.append({"id": int(gid), "title": title})
+                    except Exception:
+                        continue
+        return _cors_json({"groups": groups})
+    except Exception as e:
+        logger.error("[miniapp] groups failed: %s", e)
+        return _cors_json({"groups": []})
 
 def _parse_init_user(request):
     """
@@ -145,63 +213,7 @@ def _parse_init_user(request):
         return (int(uid), True)
     except Exception:
         return (None, False)
-
-@routes.options('/miniapp/groups')
-async def route_groups_preflight(request):
-    return _cors_json({"ok": True})
-
-@routes.get('/miniapp/groups')
-async def route_groups(request):
-    """
-    Gibt alle Gruppen zurück, die der aktuelle WebApp-User verwalten darf.
-    Erwartetes Format:
-      { "groups": [ { "id": <chat_id>, "title": "<name oder ''>" }, ... ] }
-    """
-    uid, ok = _parse_init_user(request)
-    if not ok or not uid:
-        # Fallback: leere Liste statt 401, damit die App nicht "hängen" bleibt
-        return _cors_json({ "groups": [] })
-
-    # DB-Kompatibilität: nimm die erste existierende Funktion
-    # DB-Kompatibilität: robustes Fallback auf get_registered_groups
-    db = _db()
-    get = db.get
-    fetch = (
-        get("get_admin_groups", None)
-        or get("get_user_groups", None)
-        or get("get_groups_by_admin", None)
-        or get("get_registered_groups", None)  # ← WICHTIGER FALLBACK
-    )
-
-    groups = []
-    try:
-        if fetch:
-            # Wenn wir nur get_registered_groups haben, erwartet diese keinen uid:
-            import inspect
-            arity = len(inspect.signature(fetch).parameters)
-            rows = fetch(uid) if arity == 1 else fetch(uid)
-            # rows kann Liste[dict] oder Liste[tuple] sein
-            for r in rows or []:
-                if isinstance(r, dict):
-                    gid = r.get("chat_id") or r.get("id")
-                    title = r.get("title") or r.get("name") or ""
-                else:
-                    # tuple: (chat_id, title?) -> robust mappen
-                    gid = r[0]
-                    title = r[1] if len(r) > 1 else ""
-                if gid:
-                    groups.append({"id": int(gid), "title": title})
-        else:
-            # letzter Fallback: einzelne aktuell geöffnete Gruppe via ?cid
-            cid = request.query.get("cid")
-            if cid:
-                groups = [{"id": int(cid), "title": ""}]
-    except Exception as e:
-        logging.error("[miniapp] groups failed: %s", e)
-        groups = []
-
-    return _cors_json({ "groups": groups })
-
+    
 def _clean_dict_empty_to_none(d: dict) -> dict:
     """Konvertiert leere Strings in einem dict zu None."""
     return {k: (None if (isinstance(v, str) and v.strip() == "") else v) for k, v in d.items()}
@@ -1501,7 +1513,8 @@ async def route_groups(request):
         
     uid = _resolve_uid(request)
     if uid <= 0:
-        return _cors_json({"error": "auth_required"}, 403)
+        # Auth weich: leere Liste statt 403, damit die UI nicht abstürzt
+        return _cors_json({"groups": []})
         
     try:
         db = _db()
@@ -1525,29 +1538,21 @@ async def route_groups(request):
         return _cors_json({"error": "failed_to_load"}, 500)
 
 def register_miniapp_routes(webapp, app):
-    # global berechneten Origin (aus MINIAPP_URL) verwenden
     global ALLOWED_ORIGIN
     if not ALLOWED_ORIGIN:
         ALLOWED_ORIGIN = "https://greeny187.github.io"
-    # für andere Handler verfügbar machen:
     webapp["allowed_origin"] = ALLOWED_ORIGIN
-
-    webapp.setdefault("_ptb_apps", [])
-    webapp["_ptb_apps"].append(app)
+    webapp.setdefault("_ptb_apps", []).append(app)
     webapp.setdefault("ptb_app", app)
-
-    # GET
     webapp.router.add_route("GET", "/miniapp/groups",    route_groups)
     webapp.router.add_route("GET", "/miniapp/state",     route_state)
     webapp.router.add_route("GET", "/miniapp/stats",     route_stats)
     webapp.router.add_route("GET", "/miniapp/file",      route_file)
     webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
-    # POST
-    webapp.router.add_route("POST",    "/miniapp/apply",     route_apply)
-    # OPTIONS (CORS)
-    for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats","/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
+    webapp.router.add_route("POST", "/miniapp/apply",    route_apply)
+    for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats",
+              "/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
-
     webapp["_miniapp_routes_attached"] = True
     logger.info("[miniapp] HTTP-Routen registriert")
     return True
