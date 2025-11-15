@@ -324,6 +324,14 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     db = _db()
     errors: list[str] = []
  
+    # --- Vorverarbeitung: Kompatibilität für direkte {*_image_base64} Keys -----------
+    # Frontend kann senden: welcome_image_base64, rules_image_base64, farewell_image_base64
+    for key_type in ("welcome", "rules", "farewell"):
+        key_name = f"{key_type}_image_base64"
+        if key_name in data:
+            d = data.setdefault(key_type, {})
+            d["img_base64"] = data.pop(key_name)
+    
     # --- Vorverarbeitung: Kompatibilität für { images: { welcome|rules|farewell } } -----------
     try:
         imgs = data.get("images") or {}
