@@ -880,6 +880,243 @@ async def auth_check(request: web.Request):
     except web.HTTPUnauthorized as e:
         return _json({"ok": False, "error": e.text}, request, status=401)
 
+# ------------------------------ Ads (Werbungen) ------------------------------
+async def ads_list(request: web.Request):
+    """Liste alle Werbungen auf (optional gefiltert nach Bot)"""
+    await _auth_user(request)
+    bot_slug = request.query.get("bot_slug", "")
+    sql = "select id, name, placement, content, is_active, targeting, bot_slug, created_at, updated_at from dashboard_ads"
+    params = ()
+    if bot_slug:
+        sql += " where bot_slug = %s"
+        params = (bot_slug,)
+    sql += " order by created_at desc"
+    rows = await fetch(sql, params)
+    return _json({"ads": rows}, request)
+
+
+async def ads_create(request: web.Request):
+    """Erstelle eine neue Werbung"""
+    await _auth_user(request)
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    placement = (body.get("placement") or "header").strip()
+    content = (body.get("content") or "").strip()
+    is_active = bool(body.get("is_active", True))
+    targeting = body.get("targeting", {})
+    bot_slug = (body.get("bot_slug") or "").strip() or None
+    start_at = body.get("start_at")
+    end_at = body.get("end_at")
+    
+    if not name or not content:
+        return _json({"error": "name und content erforderlich"}, request, status=400)
+    
+    await execute("""
+        insert into dashboard_ads(name, placement, content, is_active, targeting, bot_slug, start_at, end_at)
+        values (%s, %s, %s, %s, %s::jsonb, %s, to_timestamp(%s), to_timestamp(%s))
+    """, (name, placement, content, is_active, json.dumps(targeting), bot_slug, start_at, end_at))
+    
+    return _json({"ok": True, "name": name}, request, status=201)
+
+
+async def ads_delete(request: web.Request):
+    """Lösche eine Werbung"""
+    await _auth_user(request)
+    ad_id = request.match_info.get("id")
+    await execute("delete from dashboard_ads where id = %s", (ad_id,))
+    return _json({"ok": True}, request)
+
+
+async def ads_update(request: web.Request):
+    """Aktualisiere eine Werbung"""
+    await _auth_user(request)
+    ad_id = request.match_info.get("id")
+    body = await request.json()
+    
+    updates = []
+    params = []
+    if "name" in body:
+        updates.append("name = %s")
+        params.append(body["name"])
+    if "placement" in body:
+        updates.append("placement = %s")
+        params.append(body["placement"])
+    if "content" in body:
+        updates.append("content = %s")
+        params.append(body["content"])
+    if "is_active" in body:
+        updates.append("is_active = %s")
+        params.append(body["is_active"])
+    if "targeting" in body:
+        updates.append("targeting = %s::jsonb")
+        params.append(json.dumps(body["targeting"]))
+    
+    if not updates:
+        return _json({"error": "keine Felder zum Aktualisieren"}, request, status=400)
+    
+    updates.append("updated_at = now()")
+    params.append(ad_id)
+    sql = "update dashboard_ads set " + ", ".join(updates) + " where id = %s"
+    await execute(sql, tuple(params))
+    return _json({"ok": True}, request)
+
+
+# ------------------------------ Metrics & Analytics ------------------------------
+async def metrics_overview(request: web.Request):
+    """Übersicht: Benutzer, Werbungen, Bots, Events"""
+    await _auth_user(request)
+    users_total = await fetchrow("select count(1) as c from dashboard_users")
+    ads_active = await fetchrow("select count(1) as c from dashboard_ads where is_active=true")
+    bots_active = await fetchrow("select count(1) as c from dashboard_bots where is_active=true")
+    token_events = await fetchrow("select count(1) as c from dashboard_token_events")
+    
+    return _json({
+        "users_total": users_total["c"] if users_total else 0,
+        "ads_active": ads_active["c"] if ads_active else 0,
+        "bots_active": bots_active["c"] if bots_active else 0,
+        "token_events_total": token_events["c"] if token_events else 0,
+    }, request)
+
+
+async def metrics_timeseries(request: web.Request):
+    """Zeitreihen-Metriken (letzte N Tage)"""
+    await _auth_user(request)
+    days = int(request.query.get("days", "14"))
+    
+    rows = await fetch("""
+        select 
+            date_trunc('day', happened_at)::date as day,
+            kind,
+            count(*) as cnt,
+            sum(amount) as total_amount
+        from dashboard_token_events
+        where happened_at > now() - interval '%s days'
+        group by day, kind
+        order by day asc
+    """, (days,))
+    
+    return _json({"timeseries": rows}, request)
+
+
+async def bot_metrics(request: web.Request):
+    """Detaillierte Metriken pro Bot (Health, aktive Nutzer, etc.)"""
+    await _auth_user(request)
+    bots = await fetch("""
+        select 
+            db.id,
+            db.username,
+            db.title,
+            db.is_active,
+            count(dbe.id) as endpoint_count,
+            max(dbe.last_seen) as last_health_check
+        from dashboard_bots db
+        left join dashboard_bot_endpoints dbe on db.username = dbe.bot_username
+        group by db.id, db.username, db.title, db.is_active
+        order by db.id
+    """)
+    
+    return _json({"bots": bots}, request)
+
+
+async def bot_endpoints(request: web.Request):
+    """Health Check Endpoints für einen Bot"""
+    await _auth_user(request)
+    bot_username = request.query.get("bot_username")
+    if not bot_username:
+        return _json({"error": "bot_username erforderlich"}, request, status=400)
+    
+    rows = await fetch("""
+        select id, bot_username, base_url, api_key, metrics_path, health_path, is_active, last_seen, notes
+        from dashboard_bot_endpoints
+        where bot_username = %s
+        order by id
+    """, (bot_username,))
+    
+    return _json({"endpoints": rows}, request)
+
+
+# ------------------------------ Token Events (Accounting) ------------------------------
+async def token_events_list(request: web.Request):
+    """Liste Token-Events (Mint, Burn, Reward, etc.)"""
+    await _auth_user(request)
+    limit = int(request.query.get("limit", "50"))
+    kind = request.query.get("kind", "")
+    
+    sql = "select * from dashboard_token_events"
+    params = ()
+    if kind:
+        sql += " where kind = %s"
+        params = (kind,)
+    sql += " order by happened_at desc limit %s"
+    params = params + (limit,)
+    
+    rows = await fetch(sql, params)
+    return _json({"events": rows}, request)
+
+
+async def token_events_create(request: web.Request):
+    """Erstelle ein Token-Event manuell"""
+    await _auth_user(request)
+    body = await request.json()
+    kind = (body.get("kind") or "manual").strip()
+    amount = body.get("amount", 0)
+    unit = body.get("unit", "EMRLD")
+    actor_telegram_id = body.get("actor_telegram_id")
+    note = (body.get("note") or "").strip()
+    ref = body.get("ref", {})
+    
+    await execute("""
+        insert into dashboard_token_events(kind, amount, unit, actor_telegram_id, ref, note, happened_at)
+        values (%s, %s, %s, %s, %s::jsonb, %s, now())
+    """, (kind, amount, unit, actor_telegram_id, json.dumps(ref), note))
+    
+    return _json({"ok": True}, request, status=201)
+
+
+# ------------------------------ User Management ------------------------------
+async def user_list(request: web.Request):
+    """Liste aller Dashboard-Nutzer"""
+    await _auth_user(request)
+    rows = await fetch("""
+        select 
+            telegram_id,
+            username,
+            first_name,
+            last_name,
+            photo_url,
+            role,
+            tier,
+            near_account_id,
+            ton_address,
+            created_at,
+            updated_at
+        from dashboard_users
+        order by created_at desc
+    """)
+    return _json({"users": rows}, request)
+
+
+async def user_update_tier(request: web.Request):
+    """Aktualisiere Tier für einen Nutzer"""
+    await _auth_user(request)
+    body = await request.json()
+    telegram_id = body.get("telegram_id")
+    tier = body.get("tier", "pro")
+    role = body.get("role")
+    
+    if not telegram_id:
+        return _json({"error": "telegram_id erforderlich"}, request, status=400)
+    
+    if role:
+        await execute("update dashboard_users set tier=%s, role=%s, updated_at=now() where telegram_id=%s",
+                     (tier, role, telegram_id))
+    else:
+        await execute("update dashboard_users set tier=%s, updated_at=now() where telegram_id=%s",
+                     (tier, telegram_id))
+    
+    return _json({"ok": True}, request)
+
+
 # ------------------------------ route wiring ------------------------------
 async def options_root(request: web.Request):
     return options_handler(request)
@@ -897,19 +1134,46 @@ def register_devdash_routes(app: web.Application):
     app.router.add_post(        "/devdash/dev-login",             dev_login)
     app.router.add_post(        "/devdash/auth/telegram",         auth_telegram)
     app.router.add_route("GET", "/devdash/me",                    me)
-    app.router.add_route("GET", "/devdash/metrics/overview",      overview)
+    
+    # Metrics
+    app.router.add_route("GET", "/devdash/metrics/overview",      metrics_overview)
+    app.router.add_route("GET", "/devdash/metrics/timeseries",    metrics_timeseries)
+    
+    # Bots
     app.router.add_route("GET", "/devdash/bots",                  bots_list)
     app.router.add_post(        "/devdash/bots",                  bots_add)
     app.router.add_post(        "/devdash/bots/refresh",          bots_refresh)
+    app.router.add_route("GET", "/devdash/bots/metrics",          bot_metrics)
+    app.router.add_route("GET", "/devdash/bots/endpoints",        bot_endpoints)
+    
+    # Ads (Werbungen)
+    app.router.add_route("GET", "/devdash/ads",                   ads_list)
+    app.router.add_post(        "/devdash/ads",                   ads_create)
+    app.router.add_put(         "/devdash/ads/{id}",              ads_update)
+    app.router.add_delete(      "/devdash/ads/{id}",              ads_delete)
+    
+    # Token Events
+    app.router.add_route("GET", "/devdash/token-events",          token_events_list)
+    app.router.add_post(        "/devdash/token-events",          token_events_create)
+    
+    # User Management
+    app.router.add_route("GET", "/devdash/users",                 user_list)
+    app.router.add_post(        "/devdash/users/tier",            user_update_tier)
+    
+    # Wallets & Payments
     app.router.add_route("GET", "/devdash/near/account/overview", near_account_overview)
     app.router.add_post(        "/devdash/wallets/near",          set_near_account)
     app.router.add_route("GET", "/devdash/near/payments",         near_payments)
     app.router.add_post(        "/devdash/wallets/ton",           set_ton_address)
     app.router.add_route("GET", "/devdash/ton/payments",          ton_payments)
     app.router.add_route("GET", "/devdash/wallets",               wallets_overview)
-    app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
+    
+    # Mesh
     app.router.add_route("GET", "/devdash/mesh/health",         mesh_health)
     app.router.add_route("GET", "/devdash/mesh/metrics",        mesh_metrics)
+    
+    # CORS
+    app.router.add_route("OPTIONS", "/devdash/{tail:.*}", options_handler)
     
     
 # If you run this module standalone, boot a tiny aiohttp app for local testing
