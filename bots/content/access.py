@@ -1,6 +1,24 @@
 ﻿from telegram import ChatMemberAdministrator, ChatMemberOwner
 from typing import Tuple
 import time, asyncio
+import json, urllib.parse
+
+def parse_webapp_user_id(init_data: str | None) -> int:
+    """
+    Erwartet den Roh-String aus 'X-Telegram-Init-Data' (oder x-telegram-web-app-data).
+    Gibt die user.id (int) zurück oder 0.
+    Signaturprüfung: falls du eine HMAC-Prüfung hast, hier zentral einhängen.
+    """
+    if not init_data:
+        return 0
+    try:
+        qs = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        u = qs.get("user")
+        if not u:
+            return 0
+        return int(json.loads(u).get("id") or 0)
+    except Exception:
+        return 0
 
 async def cached_admins(bot, context, chat_id: int, max_age=120):
     cache = context.bot_data.setdefault("admins_cache", {})

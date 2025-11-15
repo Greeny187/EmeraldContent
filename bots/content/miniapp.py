@@ -18,6 +18,7 @@ from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
+from .access import parse_webapp_user_id, is_admin_or_owner
 
 logger = logging.getLogger(__name__)
 
@@ -92,22 +93,31 @@ def _verify_init_data_any(init_data: str) -> int:
     return 0
 
 def _resolve_uid(request: web.Request) -> int:
-    # 1) Telegram WebApp Header zuerst
-    init_str = (request.headers.get("X-Telegram-Init-Data")
-            or request.query.get("init_data")
-            or request.headers.get("x-telegram-web-app-data"))  # optionaler Fallback
-    uid = _verify_init_data_any(init_str) if init_str else 0
+    # 1) WebApp InitData aus Header / Query ziehen
+    init_str = (
+        request.headers.get("X-Telegram-Init-Data")
+        or request.headers.get("x-telegram-web-app-data")
+        or request.query.get("init_data")
+    )
 
+    uid = parse_webapp_user_id(init_str)
     if uid > 0:
         return uid
-    # 2) Fallback: Query (für frühen Browser-Test)
+
+    # 2) Fallback: uid in der Query (für Browser-Tests)
     q_uid = request.query.get("uid")
     if q_uid and str(q_uid).lstrip("-").isdigit():
         return int(q_uid)
+
     # 3) Optionaler Dev-Bypass
-    if os.getenv("ALLOW_BROWSER_DEV") == "1" and request.headers.get("X-Dev-Token") == os.getenv("DEV_TOKEN", ""):
+    if (
+        os.getenv("ALLOW_BROWSER_DEV") == "1"
+        and request.headers.get("X-Dev-Token") == os.getenv("DEV_TOKEN", "")
+    ):
         return int(request.headers.get("X-Dev-User-Id", "0") or 0)
+
     return 0
+
 
 # Helfer für JSON (datetime-fest) + CORS
 def _json_default(o):
@@ -693,18 +703,22 @@ async def route_apply(request):
 async def route_file(request: web.Request):
     appweb = request.app
     try:
-        # Auth wie bei /miniapp/state
         cid = int(request.query.get("cid", "0") or 0)
-        init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
-        uid = _verify_init_data_any(init_data) if init_data else int(request.query.get("uid", "0") or 0)
+        uid = _resolve_uid(request)
         if uid <= 0 or not await _is_admin(appweb, cid, uid):
-            return web.Response(status=403, text="forbidden",
-                                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+            return web.Response(
+                status=403,
+                text="forbidden",
+                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
+            )
 
         file_id = request.query.get("file_id") or request.query.get("id")
         if not file_id:
-            return web.Response(status=400, text="file_id required",
-                                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+            return web.Response(
+                status=400,
+                text="file_id required",
+                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
+            )
 
         botapp = appweb["ptb_app"]
         f = await botapp.bot.get_file(file_id)
@@ -712,34 +726,20 @@ async def route_file(request: web.Request):
         lower = (f.file_path or "").lower()
         ctype = "image/png" if lower.endswith(".png") else "image/gif" if lower.endswith(".gif") else "image/jpeg"
         return web.Response(
-            body=blob, content_type=ctype,
-            headers={"Cache-Control":"public, max-age=86400",
-                     "Access-Control-Allow-Origin": ALLOWED_ORIGIN})
-    except Exception as e:
-        logger.warning(f"[miniapp] file proxy failed: {e}")
-        return web.Response(status=404, text="not found",
-                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
-
-    # irgendeine PTB-App verwenden
-    apps = webapp.get("_ptb_apps", []) or [webapp["ptb_app"]]
-    bot = apps[0].bot
-    try:
-        tf = await bot.get_file(file_id)
-        blob = await bot.request.retrieve(tf.file_path)
-        ctype = "image/jpeg"
-        lower = (tf.file_path or "").lower()
-        if lower.endswith(".png"): ctype = "image/png"
-        elif lower.endswith(".gif"): ctype = "image/gif"
-        return web.Response(
             body=blob,
             content_type=ctype,
-            headers={"Cache-Control": "public, max-age=86400",
-                     "Access-Control-Allow-Origin": ALLOWED_ORIGIN}
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            },
         )
     except Exception as e:
         logger.warning(f"[miniapp] file proxy failed: {e}")
-        return web.Response(status=404, text="not found",
-                            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN})
+        return web.Response(
+            status=404,
+            text="not found",
+            headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
+        )
 
 # Erlaubter Origin für CORS (aus MINIAPP_URL abgeleitet)
 def _origin(url: str) -> str:
@@ -850,24 +850,22 @@ async def _is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, u
         return False
 
 async def _is_admin(app_or_webapp, cid: int, uid: int) -> bool:
-    """Prüft Adminrechte über *alle* bekannten PTB-Apps."""
+    """Prüft Adminrechte über *alle* bekannten PTB-Apps, mit Access.is_admin_or_owner()."""
     apps: list[Application] = []
     try:
-        # Falls eine einzelne App übergeben wurde
         if isinstance(app_or_webapp, Application):
             apps = [app_or_webapp]
         else:
-            # AIOHTTP WebApp → alle gesammelten Apps
             apps = list(app_or_webapp.get("_ptb_apps", []))
-            # Fallback: alte Einzel-Referenz
             if not apps and "ptb_app" in app_or_webapp:
                 apps = [app_or_webapp["ptb_app"]]
     except Exception:
         apps = []
+
     for a in apps:
         try:
-            member = await a.bot.get_chat_member(cid, uid)
-            if member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+            is_admin, is_owner = await is_admin_or_owner(a.bot, cid, uid)
+            if is_admin or is_owner:
                 return True
         except Exception:
             continue
@@ -917,16 +915,18 @@ async def _file_proxy(request):
 # --- kleine Helferblöcke (DB-Aufrufe sauber gekapselt) -----------------------
 def _media_block_with_image(cid, kind):
     db = _db()
-    ph = db["get_photo_id"](cid, kind)  # sinngemäß
-    tx = db["get_text"](cid, kind)      # sinngemäß
+    ph = db["get_photo_id"](cid, kind)
+    tx = db["get_text"](cid, kind)
     image_url = (f"/miniapp/file?file_id={ph}" if ph else None)
+    enabled = bool(tx) or bool(ph)
     return {
-         "on": bool(tx) or bool(ph),
-         "text": tx or "",
-         "photo": bool(ph),
-         "photo_id": ph or "",
-         "image_url": image_url
-     }
+        "on": enabled,
+        "enabled": enabled,
+        "text": tx or "",
+        "photo": bool(ph),
+        "photo_id": ph or "",
+        "image_url": image_url,
+    }
 
 async def _state_json(cid: int) -> dict:
     db = _db()
@@ -1505,37 +1505,6 @@ def _attach_http_routes(app: Application) -> bool:
     webapp.setdefault("_ptb_apps", [])
     webapp["_ptb_apps"].append(app)
     webapp.setdefault("ptb_app", app)
-
-async def route_groups(request):
-    """Route für die Gruppenliste der Mini-App"""
-    if request.method == "OPTIONS":
-        return _cors_json({})
-        
-    uid = _resolve_uid(request)
-    if uid <= 0:
-        # Auth weich: leere Liste statt 403, damit die UI nicht abstürzt
-        return _cors_json({"groups": []})
-        
-    try:
-        db = _db()
-        all_groups = db["get_registered_groups"]() or []
-        
-        # Gruppen filtern, in denen User Admin ist
-        admin_groups = []
-        for cid, title in all_groups:
-            try:
-                if await _is_admin(request.app, int(cid), uid):
-                    admin_groups.append({
-                        "id": int(cid),
-                        "title": title or str(cid)
-                    })
-            except Exception:
-                continue
-                
-        return _cors_json({"groups": admin_groups})
-    except Exception as e:
-        logger.error(f"[miniapp] Fehler beim Laden der Gruppen: {e}")
-        return _cors_json({"error": "failed_to_load"}, 500)
 
 def register_miniapp_routes(webapp, app):
     global ALLOWED_ORIGIN
