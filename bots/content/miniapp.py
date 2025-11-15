@@ -172,18 +172,18 @@ async def route_file_preflight(request):
 @routes.get('/miniapp/groups')
 async def route_groups(request: web.Request):
     """
-    Laden der registrierten Gruppen (ohne Admin-Check hier).
-    Der Admin-Check erfolgt bei /miniapp/state und /miniapp/apply.
+    Laden NUR der ADMIN-Gruppen des Users.
+    SICHERHEIT: Diese Route **MUSS** einen Admin-Check durchführen!
     
-    Diese Route gibt alle Gruppen zurück, damit der Frontend-Nutzer wählen kann.
-    Der Backend garantiert beim Zugriff, dass nur Admins Einstellungen sehen/ändern.
+    Admin-Check erfolgt JETZT HIER – nicht später!
     """
+    webapp = request.app
     uid = _resolve_uid(request)
     logger.info(f"[miniapp/groups] Request from uid={uid}")
     
     if uid <= 0:
-        logger.debug("[miniapp/groups] uid <= 0, returning empty groups")
-        return _cors_json({"groups": []})
+        logger.warning(f"[miniapp/groups] Authentication failed: uid={uid}")
+        return _cors_json({"groups": []}, 403)
     
     try:
         db = _db()
@@ -192,14 +192,15 @@ async def route_groups(request: web.Request):
             logger.warning("[miniapp/groups] get_registered_groups nicht verfügbar")
             return _cors_json({"groups": []})
         
-        # Hole alle registrierten Gruppen (kein Admin-Check hier)
-        groups = []
+        # Hole alle registrierten Gruppen aus der DB
+        admin_groups = []
         try:
             rows = fetch_func()
         except Exception as e:
             logger.error(f"[miniapp/groups] Failed to fetch groups: {e}")
             rows = []
         
+        # **KRITISCH**: Filtere nach Admin-Status für DIESEN User
         for r in rows or []:
             try:
                 # Parse Zeile (tuple oder dict)
@@ -218,13 +219,21 @@ async def route_groups(request: web.Request):
                 except (ValueError, TypeError):
                     continue
                 
-                groups.append({"id": gid, "title": title or f"Gruppe {gid}"})
+                # **SECURITY CHECK**: Prüfe, ob dieser User Admin/Owner in dieser Gruppe ist!
+                if not await _is_admin(webapp, gid, uid):
+                    logger.debug(f"[miniapp/groups] User {uid} ist NICHT admin in {gid}")
+                    continue
+                
+                # Nur Admin-Gruppen zurückgeben
+                admin_groups.append({"id": gid, "title": title or f"Gruppe {gid}"})
+                logger.debug(f"[miniapp/groups] User {uid} ist admin in {gid}")
+                
             except Exception as e:
-                logger.debug(f"[miniapp/groups] Error parsing group {r}: {e}")
+                logger.debug(f"[miniapp/groups] Error processing group {r}: {e}")
                 continue
         
-        logger.info(f"[miniapp/groups] Returning {len(groups)} groups for uid={uid}")
-        return _cors_json({"groups": groups})
+        logger.info(f"[miniapp/groups] Returning {len(admin_groups)}/{len(rows or [])} admin groups for uid={uid}")
+        return _cors_json({"groups": admin_groups})
     
     except Exception as e:
         logger.error(f"[miniapp/groups] Exception: {e}", exc_info=True)
