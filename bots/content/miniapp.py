@@ -171,38 +171,60 @@ async def route_file_preflight(request):
 
 @routes.get('/miniapp/groups')
 async def route_groups(request: web.Request):
-    # Auth via Telegram init data (Header, Query oder x-telegram-web-app-data)
+    """
+    Laden der Gruppen, in denen der Nutzer Admin ist.
+    - UID via Telegram init_data / Header / Query
+    - Prüfe mit _is_admin() via Bot-API
+    - Fallback: leere Liste statt 403 (MiniApp bleibt bedienbar)
+    """
     uid = _resolve_uid(request)
     if uid <= 0:
-        # UI nicht blockieren – leere Liste statt 403 (MiniApp Startseite bleibt bedienbar)
+        logger.debug("[miniapp/groups] uid <= 0, returning empty groups")
         return _cors_json({"groups": []})
+    
     try:
         db = _db()
-        fetch = (db.get("get_admin_groups") or
-                 db.get("get_user_groups") or
-                 db.get("get_groups_by_admin") or
-                 db.get("get_registered_groups"))
-
+        # Versuche, alle registrierten Gruppen zu holen
+        fetch_func = db.get("get_registered_groups")
+        if not fetch_func:
+            logger.warning("[miniapp/groups] get_registered_groups nicht verfügbar")
+            return _cors_json({"groups": []})
+        
         groups = []
-        if fetch:
-            import inspect
-            rows = fetch(uid) if len(inspect.signature(fetch).parameters) == 1 else fetch()
-            for r in rows or []:
+        try:
+            rows = fetch_func()  # Alle registrierten Gruppen
+        except TypeError:
+            # Manche Funktionen erwarten uid als Parameter
+            rows = fetch_func(uid)
+        
+        for r in rows or []:
+            try:
+                # Parse Zeile
                 if isinstance(r, dict):
                     gid = r.get("chat_id") or r.get("id")
                     title = r.get("title") or r.get("name") or ""
                 else:
-                    gid = r[0]; title = r[1] if len(r) > 1 else ""
-                if gid:
-                    # optional: Admincheck via Bot
-                    try:
-                        if await _is_admin(request.app, int(gid), uid):
-                            groups.append({"id": int(gid), "title": title})
-                    except Exception:
-                        continue
+                    gid = r[0]
+                    title = r[1] if len(r) > 1 else ""
+                
+                if not gid:
+                    continue
+                
+                gid = int(gid)
+                
+                # Prüfe Admin-Status via Bot-API
+                is_admin = await _is_admin(request.app, gid, uid)
+                if is_admin:
+                    groups.append({"id": gid, "title": title or f"Gruppe {gid}"})
+            except Exception as e:
+                logger.debug(f"[miniapp/groups] Error processing group {r}: {e}")
+                continue
+        
+        logger.info(f"[miniapp/groups] uid={uid}: {len(groups)} admin groups found")
         return _cors_json({"groups": groups})
+    
     except Exception as e:
-        logger.error("[miniapp] groups failed: %s", e)
+        logger.error(f"[miniapp/groups] Exception: {e}", exc_info=True)
         return _cors_json({"groups": []})
 
 def _parse_init_user(request):
