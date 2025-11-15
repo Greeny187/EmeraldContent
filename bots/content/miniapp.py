@@ -172,55 +172,58 @@ async def route_file_preflight(request):
 @routes.get('/miniapp/groups')
 async def route_groups(request: web.Request):
     """
-    Laden der Gruppen, in denen der Nutzer Admin ist.
-    - UID via Telegram init_data / Header / Query
-    - Prüfe mit _is_admin() via Bot-API
-    - Fallback: leere Liste statt 403 (MiniApp bleibt bedienbar)
+    Laden der registrierten Gruppen (ohne Admin-Check hier).
+    Der Admin-Check erfolgt bei /miniapp/state und /miniapp/apply.
+    
+    Diese Route gibt alle Gruppen zurück, damit der Frontend-Nutzer wählen kann.
+    Der Backend garantiert beim Zugriff, dass nur Admins Einstellungen sehen/ändern.
     """
     uid = _resolve_uid(request)
+    logger.info(f"[miniapp/groups] Request from uid={uid}")
+    
     if uid <= 0:
         logger.debug("[miniapp/groups] uid <= 0, returning empty groups")
         return _cors_json({"groups": []})
     
     try:
         db = _db()
-        # Versuche, alle registrierten Gruppen zu holen
         fetch_func = db.get("get_registered_groups")
         if not fetch_func:
             logger.warning("[miniapp/groups] get_registered_groups nicht verfügbar")
             return _cors_json({"groups": []})
         
+        # Hole alle registrierten Gruppen (kein Admin-Check hier)
         groups = []
         try:
-            rows = fetch_func()  # Alle registrierten Gruppen
-        except TypeError:
-            # Manche Funktionen erwarten uid als Parameter
-            rows = fetch_func(uid)
+            rows = fetch_func()
+        except Exception as e:
+            logger.error(f"[miniapp/groups] Failed to fetch groups: {e}")
+            rows = []
         
         for r in rows or []:
             try:
-                # Parse Zeile
+                # Parse Zeile (tuple oder dict)
                 if isinstance(r, dict):
                     gid = r.get("chat_id") or r.get("id")
                     title = r.get("title") or r.get("name") or ""
                 else:
-                    gid = r[0]
+                    gid = r[0] if len(r) > 0 else None
                     title = r[1] if len(r) > 1 else ""
                 
                 if not gid:
                     continue
                 
-                gid = int(gid)
+                try:
+                    gid = int(gid)
+                except (ValueError, TypeError):
+                    continue
                 
-                # Prüfe Admin-Status via Bot-API
-                is_admin = await _is_admin(request.app, gid, uid)
-                if is_admin:
-                    groups.append({"id": gid, "title": title or f"Gruppe {gid}"})
+                groups.append({"id": gid, "title": title or f"Gruppe {gid}"})
             except Exception as e:
-                logger.debug(f"[miniapp/groups] Error processing group {r}: {e}")
+                logger.debug(f"[miniapp/groups] Error parsing group {r}: {e}")
                 continue
         
-        logger.info(f"[miniapp/groups] uid={uid}: {len(groups)} admin groups found")
+        logger.info(f"[miniapp/groups] Returning {len(groups)} groups for uid={uid}")
         return _cors_json({"groups": groups})
     
     except Exception as e:
