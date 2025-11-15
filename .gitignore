@@ -3,3 +3,4 @@ generate_telethon_session.py
 import_group_once.py
 /bots/__pycache__
 Web.config
+__pycache__/devdash_api.cpython-313.pyc
