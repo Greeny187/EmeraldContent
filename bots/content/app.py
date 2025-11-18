@@ -5,7 +5,8 @@ import logging
 from .miniapp import register_miniapp
 from .database import init_all_schemas
 try:
-    from shared import statistic, ads
+    from . import statistic
+    from shared import ads
 except Exception:
     class _Noop:  # Fallback ohne Seiteneffekte
         def __getattr__(self, _): 
