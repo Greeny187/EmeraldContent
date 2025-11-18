@@ -263,6 +263,16 @@ def init_db(cur):
     cur.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';")
     cur.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb;")
 
+    # Wallets pro Telegram-User (TON)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_wallets (
+          user_id     BIGINT PRIMARY KEY,          -- Telegram user_id
+          wallet_ton  TEXT,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+
     # Event-Stream: alles, was später Rewards auslöst
     cur.execute(
         """
@@ -977,28 +987,134 @@ def link_wallet(cur, tg_id: int, wallet_address: str,
         (tg_id, wallet_address, wallet_chain, verified, verified)
     )
 
+# === Rewards / Wallet-Core ================================================
+
 @_with_cursor
-def get_user_wallet(cur, tg_id: int) -> dict | None:
+def set_user_wallet(cur, user_id: int, wallet_ton: str) -> None:
     """
-    Gibt Wallet-Infos für einen Telegram-User zurück oder None, wenn kein Wallet gesetzt ist.
+    Speichert oder aktualisiert die TON-Wallet eines Users.
     """
     cur.execute(
         """
-        SELECT wallet_address, wallet_chain, wallet_verified, wallet_verified_at
-        FROM users
-        WHERE tg_id=%s;
+        INSERT INTO user_wallets (user_id, wallet_ton, created_at, updated_at)
+        VALUES (%s, %s, NOW(), NOW())
+        ON CONFLICT (user_id)
+        DO UPDATE SET wallet_ton = EXCLUDED.wallet_ton,
+                      updated_at = NOW();
         """,
-        (tg_id,)
+        (user_id, wallet_ton),
+    )
+
+
+@_with_cursor
+def get_user_wallet(cur, user_id: int) -> Optional[str]:
+    """
+    Holt die hinterlegte TON-Wallet eines Users (oder None).
+    """
+    cur.execute(
+        "SELECT wallet_ton FROM user_wallets WHERE user_id = %s;",
+        (user_id,),
     )
     row = cur.fetchone()
-    if not row or not row[0]:
-        return None
-    return {
-        "address": row[0],
-        "chain": row[1],
-        "verified": bool(row[2]),
-        "verified_at": row[3],
-    }
+    return row[0] if row else None
+
+
+@_with_cursor
+def log_stat_event(
+    cur,
+    chat_id: int,
+    user_id: Optional[int],
+    event_type: str,
+    payload: Optional[dict] = None,
+) -> None:
+    """
+    Generischer Event-Logger für Phase 1:
+    message_sent, joined_group, reaction_added, feed_posted, ...
+    """
+    cur.execute(
+        """
+        INSERT INTO stats_events (chat_id, user_id, event_type, payload)
+        VALUES (%s, %s, %s, %s);
+        """,
+        (chat_id, user_id, event_type, Json(payload or {})),
+    )
+
+
+@_with_cursor
+def add_pending_reward(
+    cur,
+    chat_id: int,
+    user_id: int,
+    points: float,
+    event_type: str,
+    ref_id: Optional[int] = None,
+) -> None:
+    """
+    Schreibt einen Reward-Punktestand in die Pending-Tabelle.
+    """
+    cur.execute(
+        """
+        INSERT INTO rewards_pending (chat_id, user_id, points, event_type, ref_id)
+        VALUES (%s, %s, %s, %s, %s);
+        """,
+        (chat_id, user_id, points, event_type, ref_id),
+    )
+
+
+@_with_cursor
+def get_rewards_summary(cur, user_id: int) -> dict:
+    """
+    Aggregierte Sicht: Pending vs. bereits geclaimt.
+    """
+    # Pending-Summe
+    cur.execute(
+        "SELECT COALESCE(SUM(points), 0) FROM rewards_pending WHERE user_id=%s;",
+        (user_id,),
+    )
+    pending = float(cur.fetchone()[0] or 0.0)
+
+    # Bereits geclaimt (pending+confirmed)
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM rewards_claims
+        WHERE user_id=%s AND status IN ('pending','confirmed');
+        """,
+        (user_id,),
+    )
+    claimed = float(cur.fetchone()[0] or 0.0)
+
+    return {"pending": pending, "claimed": claimed}
+
+
+@_with_cursor
+def create_reward_claim(
+    cur,
+    user_id: int,
+    amount: float,
+    tx_hash: Optional[str] = None,
+    status: str = "pending",
+) -> int:
+    """
+    Legt einen Claim an und leert danach die Pending-Rewards des Users.
+    (On-Chain-Handling kommt später in Phase 2/3.)
+    """
+    cur.execute(
+        """
+        INSERT INTO rewards_claims (user_id, amount, tx_hash, status)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id;
+        """,
+        (user_id, amount, tx_hash, status),
+    )
+    claim_id = int(cur.fetchone()[0])
+
+    # Pending-Entries nach Claim aufräumen
+    cur.execute(
+        "DELETE FROM rewards_pending WHERE user_id=%s;",
+        (user_id,),
+    )
+    return claim_id
 
 # --- Stats-Events & Rewards (Phase 1) ---
 
@@ -2785,11 +2901,6 @@ def migrate_db():
     finally:
         cur.close()
         conn.close()
-
-# --- Entry Point ---
-def init_ads_schema():
-    """Initialize advertising system schema"""
-    init_db()  # Ensure base schema exists first
 
 def init_all_schemas():
     """Initialize all database schemas including ads"""

@@ -3,6 +3,7 @@ from . import handlers, rss, mood, jobs as content_jobs
 import os
 import logging
 from .miniapp import register_miniapp
+from .database import init_all_schemas
 try:
     from shared import statistic, ads
 except Exception:
@@ -58,5 +59,4 @@ def register_jobs(app: Application):
     app.job_queue.run_once(lambda c: app.create_task(_notify_startup(c)), when=2)
 
 def init_schema():
-    # falls content-spezifische Tabellen/Indizes nötig sind
-    pass
+    init_all_schemas()

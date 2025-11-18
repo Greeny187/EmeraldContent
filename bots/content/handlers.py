@@ -28,7 +28,8 @@ from .database import (register_group, get_registered_groups, get_rules, set_wel
     get_night_mode, set_night_mode, get_group_language, set_spam_policy_topic, get_spam_policy_topic,
     add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
     toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
-    effective_spam_policy, count_topic_user_messages_today, 
+    effective_spam_policy, count_topic_user_messages_today, decay_strikes,
+    set_user_wallet, get_user_wallet,
     effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, add_strike_points, get_strike_points, top_strike_users, decay_strikes
     )
 from zoneinfo import ZoneInfo
@@ -576,6 +577,53 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
                           {"text_scores":scores, "media_scores":media_scores, "domains":domains, "link_score":link_score, "strikes":strikes, "added_points":total_points})
     except Exception as e:
         log_ai_mod_action(chat.id, topic_id, user.id if user else None, msg.message_id, "error", 0.0, "error", {"err":str(e)})
+
+WALLET_HINT = (
+    "👉 Schick mir deine TON-Wallet-Adresse mit:\n"
+    "`/wallet <deine_ton_adresse>`\n\n"
+    "Nur so kannst du später EMRD-Rewards claimen."
+)
+
+async def cmd_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    User verbindet seine TON-Wallet (simple Variante ohne TON-Connect-Flow).
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    args = context.args or []
+
+    # Kein Parameter -> aktuelle Wallet anzeigen oder Anleitung schicken
+    if not args:
+        current = get_user_wallet(user.id)
+        if current:
+            await msg.reply_text(
+                "Deine aktuell hinterlegte TON-Wallet ist:\n"
+                f"`{current}`\n\n"
+                "Sende `/wallet <Adresse>` um sie zu ändern.",
+                parse_mode="Markdown",
+            )
+        else:
+            await msg.reply_text(WALLET_HINT, parse_mode="Markdown")
+        return
+
+    wallet = args[0].strip()
+
+    # Sehr einfache Plausi-Prüfung: TON-Adressen fangen häufig mit EQ/UQ an
+    if not re.match(r"^[EU]Q[A-Za-z0-9_-]{30,70}$", wallet):
+        await msg.reply_text(
+            "Hm, das sieht nicht wie eine gültige TON-Adresse aus.\n"
+            "Bitte prüf sie noch einmal und schick sie dann erneut mit:\n"
+            "`/wallet <deine_ton_adresse>`",
+            parse_mode="Markdown",
+        )
+        return
+
+    set_user_wallet(user.id, wallet)
+    await msg.reply_text(
+        "✅ TON-Wallet gespeichert!\n"
+        "Sobald Rewards aktiv sind, werden deine EMRD-Rewards auf diese Adresse ausgezahlt."
+    )
+
 
 async def mystrikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat; user = update.effective_user
@@ -1413,6 +1461,7 @@ def register_handlers(app):
     app.add_handler(CommandHandler("quietnow", quietnow_cmd, filters=filters.ChatType.GROUPS), group=-3)
     app.add_handler(CommandHandler("removetopic", remove_topic_cmd), group=-3)
     app.add_handler(CommandHandler("cleandeleteaccounts", cleandelete_command, filters=filters.ChatType.GROUPS), group=-3)
+    app.add_handler(CommandHandler("wallet", cmd_wallet), group=-3)
 
     # --- Callbacks / spezielle Replies ---
     # ggf. weitere CallbackQueryHandler hier
