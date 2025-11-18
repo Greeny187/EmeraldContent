@@ -240,6 +240,103 @@ def init_db(cur):
         """
     )
     
+    # User-Tabelle: Telegram-User + Wallet
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            tg_id BIGINT UNIQUE NOT NULL,
+            wallet_address TEXT,
+            wallet_chain TEXT NOT NULL DEFAULT 'ton',
+            wallet_verified BOOLEAN NOT NULL DEFAULT FALSE,
+            wallet_verified_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_tg_id ON users(tg_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address);")
+
+    # groups um Core-Metadaten erweitern (Plan, Settings, created_at)
+    cur.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();")
+    cur.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';")
+    cur.execute("ALTER TABLE groups ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb;")
+
+    # Event-Stream: alles, was später Rewards auslöst
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stats_events (
+            id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT,
+            user_id BIGINT,
+            event_type TEXT NOT NULL,
+            payload JSONB,
+            ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stats_events_chat_ts ON stats_events(chat_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stats_events_user_ts ON stats_events(user_id, ts DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stats_events_type_ts ON stats_events(event_type, ts DESC);")
+
+    # Reward-Queue: Rohpunkte, die später als Claim ausgezahlt werden
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rewards_pending (
+            id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT,
+            user_id BIGINT NOT NULL,
+            points BIGINT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload JSONB,
+            processed BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            processed_at TIMESTAMPTZ
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_rewards_pending_user ON rewards_pending(user_id, created_at DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_rewards_pending_processed ON rewards_pending(processed, created_at);")
+
+    # Reward-Claims: bestätigte Auszahlungen (z.B. EMRD auf TON)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rewards_claims (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            wallet_address TEXT,
+            amount BIGINT NOT NULL,
+            tx_hash TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_rewards_claims_user ON rewards_claims(user_id, created_at DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_rewards_claims_status ON rewards_claims(status, created_at DESC);")
+
+    # NFT-Claims (Badges, Level, Achievements)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nft_claims (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            nft_id TEXT NOT NULL,
+            nft_type TEXT,
+            wallet_address TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            tx_hash TEXT,
+            payload JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            minted_at TIMESTAMPTZ
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_nft_claims_user ON nft_claims(user_id, created_at DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_nft_claims_nft_id ON nft_claims(nft_id);")
+    
     cur.execute("""
         CREATE TABLE IF NOT EXISTS adv_settings (
           chat_id           BIGINT PRIMARY KEY,
@@ -838,6 +935,136 @@ def set_global_config(cur, key: str, value: dict):
       VALUES (%s,%s)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
     """, (key, Json(value)))
+
+@_with_cursor
+def touch_user(cur, tg_id: int):
+    """
+    Legt einen User an (falls noch nicht vorhanden) und aktualisiert last_seen.
+    """
+    cur.execute(
+        """
+        INSERT INTO users(tg_id)
+        VALUES (%s)
+        ON CONFLICT (tg_id) DO UPDATE
+          SET last_seen = NOW();
+        """,
+        (tg_id,)
+    )
+
+@_with_cursor
+def link_wallet(cur, tg_id: int, wallet_address: str,
+                verified: bool = False,
+                wallet_chain: str = "ton"):
+    """
+    Verknüpft einen TON-Wallet mit einem Telegram-User.
+    verified=True kannst du setzen, wenn später TonConnect/Signatur geprüft wurde.
+    """
+    cur.execute(
+        """
+        INSERT INTO users (tg_id, wallet_address, wallet_chain, wallet_verified, wallet_verified_at)
+        VALUES (%s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END)
+        ON CONFLICT (tg_id) DO UPDATE
+           SET wallet_address      = EXCLUDED.wallet_address,
+               wallet_chain        = EXCLUDED.wallet_chain,
+               wallet_verified     = EXCLUDED.wallet_verified,
+               wallet_verified_at  = CASE
+                                        WHEN EXCLUDED.wallet_verified
+                                        THEN NOW()
+                                        ELSE users.wallet_verified_at
+                                     END,
+               last_seen           = NOW();
+        """,
+        (tg_id, wallet_address, wallet_chain, verified, verified)
+    )
+
+@_with_cursor
+def get_user_wallet(cur, tg_id: int) -> dict | None:
+    """
+    Gibt Wallet-Infos für einen Telegram-User zurück oder None, wenn kein Wallet gesetzt ist.
+    """
+    cur.execute(
+        """
+        SELECT wallet_address, wallet_chain, wallet_verified, wallet_verified_at
+        FROM users
+        WHERE tg_id=%s;
+        """,
+        (tg_id,)
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return None
+    return {
+        "address": row[0],
+        "chain": row[1],
+        "verified": bool(row[2]),
+        "verified_at": row[3],
+    }
+
+# --- Stats-Events & Rewards (Phase 1) ---
+
+@_with_cursor
+def log_stats_event(cur,
+                    chat_id: int,
+                    user_id: int | None,
+                    event_type: str,
+                    payload: dict | None = None):
+    """
+    Zentraler Event-Logger:
+    z.B. event_type='message_sent', 'joined_group', 'reaction_added', 'feed_posted', ...
+    """
+    cur.execute(
+        """
+        INSERT INTO stats_events(chat_id, user_id, event_type, payload)
+        VALUES (%s, %s, %s, %s);
+        """,
+        (chat_id, user_id, event_type, Json(payload) if payload is not None else None)
+    )
+
+@_with_cursor
+def queue_reward(cur,
+                 chat_id: int,
+                 user_id: int,
+                 points: int,
+                 event_type: str,
+                 payload: dict | None = None):
+    """
+    Schreibt einen Pending-Reward in die Queue.
+    points = interne Punkte (z.B. 100 = 0.000000100 EMRD oder wie du es später definierst).
+    """
+    cur.execute(
+        """
+        INSERT INTO rewards_pending(chat_id, user_id, points, event_type, payload)
+        VALUES (%s, %s, %s, %s, %s);
+        """,
+        (chat_id, user_id, points, event_type, Json(payload) if payload is not None else None)
+    )
+
+@_with_cursor
+def get_user_reward_points(cur, user_id: int, chat_id: int | None = None) -> int:
+    """
+    Liefert die noch nicht verarbeiteten Punkte (processed=FALSE).
+    Optional gefiltert nach Chat.
+    """
+    if chat_id is not None:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(points),0)
+              FROM rewards_pending
+             WHERE user_id=%s AND chat_id=%s AND processed=FALSE;
+            """,
+            (user_id, chat_id)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(points),0)
+              FROM rewards_pending
+             WHERE user_id=%s AND processed=FALSE;
+            """,
+            (user_id,)
+        )
+    row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
 
 # --- Group Management ---
 @_with_cursor
