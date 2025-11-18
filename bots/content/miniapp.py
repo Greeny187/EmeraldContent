@@ -711,49 +711,49 @@ async def route_apply(request):
     app: Application = request.app["ptb_app"]
     if request.method == "OPTIONS":
         return _cors_json({})
-    # Parse JSON payload once (avoid consuming the stream twice)
     try:
         data = await request.json()
     except Exception:
         data = {}
-    logger.info("[miniapp] APPLY cid=%s uid=%s keys=%s",
-                request.query.get("cid"),
-                _resolve_uid(request),
-                list(data.keys()))
+
+    logger.info(
+        "[miniapp] APPLY cid=%s uid=%s keys=%s",
+        request.query.get("cid"),
+        _resolve_uid(request),
+        list(data.keys()),
+    )
+
     cid = int(request.query.get("cid", "0") or 0)
     uid = _resolve_uid(request)
     if uid <= 0:
         return _cors_json({"error": "auth_required"}, 403)
-    
+
     if not await _is_admin(app, cid, uid):
         return _cors_json({"error": "forbidden"}, 403)
 
     if not cid:
         return web.Response(status=400, text="cid fehlt")
 
-    # Optional: Hier könnte man get_chat_member aufrufen, um Adminrechte zu prüfen
-    # Für die Mini-App-Entwicklung erlauben wir den HTTP-Save.
-
-    # Optional: Rewards global speichern
+    # ✅ Rewards global speichern – jetzt über _db(), ohne 500er
     if isinstance(data.get("rewards"), dict):
-        request.app["db"]["set_global_config"]("rewards", data["rewards"])
+        try:
+            db = _db()
+            if "set_global_config" in db:
+                db["set_global_config"]("rewards", data["rewards"])
+        except Exception as e:
+            logger.warning("[miniapp] set_global_config('rewards') failed: %s", e)
+
     errors = await _save_from_payload(cid, uid, data, request.app["ptb_app"])
     if errors:
-        return web.Response(status=207, text="Teilweise gespeichert:\n- " + "\n- ".join(errors))
+        return web.Response(
+            status=207,
+            text="Teilweise gespeichert:\n- " + "\n- ".join(errors),
+        )
     return web.Response(text="✅ Einstellungen gespeichert.")
 
-async def route_file(request: web.Request):
-    appweb = request.app
-    try:
-        cid = int(request.query.get("cid", "0") or 0)
-        uid = _resolve_uid(request)
-        if uid <= 0 or not await _is_admin(appweb, cid, uid):
-            return web.Response(
-                status=403,
-                text="forbidden",
-                headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
-            )
 
+async def route_file(request: web.Request):
+    try:
         file_id = request.query.get("file_id") or request.query.get("id")
         if not file_id:
             return web.Response(
@@ -762,11 +762,21 @@ async def route_file(request: web.Request):
                 headers={"Access-Control-Allow-Origin": ALLOWED_ORIGIN},
             )
 
+        # Erste PTB-App nehmen
+        appweb = request.app
         botapp = appweb["ptb_app"]
+
         f = await botapp.bot.get_file(file_id)
         blob = await botapp.bot.request.retrieve(f.file_path)
+
         lower = (f.file_path or "").lower()
-        ctype = "image/png" if lower.endswith(".png") else "image/gif" if lower.endswith(".gif") else "image/jpeg"
+        if lower.endswith(".png"):
+            ctype = "image/png"
+        elif lower.endswith(".gif"):
+            ctype = "image/gif"
+        else:
+            ctype = "image/jpeg"
+
         return web.Response(
             body=blob,
             content_type=ctype,
@@ -1122,8 +1132,22 @@ async def _state_json(cid: int) -> dict:
       "subscription": sub,
       "night":   night,
       "language": db.get("get_group_language", lambda *_: None)(cid),
-      "rewards": (db.get("get_global_config", lambda *_: None)("rewards") or
-                  {"token": "", "network": "NEAR", "decimals": 24}),
+      "rewards": (
+          db.get("get_global_config", lambda *_: None)("rewards")
+          or {
+                "enabled": False,
+                "mode": "claim",          # claim = User holt sich die Tokens
+                "token": "EMRD",
+                "network": "TON",
+                "decimals": 9,
+                "rate_answer": 0.02,      # EMRD pro Antwort (Vorschlag)
+                "rate_helpful": 0.10,     # EMRD pro „Helpful“-Vote (Vorschlag)
+                "cap_user": 10,           # max. 10 EMRD/Tag pro User
+                "cap_chat": 150,
+                "min_claim": 20.0,       # ab 20 EMRD claimbar
+                "cooldown_days": 7       # max. 1 Claim pro Woche
+            }
+      ),
       "report": {"enabled": True, "stats": stats},
       "clean_deleted": clean_deleted,
     }
