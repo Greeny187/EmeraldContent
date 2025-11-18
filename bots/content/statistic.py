@@ -14,12 +14,48 @@ from shared.telethon_client import telethon_client
 from telethon.tl.functions.channels import GetFullChannelRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bots.content.database import (_with_cursor, _db_pool, record_reply_time, get_group_language, migrate_stats_rollup, compute_agg_group_day, 
-upsert_agg_group_day, get_agg_summary, get_heatmap, get_agg_rows, get_group_stats, get_top_responders
+upsert_agg_group_day, get_global_config, get_agg_summary, get_heatmap, get_agg_rows, get_group_stats, get_top_responders
 )
 from shared.translator import translate_hybrid
 
 
 logger = logging.getLogger(__name__)
+
+def _get_rewards_config() -> dict:
+    """
+    Lädt die globale Rewards-Config aus global_config.
+    Falls nichts gesetzt ist, kommen sinnvolle Defaults zurück.
+    """
+    cfg = get_global_config("rewards") or {}
+
+    try:
+        rate_answer = float(cfg.get("rate_answer") or 0)
+    except Exception:
+        rate_answer = 0.0
+
+    try:
+        rate_helpful = float(cfg.get("rate_helpful") or 0)
+    except Exception:
+        rate_helpful = 0.0
+
+    try:
+        cap_user = int(cfg.get("cap_user") or 0)
+    except Exception:
+        cap_user = 0
+
+    try:
+        cap_chat = int(cfg.get("cap_chat") or 0)
+    except Exception:
+        cap_chat = 0
+
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "mode": cfg.get("mode") or "claim",  # "claim" | "auto"
+        "rate_answer": rate_answer,
+        "rate_helpful": rate_helpful,
+        "cap_user": cap_user,
+        "cap_chat": cap_chat,
+    }
 
 # OpenAI-Client initialisieren (oder None, wenn kein Key gesetzt)
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -380,6 +416,18 @@ def log_feature_interaction(cur, chat_id: int, user_id: int, feature: str, meta:
         VALUES (%s, %s, %s, %s);
     """, (chat_id, user_id, feature, Json(meta, dumps=json.dumps) if meta is not None else None))
 
+def _track_reward_event(chat_id: int, user_id: int | None, feature: str, meta: dict | None = None):
+    """
+    Schlanke Helper-Funktion: schreibt Reward-/Feature-Events in feature_interactions.
+    Bricht niemals den Bot, sondern loggt höchstens eine Warnung.
+    """
+    if not user_id:
+        return
+    try:
+        log_feature_interaction(chat_id, user_id, feature, meta or {})
+    except Exception as e:
+        logger.warning("Reward-Event '%s' konnte nicht geloggt werden: %s", feature, e)
+
 @_with_cursor
 def get_ai_mod_logs_range(cur, chat_id:int, d0, d1):
     cur.execute("""
@@ -467,14 +515,35 @@ async def reply_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg: Message = update.effective_message
     if not msg or not msg.reply_to_message:
         return
-    # Nur sinnvolle Replies (kein Bot-eigener Echo etc.). Optional: Admin-Check hier.
     try:
         chat_id = msg.chat.id
         orig = msg.reply_to_message
-        # erste Antwort? – Optional: per Cache/Redis prüfen. Minimal: wir loggen jeden Reply.
+
+        # Bestehende Funktion: Reply-Time loggen
         log_reply_time(chat_id, orig, msg)
+
+        # --- NEU: Reward/Event-Hook für „Antwort“ --------------------------
+        cfg = _get_rewards_config()
+        if cfg["enabled"] and cfg["rate_answer"] > 0:
+            answer_user = msg.from_user.id if msg.from_user else None
+            if answer_user:
+                delta_ms = int((msg.date - orig.date).total_seconds() * 1000)
+                _track_reward_event(
+                    chat_id=chat_id,
+                    user_id=answer_user,
+                    feature="answer",
+                    meta={
+                        "question_user": (orig.from_user.id if orig.from_user else None),
+                        "question_msg_id": getattr(orig, "message_id", None),
+                        "answer_msg_id": getattr(msg, "message_id", None),
+                        "delta_ms": delta_ms,
+                    },
+                )
+        # -------------------------------------------------------------------
+
     except Exception as e:
         logger.warning(f"reply_time_handler Fehler: {e}")
+
 
 async def _resolve_user_name(bot, chat_id: int, user_id: int) -> str:
     try:
@@ -519,7 +588,17 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 
     chat_id = cm.chat.id
     user_id = cm.new_chat_member.user.id
-    log_member_event(context.bot, chat_id, user_id, event)
+
+    # Korrigierter Aufruf – ohne Bot-Instanz
+    log_member_event(chat_id, user_id, event)
+
+    # --- NEU: Event auch in feature_interactions spiegeln -----------------
+    try:
+        feature = "joined_group" if event == "join" else "left_group"
+        _track_reward_event(chat_id, user_id, feature, meta=None)
+    except Exception as e:
+        logger.warning("Feature-Event %s konnte nicht geloggt werden: %s", event, e)
+
 
 async def universal_logger(update, context):
     msg = update.effective_message
