@@ -25,10 +25,16 @@ DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
     raise RuntimeError("DATABASE_URL ist nicht gesetzt")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")  # setze in Heroku!DEV_LOGIN_CODE = os.getenv("DEV_LOGIN_CODE")
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me")  # setze in Heroku!
 DEV_LOGIN_CODE = os.getenv("DEV_LOGIN_CODE")
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 BOT_TOKEN = os.getenv("BOT1_TOKEN") or os.getenv("BOT_TOKEN")  # Bot‑Token für Telegram-Login Verify
+
+if not BOT_TOKEN:
+    log.warning("⚠️  BOT_TOKEN / BOT1_TOKEN nicht gesetzt! Telegram-Login wird fehlschlagen!")
+else:
+    log.info("✅ BOT_TOKEN ist gesetzt")
+
 
 # NEAR config
 NEAR_NETWORK = os.getenv("NEAR_NETWORK", "mainnet")  # "mainnet" | "testnet"
@@ -266,94 +272,105 @@ create table if not exists dashboard_token_events (
 """
 
 async def ensure_tables():
-    # users (singular → plural fix)
-    await execute("""
-    CREATE TABLE IF NOT EXISTS dashboard_users (
-        telegram_id      BIGINT PRIMARY KEY,
-        username         TEXT,
-        first_name       TEXT,
-        last_name        TEXT,
-        photo_url        TEXT,
-        role             TEXT NOT NULL DEFAULT 'dev',
-        tier             TEXT NOT NULL DEFAULT 'pro',
-        ton_address      TEXT,
-        near_account_id  TEXT,
-        near_public_key  TEXT,
-        near_connected_at TIMESTAMPTZ,
-        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    """)
+    log.info("🔧 Starting table initialization...")
+    try:
+        # users (singular → plural fix)
+        await execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_users (
+            telegram_id      BIGINT PRIMARY KEY,
+            username         TEXT,
+            first_name       TEXT,
+            last_name        TEXT,
+            photo_url        TEXT,
+            role             TEXT NOT NULL DEFAULT 'dev',
+            tier             TEXT NOT NULL DEFAULT 'pro',
+            ton_address      TEXT,
+            near_account_id  TEXT,
+            near_public_key  TEXT,
+            near_connected_at TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """)
+        log.info("✅ dashboard_users table ready")
 
-    # bots (enabled → is_active fix)
-    await execute("""
-    CREATE TABLE IF NOT EXISTS dashboard_bots (
-        id            BIGSERIAL PRIMARY KEY,
-        username      TEXT UNIQUE,
-        title         TEXT,
-        env_token_key TEXT,
-        is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-        meta          JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    """)
+        # bots (enabled → is_active fix)
+        await execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_bots (
+            id            BIGSERIAL PRIMARY KEY,
+            username      TEXT UNIQUE,
+            title         TEXT,
+            env_token_key TEXT,
+            is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+            meta          JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """)
+        log.info("✅ dashboard_bots table ready")
 
-    # endpoints for health/metrics (used by /devdash/bots later)
-    await execute("""
-    CREATE TABLE IF NOT EXISTS dashboard_bot_endpoints (
-        id           BIGSERIAL PRIMARY KEY,
-        bot_username TEXT NOT NULL REFERENCES dashboard_bots(username) ON DELETE CASCADE,
-        base_url     TEXT NOT NULL,
-        api_key      TEXT,
-        metrics_path TEXT NOT NULL DEFAULT '/internal/metrics',
-        health_path  TEXT NOT NULL DEFAULT '/internal/health',
-        is_active    BOOLEAN NOT NULL DEFAULT TRUE,
-        last_seen    TIMESTAMPTZ,
-        notes        TEXT,
-        UNIQUE(bot_username, base_url)
-    );
-    """)
+        # endpoints for health/metrics (used by /devdash/bots later)
+        await execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_bot_endpoints (
+            id           BIGSERIAL PRIMARY KEY,
+            bot_username TEXT NOT NULL REFERENCES dashboard_bots(username) ON DELETE CASCADE,
+            base_url     TEXT NOT NULL,
+            api_key      TEXT,
+            metrics_path TEXT NOT NULL DEFAULT '/internal/metrics',
+            health_path  TEXT NOT NULL DEFAULT '/internal/health',
+            is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+            last_seen    TIMESTAMPTZ,
+            notes        TEXT,
+            UNIQUE(bot_username, base_url)
+        );
+        """)
+        log.info("✅ dashboard_bot_endpoints table ready")
 
-    # watchlist for wallet pages
-    await execute("""
-    CREATE TABLE IF NOT EXISTS dashboard_watch_accounts (
-        id         BIGSERIAL PRIMARY KEY,
-        chain      TEXT NOT NULL CHECK (chain IN ('near','ton')),
-        account_id TEXT NOT NULL,
-        label      TEXT,
-        meta       JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(chain, account_id)
-    );
-    """)
+        # watchlist for wallet pages
+        await execute("""
+        CREATE TABLE IF NOT EXISTS dashboard_watch_accounts (
+            id         BIGSERIAL PRIMARY KEY,
+            chain      TEXT NOT NULL CHECK (chain IN ('near','ton')),
+            account_id TEXT NOT NULL,
+            label      TEXT,
+            meta       JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(chain, account_id)
+        );
+        """)
+        log.info("✅ dashboard_watch_accounts table ready")
 
-    # singleton settings we can edit from code (TON/NEAR defaults)
-    await execute("""
-    CREATE TABLE IF NOT EXISTS devdash_settings (
-        id                SMALLINT PRIMARY KEY DEFAULT 1,
-        near_watch_account TEXT,
-        ton_address        TEXT,
-        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    """)
+        # singleton settings we can edit from code (TON/NEAR defaults)
+        await execute("""
+        CREATE TABLE IF NOT EXISTS devdash_settings (
+            id                SMALLINT PRIMARY KEY DEFAULT 1,
+            near_watch_account TEXT,
+            ton_address        TEXT,
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """)
+        log.info("✅ devdash_settings table ready")
 
-    # defaults: ONLY emeraldcontent.near, TON hard-bound to you
-    await execute("""
-    INSERT INTO devdash_settings (id, near_watch_account, ton_address)
-    VALUES (1, 'emeraldcontent.near', 'UQBVG-RRn7l5QZkfS4yhy8M3yhu-uniUrJc4Uy4Qkom-RFo2')
-    ON CONFLICT (id) DO UPDATE
-    SET near_watch_account = EXCLUDED.near_watch_account,
-        ton_address        = EXCLUDED.ton_address,
-        updated_at         = NOW();
-    """)
+        # defaults: ONLY emeraldcontent.near, TON hard-bound to you
+        await execute("""
+        INSERT INTO devdash_settings (id, near_watch_account, ton_address)
+        VALUES (1, 'emeraldcontent.near', 'UQBVG-RRn7l5QZkfS4yhy8M3yhu-uniUrJc4Uy4Qkom-RFo2')
+        ON CONFLICT (id) DO UPDATE
+        SET near_watch_account = EXCLUDED.near_watch_account,
+            ton_address        = EXCLUDED.ton_address,
+            updated_at         = NOW();
+        """)
+        log.info("✅ devdash_settings configured")
 
-    # make sure watchlist contains the one near account we care about
-    await execute("""
-    INSERT INTO dashboard_watch_accounts (chain, account_id, label)
-    VALUES ('near', 'emeraldcontent.near', 'emeraldcontent.near')
-    ON CONFLICT (chain, account_id) DO NOTHING;
-    """)
+        # make sure watchlist contains the one near account we care about
+        await execute("""
+        INSERT INTO dashboard_watch_accounts (chain, account_id, label)
+        VALUES ('near', 'emeraldcontent.near', 'emeraldcontent.near')
+        ON CONFLICT (chain, account_id) DO NOTHING;
+        """)
+        log.info("✅ All tables initialized successfully")
+    except Exception as e:
+        log.error("❌ Error during table initialization: %s", e, exc_info=True)
 
 async def _telegram_getme(token: str) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as cx:
@@ -492,35 +509,62 @@ async def healthz(request: web.Request):
 
 async def auth_telegram(request: web.Request):
     log.info("auth_telegram hit from origin=%s ua=%s", request.headers.get("Origin"), request.headers.get("User-Agent"))
-    payload = await request.json()
+    try:
+        payload = await request.json()
+        log.info("Telegram payload keys: %s", list(payload.keys()))
+    except Exception as e:
+        log.error("Failed to parse JSON: %s", e)
+        return _json({"error": f"Invalid JSON: {str(e)}"}, request, status=400)
+    
     try:
         user = verify_telegram_auth(payload)
+        log.info("Telegram auth verified for user id: %s, username: %s", user["id"], user.get("username"))
     except Exception as e:
+        log.error("Telegram verification failed: %s", e)
         return _json({"error": str(e)}, request, status=400)
-    await execute(
-        """
-        insert into dashboard_users(telegram_id,username,first_name,last_name,photo_url)
-        values(%s,%s,%s,%s,%s)
-        on conflict(telegram_id) do update set
-          username=excluded.username,
-          first_name=excluded.first_name,
-          last_name=excluded.last_name,
-          photo_url=excluded.photo_url,
-          updated_at=now()
-        """,
-        (user["id"], user.get("username"), user.get("first_name"), user.get("last_name"), user.get("photo_url")),
-    )
-    row = await fetchrow("select role,tier from dashboard_users where telegram_id=%s", (user["id"],))
-    token = _jwt_issue(user["id"], role=row["role"] if row else "dev", tier=row["tier"] if row else "pro")
-    return _json(
-        {
-            "access_token": token,
-            "token_type": "bearer",
-            "role": row["role"] if row else "dev",
-            "tier": row["tier"] if row else "pro",
-        },
-        request,
-    )
+    
+    try:
+        await execute(
+            """
+            insert into dashboard_users(telegram_id,username,first_name,last_name,photo_url)
+            values(%s,%s,%s,%s,%s)
+            on conflict(telegram_id) do update set
+              username=excluded.username,
+              first_name=excluded.first_name,
+              last_name=excluded.last_name,
+              photo_url=excluded.photo_url,
+              updated_at=now()
+            """,
+            (user["id"], user.get("username"), user.get("first_name"), user.get("last_name"), user.get("photo_url")),
+        )
+        log.info("User inserted/updated in database: %s", user["id"])
+    except Exception as e:
+        log.error("Failed to insert user into database: %s", e)
+        return _json({"error": f"Database error: {str(e)}"}, request, status=500)
+    
+    try:
+        row = await fetchrow("select role,tier from dashboard_users where telegram_id=%s", (user["id"],))
+        if not row:
+            log.warning("User not found after insert: %s", user["id"])
+            role, tier = "dev", "pro"
+        else:
+            role, tier = row["role"], row["tier"]
+        
+        token = _jwt_issue(user["id"], role=role, tier=tier)
+        log.info("JWT token issued for user: %s", user["id"])
+        
+        return _json(
+            {
+                "access_token": token,
+                "token_type": "bearer",
+                "role": role,
+                "tier": tier,
+            },
+            request,
+        )
+    except Exception as e:
+        log.error("Failed to issue token: %s", e)
+        return _json({"error": f"Token error: {str(e)}"}, request, status=500)
 
 
 async def me(request: web.Request):
@@ -1566,5 +1610,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     app = web.Application(middlewares=[cors_middleware])
     register_devdash_routes(app)
-    app.on_startup.append(lambda app: ensure_tables())
+    app.on_startup.append(ensure_tables)
     web.run_app(app, port=int(os.getenv("PORT", 8080)))

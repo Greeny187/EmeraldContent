@@ -1012,10 +1012,12 @@ async def _state_json(cid: int) -> dict:
 
     # AI-Moderation
     try:
-        aimod_eff = db["effective_ai_mod_policy"](cid) or {}
+        # richtig: topic_id explizit mitgeben
+        aimod_eff = db["effective_ai_mod_policy"](cid, None) or {}
         aimod_cfg = db["get_ai_mod_settings"](cid, 0) or {}
         aimod = {**aimod_eff, **aimod_cfg}
-    except Exception:
+    except Exception as e:
+        logger.warning("[miniapp] aimod state failed for cid=%s: %s", cid, e)
         aimod = {}
 
     # FAQs
