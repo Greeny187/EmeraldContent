@@ -8,7 +8,7 @@ from importlib import import_module
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
-
+from bots.content import app as content_app
 try:
     from bots.content.miniapp import register_miniapp_routes as _register_content_miniapp_routes
 except Exception:
@@ -141,7 +141,9 @@ async def env_handler(_: web.Request):
 
 async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-
+    
+    content_app.init_schema()
+    
     if not BOTS or not BOTS[0]["token"]:
         raise RuntimeError("BOT1_TOKEN (Emerald Content Bot) is required.")
 
