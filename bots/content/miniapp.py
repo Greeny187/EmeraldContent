@@ -525,13 +525,16 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
             logger.info("[miniapp] AIMOD: %s", payload)
     except Exception as e:
         errors.append(f"AI-Mod: {e}")
-
-    # --- Daily Report ---
+    # Daily Report
     try:
-        if "daily_stats" in data:
+        if "report" in data and isinstance(data["report"], dict):
+            db["set_daily_stats"](cid, bool(data["report"].get("enabled")))
+        elif "daily_stats" in data:
             db["set_daily_stats"](cid, bool(data.get("daily_stats")))
     except Exception as e:
         errors.append(f"Daily-Report: {e}")
+        
+    # --- Statistik Sofort-Senden ---
     try:
         if data.get("report_send_now") and app:
             cfg = data.get("report", {}) or {}
@@ -1037,6 +1040,7 @@ async def _state_json(cid: int) -> dict:
         (enabled, start_m, end_m, del_non_admin, warn_once, tz, hard, override_until) = db["get_night_mode"](cid)
         night = {
           "enabled": bool(enabled),
+          "on": bool(enabled),
           "start": f"{start_m//60:02d}:{start_m%60:02d}",
           "end":   f"{end_m//60:02d}:{end_m%60:02d}",
           "delete_non_admin_msgs": bool(del_non_admin),
@@ -1102,7 +1106,8 @@ async def _state_json(cid: int) -> dict:
 
     # Fix: call the function from db dict, not a string
     stats = db["get_group_stats"](cid, date.today()) if "get_group_stats" in db else {}
-
+    daily_stats = db["is_daily_stats_enabled"](cid)
+    
     # Clean-Deleted aus DB lesen
     try:
         cds = db["get_clean_deleted_settings"](cid)
@@ -1116,40 +1121,43 @@ async def _state_json(cid: int) -> dict:
         "notify": bool(cds.get("notify")),
     }
     return {
-      "welcome": _media_block_with_image(cid, "welcome"),
-      "rules":   _media_block_with_image(cid, "rules"),
-      "farewell":_media_block_with_image(cid, "farewell"),
-      "captcha": captcha,
-      "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
-      "spam":    spam_block,
-      "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
-      "aimod":   aimod,
-      "faqs":    faqs,
-      "router_rules": router_rules,
-      "mood":    {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
-      "rss":     {"feeds": feeds},
-      "daily_stats": db["is_daily_stats_enabled"](cid),
-      "subscription": sub,
-      "night":   night,
-      "language": db.get("get_group_language", lambda *_: None)(cid),
-      "rewards": (
-          db.get("get_global_config", lambda *_: None)("rewards")
-          or {
-                "enabled": False,
-                "mode": "claim",          # claim = User holt sich die Tokens
-                "token": "EMRD",
-                "network": "TON",
-                "decimals": 9,
-                "rate_answer": 0.02,      # EMRD pro Antwort (Vorschlag)
-                "rate_helpful": 0.10,     # EMRD pro „Helpful“-Vote (Vorschlag)
-                "cap_user": 10,           # max. 10 EMRD/Tag pro User
-                "cap_chat": 150,
-                "min_claim": 20.0,       # ab 20 EMRD claimbar
-                "cooldown_days": 7       # max. 1 Claim pro Woche
-            }
-      ),
-      "report": {"enabled": True, "stats": stats},
-      "clean_deleted": clean_deleted,
+        "welcome": _media_block_with_image(cid, "welcome"),
+        "rules":   _media_block_with_image(cid, "rules"),
+        "farewell":_media_block_with_image(cid, "farewell"),
+        "captcha": captcha,
+        "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
+        "spam":    spam_block,
+        "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
+        "aimod":   aimod,
+        "faqs":    faqs,
+        "router_rules": router_rules,
+        "mood":    {"topic": (db["get_mood_topic"](cid) or 0), "question": db["get_mood_question"](cid)},
+        "rss":     {"feeds": feeds},
+        "report": {
+            "enabled": bool(daily_stats),
+            "stats": stats,   # falls du die Statistiken dort anzeigen willst
+        },
+        "daily_stats": bool(daily_stats),
+        "subscription": sub,
+        "night":   night,
+        "language": db.get("get_group_language", lambda *_: None)(cid),
+        "rewards": (
+            db.get("get_global_config", lambda *_: None)("rewards")
+            or {
+                    "enabled": False,
+                    "mode": "claim",          # claim = User holt sich die Tokens
+                    "token": "EMRD",
+                    "network": "TON",
+                    "decimals": 9,
+                    "rate_answer": 0.02,      # EMRD pro Antwort (Vorschlag)
+                    "rate_helpful": 0.10,     # EMRD pro „Helpful“-Vote (Vorschlag)
+                    "cap_user": 10,           # max. 10 EMRD/Tag pro User
+                    "cap_chat": 150,
+                    "min_claim": 20.0,       # ab 20 EMRD claimbar
+                    "cooldown_days": 7       # max. 1 Claim pro Woche
+                }
+        ),
+        "clean_deleted": clean_deleted,
     }
 
 
