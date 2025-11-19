@@ -1,5 +1,6 @@
 from telegram.ext import Application
 from . import handlers, rss, mood, jobs as content_jobs
+from . import payment_handlers
 import os
 import logging
 from .miniapp import register_miniapp
@@ -27,6 +28,10 @@ def register(app):
 
     if hasattr(rss, "register_rss"):
         rss.register_rss(app)
+    
+    # Registriere Payment Handlers (PRO Subscriptions)
+    if hasattr(payment_handlers, "register_payment_handlers"):
+        payment_handlers.register_payment_handlers(app)
 
     register_miniapp(app)  # Bot-Befehle registrieren
 
@@ -36,6 +41,9 @@ def register(app):
         if webapp:
             from .miniapp import register_miniapp_routes
             register_miniapp_routes(webapp, app)
+            # Registriere auch Payment Webhook Routes
+            if hasattr(payment_handlers, "register_payment_routes"):
+                payment_handlers.register_payment_routes(webapp)
     except Exception as e:
         logger.warning(f"Could not register miniapp routes: {e}")
     

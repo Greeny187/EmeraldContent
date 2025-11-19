@@ -1,0 +1,264 @@
+"""
+Payment handlers für miniapp - Coinbase Commerce, WalletConnect, etc.
+"""
+import logging
+import asyncio
+import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from aiohttp import web
+import httpx
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler, Application
+
+logger = logging.getLogger(__name__)
+
+# Imports from shared
+try:
+    from shared.payments import (
+        create_checkout, create_coinbase_charge, verify_coinbase_webhook,
+        handle_webhook, PROVIDERS, PLANS
+    )
+except ImportError:
+    logger.warning("[payment_handlers] Could not import shared.payments")
+    def create_checkout(*args, **kwargs): return {}
+    def create_coinbase_charge(*args, **kwargs): return {}
+    def verify_coinbase_webhook(*args, **kwargs): return False
+    def handle_webhook(*args, **kwargs): return False
+
+async def handle_pro_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback für PRO Payment Buttons aus Miniapp.
+    Pattern: pay:<provider>:<plan_key>
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        parts = query.data.split(":")
+        if len(parts) < 3:
+            await query.answer("❌ Ungültige Anfrage", show_alert=True)
+            return
+        
+        provider = parts[1]  # coinbase, paypal, walletconnect_ton, etc.
+        plan_key = parts[2]  # pro_monthly, pro_yearly
+        
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id if query.message else None
+        
+        logger.info(f"[payment] User {user_id} requesting {provider} payment for {plan_key}")
+        
+        # Webhook URL für Coinbase
+        webhook_url = context.bot_data.get("webhook_base_url", "https://emeraldcontent.com/webhook")
+        
+        # Erstelle Checkout
+        result = create_checkout(chat_id or user_id, provider, plan_key, user_id, webhook_url)
+        
+        if "error" in result:
+            logger.warning(f"[payment] Checkout failed: {result['error']}")
+            await query.answer(f"❌ {result['error']}", show_alert=True)
+            return
+        
+        # Provider-spezifische Behandlung
+        if provider == "coinbase":
+            # Starte async Charge-Erstellung
+            asyncio.create_task(
+                _handle_coinbase_payment(query, result, context)
+            )
+        
+        elif provider in ("walletconnect_ton", "walletconnect_near"):
+            # Deep Link zu Wallet
+            uri = result.get("uri", "")
+            if uri:
+                await query.edit_message_text(
+                    text=f"🔗 **Zahlung mit {PROVIDERS[provider]['label']}**\n\n"
+                         f"Plan: {PLANS.get(plan_key, {}).get('label', plan_key)}\n"
+                         f"Betrag: €{result.get('price', 'N/A')}\n\n"
+                         f"👆 Tippe auf den Link oben, um Zahlung zu initiieren:\n"
+                         f"`{uri}`\n\n"
+                         f"Order ID: `{result.get('order_id')}`",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Aktualisieren", callback_data=f"pay:status")],
+                    ]),
+                    parse_mode="Markdown"
+                )
+            else:
+                await query.answer("❌ Wallet-Link konnte nicht erstellt werden", show_alert=True)
+        
+        elif provider in ("paypal", "stars", "binance", "bybit"):
+            # External Payment Link
+            url = result.get("url", "")
+            if url:
+                await query.edit_message_text(
+                    text=f"🔗 **Zahlung via {PROVIDERS.get(provider, {}).get('label', provider)}**\n\n"
+                         f"Plan: {PLANS.get(plan_key, {}).get('label', plan_key)}\n"
+                         f"Betrag: €{result.get('price', 'N/A')}\n\n"
+                         f"👉 [Zur Zahlungsseite]({url})\n\n"
+                         f"Order ID: `{result.get('order_id')}`",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔗 Zahlung starten", url=url)],
+                        [InlineKeyboardButton("🔄 Status prüfen", callback_data="pay:status")],
+                    ]),
+                    parse_mode="Markdown"
+                )
+            else:
+                await query.answer("❌ Zahlungs-Link nicht verfügbar", show_alert=True)
+        
+        else:
+            await query.answer(f"❌ Provider {provider} wird nicht unterstützt", show_alert=True)
+    
+    except Exception as e:
+        logger.exception(f"[payment] Callback error: {e}")
+        await query.answer(f"❌ Fehler: {str(e)[:50]}", show_alert=True)
+
+async def _handle_coinbase_payment(query, checkout_result, context):
+    """
+    Erstelle Coinbase Commerce Charge und sende User zum Checkout.
+    """
+    try:
+        order_id = checkout_result.get("order_id")
+        price = checkout_result.get("price")
+        plan_key = checkout_result.get("price")  # gleich wie oben, aber semantischer
+        
+        logger.info(f"[coinbase] Creating charge for order {order_id}...")
+        
+        # Async Charge erstellen
+        charge_result = await create_coinbase_charge(
+            order_id=order_id,
+            price_eur=price,
+            description=f"Emerald PRO {plan_key}",
+            webhook_url=context.bot_data.get("webhook_base_url", "https://emeraldcontent.com/webhook")
+        )
+        
+        if "error" in charge_result:
+            logger.error(f"[coinbase] Charge creation failed: {charge_result['error']}")
+            await query.answer(f"❌ Coinbase Fehler: {charge_result['error']}", show_alert=True)
+            return
+        
+        hosted_url = charge_result.get("hosted_url")
+        charge_id = charge_result.get("charge_id")
+        
+        logger.info(f"[coinbase] Charge {charge_id} created, redirecting to {hosted_url}")
+        
+        await query.edit_message_text(
+            text=f"💳 **Coinbase Commerce Zahlung**\n\n"
+                 f"Betrag: €{price}\n"
+                 f"Order ID: `{order_id}`\n\n"
+                 f"👉 [Zur Zahlung bei Coinbase]({hosted_url})\n\n"
+                 f"Die Zahlung wird nach Abschluss automatisch aktiviert.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Zahlung starten", url=hosted_url)],
+                [InlineKeyboardButton("🔄 Status prüfen", callback_data="pay:status")],
+            ]),
+            parse_mode="Markdown"
+        )
+    
+    except Exception as e:
+        logger.exception(f"[coinbase] Payment handling error: {e}")
+        await query.answer(f"❌ Fehler bei Zahlung: {str(e)[:50]}", show_alert=True)
+
+async def handle_pro_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Zeige PRO Payment Status des Users.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id if query.message else None
+    
+    try:
+        # TODO: Hole Abo-Status aus DB
+        await query.edit_message_text(
+            text=f"📋 **Dein PRO Status**\n\n"
+                 f"User ID: {user_id}\n"
+                 f"Chat ID: {chat_id}\n\n"
+                 f"Status: ℹ️ Keine Subscription aktiv\n\n"
+                 f"Wähle einen Plan um zu upgraden.",
+            reply_markup=None
+        )
+    except Exception as e:
+        logger.warning(f"[payment] Status check error: {e}")
+        await query.answer("❌ Fehler beim Status abrufen", show_alert=True)
+
+# === Webhook Handler für externe Payment-Provider ===
+
+async def route_webhook_coinbase(request: web.Request) -> web.Response:
+    """
+    Coinbase Commerce Webhook Handler.
+    POST /webhooks/coinbase mit JSON payload
+    """
+    try:
+        request_body = await request.text()
+        signature = request.headers.get("X-CC-Webhook-Signature", "")
+        
+        if not verify_coinbase_webhook(request_body, signature):
+            logger.warning("[webhook] Invalid Coinbase signature")
+            return web.Response(status=401, text="Invalid signature")
+        
+        data = json.loads(request_body)
+        event = data.get("event", {})
+        event_type = event.get("type", "")
+        charge = event.get("data", {})
+        
+        logger.info(f"[coinbase_webhook] Event: {event_type}, Charge: {charge.get('id')}")
+        
+        # Handle completed charge
+        if event_type == "charge:confirmed" or event_type == "charge:completed":
+            ok = handle_webhook("coinbase", {
+                "order_id": charge.get("metadata", {}).get("order_id"),
+                "status": "completed",
+                "charge_id": charge.get("id"),
+                "amount": charge.get("amount", {}).get("amount")
+            })
+            
+            if ok:
+                logger.info(f"[coinbase_webhook] Payment processed: {charge.get('id')}")
+                return web.Response(status=200, text="OK")
+            else:
+                logger.warning(f"[coinbase_webhook] Failed to process: {charge.get('id')}")
+                return web.Response(status=500, text="Failed to process")
+        
+        return web.Response(status=200, text="OK")
+    
+    except Exception as e:
+        logger.exception(f"[coinbase_webhook] Error: {e}")
+        return web.Response(status=500, text="Error")
+
+async def route_webhook_generic(request: web.Request) -> web.Response:
+    """
+    Generic webhook handler für andere Payment-Provider.
+    """
+    try:
+        provider = request.match_info.get("provider", "unknown")
+        data = await request.json() if request.content_type == "application/json" else {}
+        
+        logger.info(f"[webhook] {provider}: {list(data.keys())}")
+        
+        ok = handle_webhook(provider, data)
+        return web.Response(status=200 if ok else 400, text="OK" if ok else "Failed")
+    
+    except Exception as e:
+        logger.exception(f"[webhook] Error: {e}")
+        return web.Response(status=500, text="Error")
+
+# === Registrierung ===
+
+def register_payment_handlers(app: Application):
+    """
+    Registriere Payment Callbacks in der Telegram App.
+    """
+    app.add_handler(CallbackQueryHandler(handle_pro_payment_callback, pattern=r"^pay:"), group=-2)
+    app.add_handler(CallbackQueryHandler(handle_pro_status_callback, pattern=r"^pay:status$"), group=-2)
+
+def register_payment_routes(webapp: web.Application):
+    """
+    Registriere Webhook Routes in der aiohttp Web App.
+    """
+    from aiohttp import web
+    
+    webapp.router.add_post("/webhooks/coinbase", route_webhook_coinbase)
+    webapp.router.add_post("/webhooks/{provider}", route_webhook_generic)
+    
+    logger.info("[payment_handlers] Payment routes registered")

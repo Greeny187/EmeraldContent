@@ -76,30 +76,37 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
     Entfernt geloeschte Accounts per ban+unban.
     - Entfernt DB-Eintrag NUR, wenn Kick erfolgreich war ODER der User nicht (mehr) im Chat ist.
     - Optional: demote_admins=True versucht geloeschte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
+    Logging: detailliert alle Operationen und Fehler für Debugging.
     """
+    logger.info(f"[clean_delete] Starting cleanup task for chat {chat_id} (dry_run={dry_run}, demote_admins={demote_admins})")
+    
     # Permission check at start
     try:
         bot_member = await bot.get_chat_member(chat_id, bot.id)
+        logger.debug(f"[clean_delete] Bot permissions: can_restrict={bot_member.can_restrict_members}, can_promote={bot_member.can_promote_members}")
         
         if not bot_member.can_restrict_members or not bot_member.can_promote_members:
-            logger.warning(f"[clean_delete] Bot has insufficient permissions in {chat_id}: "
-                         f"can_restrict_members={bot_member.can_restrict_members}, "
-                         f"can_promote_members={bot_member.can_promote_members}")
+            logger.warning(f"[clean_delete] ABORT in {chat_id}: insufficient permissions "
+                         f"(can_restrict={bot_member.can_restrict_members}, can_promote={bot_member.can_promote_members})")
             return 0
     except Exception as e:
-        logger.error(f"[clean_delete] Failed to get bot permissions in {chat_id}: {e}")
+        logger.error(f"[clean_delete] ABORT in {chat_id}: failed to get permissions: {type(e).__name__}: {e}")
         return 0
     
     user_ids = list_members(chat_id)
-    logger.info(f"[clean_delete] Starting cleanup for {chat_id}, found {len(user_ids)} members")
+    logger.info(f"[clean_delete] Scanning {len(user_ids)} members in {chat_id} for deleted accounts...")
     removed = 0
 
     for uid in user_ids:
         member = await _get_member(bot, chat_id, uid)
         if member is None:
             # Nicht (mehr) im Chat -> DB aufrÃ¤umen
-            try: remove_member(chat_id, uid)
-            except Exception: pass
+            logger.debug(f"[clean_delete] User {uid} not in chat anymore, cleaning DB...")
+            try: 
+                remove_member(chat_id, uid)
+                logger.debug(f"[clean_delete] Removed {uid} from DB")
+            except Exception as e: 
+                logger.debug(f"[clean_delete] Failed to remove {uid} from DB: {e}")
             continue
 
         # GelÃ¶schten Status erkennen (robuster)
@@ -109,8 +116,11 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
         if member.status in ("administrator", "creator"):
             if not looks_del or not demote_admins or member.status == "creator":
                 # Creator (Owner) nie anfassen; Admins nur wenn demote_admins=True
+                if looks_del:
+                    logger.debug(f"[clean_delete] User {uid} is deleted {member.status} but demote_admins={demote_admins}, skipping")
                 continue
             # Demote versuchen (alle Rechte false)
+            logger.info(f"[clean_delete] Demoting deleted {member.status} {uid}...")
             try:
                 await bot.promote_chat_member(
                     chat_id, uid,
@@ -121,39 +131,48 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
                 )
                 # Status neu laden
                 member = await _get_member(bot, chat_id, uid)
+                logger.info(f"[clean_delete] Successfully demoted {uid}")
             except Exception as e:
-                logger.warning(f"Demote admin {uid} in {chat_id} fehlgeschlagen: {e}")
+                logger.warning(f"[clean_delete] Demote failed for {uid}: {type(e).__name__}: {e}")
                 continue  # ohne Demote kein Kick mÃ¶glich
 
         if not looks_del:
+            logger.debug(f"[clean_delete] User {uid} does not look deleted, skipping")
             continue
 
         if dry_run:
+            logger.info(f"[clean_delete] DRY_RUN: Would remove deleted account {uid}")
             removed += 1
             continue
 
         kicked = False
+        logger.info(f"[clean_delete] Banning deleted account {uid}...")
         try:
             await bot.ban_chat_member(chat_id, uid)
+            logger.debug(f"[clean_delete] Banned {uid}, now unbanning...")
             try:
                 await bot.unban_chat_member(chat_id, uid, only_if_banned=True)
-            except BadRequest:
-                pass
+                logger.debug(f"[clean_delete] Unbanned {uid}")
+            except BadRequest as ube:
+                logger.debug(f"[clean_delete] Unban failed (might be ok): {ube}")
             kicked = True
             removed += 1
+            logger.info(f"[clean_delete] Successfully removed deleted account {uid} ({removed} total so far)")
         except Forbidden as e:
-            logger.warning(f"Keine Rechte um {uid} zu entfernen in {chat_id}: {e}")
+            logger.warning(f"[clean_delete] Permission denied removing {uid}: {e}")
         except BadRequest as e:
-            logger.warning(f"Ban/Unban fehlgeschlagen fÃ¼r {uid} in {chat_id}: {e}")
+            logger.warning(f"[clean_delete] Bad request removing {uid}: {e}")
 
         # DB nur dann aufrÃ¤umen, wenn wirklich drauÃŸen
         try:
             member_after = await _get_member(bot, chat_id, uid)
             if kicked or member_after is None or getattr(member_after, "status", "") in ("left", "kicked"):
+                logger.debug(f"[clean_delete] Cleaning DB for {uid} (kicked={kicked}, status after={getattr(member_after, 'status', 'N/A')})")
                 remove_member(chat_id, uid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[clean_delete] Failed to clean DB for {uid}: {e}")
 
+    logger.info(f"[clean_delete] Cleanup complete for {chat_id}: removed {removed} deleted accounts (dry_run={dry_run})")
     return removed
 
 def tr(text: str, lang: str) -> str:

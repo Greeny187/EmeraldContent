@@ -153,8 +153,9 @@ async def debug_setmoodtopic(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"DEBUG: setmoodtopic wurde aufgerufen in Chat {update.effective_chat.id}")
     
 def register_mood(app):
-    # Commands in Gruppe 0 (hÃ¶here PrioritÃ¤t)
-    app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=0)
-    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=0)
-    app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_"), group=0)
+    # Commands und Callbacks in Gruppe -3 (höchste Priorität, BEVOR andere Handler greifen)
+    app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=-3)
+    app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=-3)
+    # WICHTIG: CallbackQueryHandler MUSS FRÜH registriert sein (gruppe -3), bevor andere patterns greifen
+    app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_"), group=-3)
 

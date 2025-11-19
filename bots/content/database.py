@@ -1380,10 +1380,12 @@ def purge_deleted_members(cur, chat_id: Optional[int] = None):
 def log_member_event(cur, chat_id: int, user_id: int, event_type: str):
     """
     Log a member event (join, leave, kick) for statistics aggregation.
+    Uses schema from statistic.py: group_id, user_id, event, event_time (not chat_id, event_type, ts)
     event_type: 'join', 'leave', 'kick'
     """
+    # Nutze 'event' spalte (nicht event_type) und 'group_id' (nicht chat_id) für Konsistenz mit statistic.py
     cur.execute("""
-        INSERT INTO member_events (chat_id, user_id, event_type, ts)
+        INSERT INTO member_events (group_id, user_id, event, event_time)
         VALUES (%s, %s, %s, NOW());
     """, (chat_id, user_id, event_type))
 
@@ -1637,14 +1639,14 @@ def compute_agg_group_day(cur, chat_id:int, stat_date):
         """, (chat_id, d0, d1))
         messages_total, active_users = cur.fetchone() or (0,0)
 
-    # member events
+    # member events - nutze 'event' spalte und 'group_id' (vom statistic.py schema)
     cur.execute("""
         SELECT
-          COUNT(*) FILTER (WHERE event_type='join')  AS joins,
-          COUNT(*) FILTER (WHERE event_type='leave') AS leaves,
-          COUNT(*) FILTER (WHERE event_type='kick')  AS kicks
+          COUNT(*) FILTER (WHERE event='join')  AS joins,
+          COUNT(*) FILTER (WHERE event='leave') AS leaves,
+          COUNT(*) FILTER (WHERE event='kick')  AS kicks
         FROM member_events
-        WHERE chat_id=%s AND ts >= %s AND ts < %s
+        WHERE group_id=%s AND event_time >= %s AND event_time < %s
     """, (chat_id, d0, d1))
     joins, leaves, kicks = cur.fetchone() or (0,0,0)
 
