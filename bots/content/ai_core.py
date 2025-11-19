@@ -5,11 +5,11 @@ from typing import Optional, Dict, Any
 from .database import is_pro_chat, get_ai_settings, effective_ai_mod_policy  # vorhandene DB-Funktionen
 
 log = logging.getLogger(__name__)
-_OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
+_OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 def ai_available() -> bool:
-    """True, wenn ein OpenAI-Key vorhanden ist (reine VerfÃ¼gbarkeitsprÃ¼fung)."""
     return bool(_OPENAI_KEY)
+
 
 def _client():
     from openai import OpenAI  # lazy import

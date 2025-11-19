@@ -412,7 +412,17 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     # --- Welcome ---
     try:
         if "welcome" in data:
-            await _upsert_media("welcome", data.get("welcome") or {})
+            w_data = data.get("welcome") or {}
+            await _upsert_media("welcome", w_data)
+            # Handle captcha flag if present in welcome data
+            if "captcha" in w_data:
+                try:
+                    old_enabled, old_type, old_behavior = db["get_captcha_settings"](cid)
+                except Exception:
+                    old_enabled, old_type, old_behavior = (False, "button", "kick")
+                enabled = bool(w_data.get("captcha"))
+                db["set_captcha_settings"](cid, enabled, old_type or "button", old_behavior or "kick")
+                logger.info(f"[miniapp] Captcha from welcome set cid={cid} enabled={enabled}")
     except Exception as e:
         errors.append(f"Welcome: {e}")
 
@@ -578,6 +588,13 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         logger.error(f"[miniapp] Fehler beim Senden der Statistik: {e}")
     # --- Mood ---
     try:
+        mood = data.get("mood") or {}
+        if mood:
+            question = (mood.get("question") or "Wie ist deine Stimmung?").strip()
+            topic_id = _topic_id_or_none(mood.get("topic", 0))
+            db["set_mood_question"](cid, question)
+            if topic_id:
+                db["set_mood_topic"](cid, topic_id)
         if data.get("mood_send_now") and app:
             question = db["get_mood_question"](cid) or "Wie ist deine Stimmung?"
             topic_id = db["get_mood_topic"](cid) or None
@@ -621,14 +638,22 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
             )
         if data.get("clean_delete_now"):
             from .utils import clean_delete_accounts_for_chat
-            asyncio.create_task(clean_delete_accounts_for_chat(cid, app.bot))
+            
+            async def _clean_delete_task():
+                try:
+                    result = await clean_delete_accounts_for_chat(cid, app.bot)
+                    logger.info(f"[miniapp] Clean delete completed for cid={cid}, removed={result}")
+                except Exception as e:
+                    logger.error(f"[miniapp] Clean delete failed for cid={cid}: {e}", exc_info=True)
+            
+            asyncio.create_task(_clean_delete_task())
     except Exception as e:
         errors.append(f"CleanDelete: {e}")
     
     # --- Nachtmodus ---
     try:
         night = data.get("night") or {}
-        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night) or ("override_until" in night):
+        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night) or ("override_until" in night) or ("write_lock" in night) or ("lock_message" in night):
             def _hm_to_min(s, default):
                 try:
                     h, m = str(s or '').split(':'); return int(h)*60 + int(m)
@@ -657,6 +682,9 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                         # Fallback: lieber None als kaputter String
                         override_until = None
 
+            write_lock = bool(night.get("write_lock"))
+            lock_message = (night.get("lock_message") or "Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.").strip()
+
             db["set_night_mode"](cid,
                 enabled=enabled,
                 start_minute=start_m,
@@ -665,7 +693,9 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
                 warn_once=night.get("warn_once"),
                 timezone=tz,
                 hard_mode=night.get("hard_mode"),
-                override_until=override_until
+                override_until=override_until,
+                write_lock=write_lock,
+                lock_message=lock_message
             )
     except Exception as e:
         errors.append(f"Nachtmodus: {e}")
@@ -695,12 +725,55 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"Pro-Abo: {e}")
 
+    # --- PRO Payment Config ---
+    try:
+        pro = data.get("pro") or {}
+        if pro:
+            # Speichere Zahlungskonfiguration als globale PRO-Settings
+            cfg = db.get("get_global_config", lambda *_: {})(f"pro_{cid}") or {}
+            # Update mit neuen Werten
+            if "payment_ton" in pro:
+                cfg["payment_ton"] = bool(pro["payment_ton"])
+            if "payment_ton_wallet" in pro:
+                cfg["payment_ton_wallet"] = (pro.get("payment_ton_wallet") or "").strip()
+            if "payment_near" in pro:
+                cfg["payment_near"] = bool(pro["payment_near"])
+            if "payment_near_wallet" in pro:
+                cfg["payment_near_wallet"] = (pro.get("payment_near_wallet") or "emeraldcontent.near").strip()
+            if "payment_coinbase" in pro:
+                cfg["payment_coinbase"] = bool(pro["payment_coinbase"])
+            if "payment_coinbase_key" in pro:
+                cfg["payment_coinbase_key"] = (pro.get("payment_coinbase_key") or "").strip()
+            if "payment_paypal" in pro:
+                cfg["payment_paypal"] = bool(pro["payment_paypal"])
+            if "payment_paypal_email" in pro:
+                cfg["payment_paypal_email"] = (pro.get("payment_paypal_email") or "emerald@mail.de").strip()
+            if "price_1m" in pro:
+                cfg["price_1m"] = float(pro.get("price_1m") or 9.99)
+            if "price_3m" in pro:
+                cfg["price_3m"] = float(pro.get("price_3m") or 24.99)
+            if "price_12m" in pro:
+                cfg["price_12m"] = float(pro.get("price_12m") or 79.99)
+            if "description" in pro:
+                cfg["description"] = (pro.get("description") or "").strip()
+            db.get("set_global_config", lambda *_: None)(f"pro_{cid}", cfg)
+            logger.info(f"[miniapp] PRO config saved for cid={cid}")
+    except Exception as e:
+        errors.append(f"PRO Payment: {e}")
+
         # --- Clean Deleted Accounts (Einmal-Aktion) ---
     try:
         if data.get("clean_delete_now"):
             from .utils import clean_delete_accounts_for_chat
-            # nicht blockieren
-            asyncio.create_task(clean_delete_accounts_for_chat(cid, app.bot))
+            
+            async def _clean_delete_task_route():
+                try:
+                    result = await clean_delete_accounts_for_chat(cid, app.bot)
+                    logger.info(f"[miniapp] Clean delete completed for cid={cid}, removed={result}")
+                except Exception as e:
+                    logger.error(f"[miniapp] Clean delete failed for cid={cid}: {e}", exc_info=True)
+            
+            asyncio.create_task(_clean_delete_task_route())
     except Exception as e:
         errors.append(f"CleanDelete: {e}")
 
@@ -1039,7 +1112,8 @@ async def _state_json(cid: int) -> dict:
 
     # Night mode
     try:
-        (enabled, start_m, end_m, del_non_admin, warn_once, tz, hard, override_until) = db["get_night_mode"](cid)
+        night_data = db["get_night_mode"](cid)
+        enabled, start_m, end_m, del_non_admin, warn_once, tz, hard, override_until, write_lock, lock_message = night_data
         night = {
           "enabled": bool(enabled),
           "on": bool(enabled),
@@ -1050,9 +1124,11 @@ async def _state_json(cid: int) -> dict:
           "timezone": tz,
           "hard_mode": bool(hard),
           "override_until": override_until.isoformat() if override_until else None,
+          "write_lock": bool(write_lock),
+          "lock_message": lock_message or "Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.",
         }
     except Exception:
-        night = {"enabled": False, "start": "22:00", "end":"07:00"}
+        night = {"enabled": False, "start": "22:00", "end":"07:00", "write_lock": False, "lock_message": ""}
 
     spam_block = {
         "on":           bool(eff.get("admins_only") or link.get("only_admin_links")),

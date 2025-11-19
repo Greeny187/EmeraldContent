@@ -73,11 +73,25 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
                                          dry_run: bool = False,
                                          demote_admins: bool = False) -> int:
     """
-    Entfernt gelÃ¶schte Accounts per ban+unban.
+    Entfernt geloeschte Accounts per ban+unban.
     - Entfernt DB-Eintrag NUR, wenn Kick erfolgreich war ODER der User nicht (mehr) im Chat ist.
-    - Optional: demote_admins=True versucht gelÃ¶schte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
+    - Optional: demote_admins=True versucht geloeschte Admins zu demoten (erfordert Bot-Recht 'can_promote_members').
     """
+    # Permission check at start
+    try:
+        bot_member = await bot.get_chat_member(chat_id, bot.id)
+        
+        if not bot_member.can_restrict_members or not bot_member.can_promote_members:
+            logger.warning(f"[clean_delete] Bot has insufficient permissions in {chat_id}: "
+                         f"can_restrict_members={bot_member.can_restrict_members}, "
+                         f"can_promote_members={bot_member.can_promote_members}")
+            return 0
+    except Exception as e:
+        logger.error(f"[clean_delete] Failed to get bot permissions in {chat_id}: {e}")
+        return 0
+    
     user_ids = list_members(chat_id)
+    logger.info(f"[clean_delete] Starting cleanup for {chat_id}, found {len(user_ids)} members")
     removed = 0
 
     for uid in user_ids:

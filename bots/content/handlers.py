@@ -29,7 +29,7 @@ from .database import (register_group, get_registered_groups, get_rules, set_wel
     add_topic_router_rule, list_topic_router_rules, delete_topic_router_rule, get_effective_link_policy, is_pro_chat,
     toggle_topic_router_rule, get_matching_router_rule, upsert_forum_topic, rename_forum_topic, find_faq_answer, log_auto_response, get_ai_settings,
     effective_spam_policy, count_topic_user_messages_today, decay_strikes,
-    set_user_wallet, get_user_wallet,
+    set_user_wallet, get_user_wallet, log_member_event,
     effective_ai_mod_policy, log_ai_mod_action, count_ai_hits_today, add_strike_points, get_strike_points, top_strike_users, decay_strikes
     )
 from zoneinfo import ZoneInfo
@@ -1173,6 +1173,7 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
                     add_member(chat_id, user.id)
+                    log_member_event(chat_id, user.id, "join")
                 except Exception:
                     pass
 
@@ -1212,6 +1213,7 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 remove_member(chat_id, user.id)
+                log_member_event(chat_id, user.id, "leave")
             except Exception:
                 pass
             return
@@ -1237,6 +1239,7 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 add_member(chat_id, user.id)
+                log_member_event(chat_id, user.id, "join")
             except Exception:
                 pass
             return
@@ -1253,6 +1256,9 @@ async def track_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 remove_member(chat_id, user.id)
+                # Log leave vs kick based on status
+                event_type = "kick" if new_s == ChatMemberStatus.KICKED else "leave"
+                log_member_event(chat_id, user.id, event_type)
             except Exception:
                 pass
             return

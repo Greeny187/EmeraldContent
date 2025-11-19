@@ -558,7 +558,9 @@ def init_db(cur):
             timezone TEXT DEFAULT 'Europe/Berlin',
             -- Neu: Spalten, die sonst nur Migration ergänzt
             hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
-            override_until TIMESTAMPTZ NULL
+            override_until TIMESTAMPTZ NULL,
+            write_lock BOOLEAN DEFAULT FALSE,
+            lock_message TEXT DEFAULT 'Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.'
         );
         """
     )
@@ -1373,6 +1375,17 @@ def purge_deleted_members(cur, chat_id: Optional[int] = None):
             "DELETE FROM members WHERE chat_id = %s AND is_deleted = TRUE;",
             (chat_id,)
         )
+
+@_with_cursor
+def log_member_event(cur, chat_id: int, user_id: int, event_type: str):
+    """
+    Log a member event (join, leave, kick) for statistics aggregation.
+    event_type: 'join', 'leave', 'kick'
+    """
+    cur.execute("""
+        INSERT INTO member_events (chat_id, user_id, event_type, ts)
+        VALUES (%s, %s, %s, NOW());
+    """, (chat_id, user_id, event_type))
 
 @_with_cursor
 def ensure_forum_topics_schema(cur):
@@ -2652,13 +2665,14 @@ def set_group_language(cur, chat_id: int, lang: str):
 def get_night_mode(cur, chat_id: int):
     cur.execute("""
       SELECT enabled, start_minute, end_minute, delete_non_admin_msgs, warn_once, timezone, 
-             COALESCE(hard_mode, FALSE), override_until
+             COALESCE(hard_mode, FALSE), override_until, COALESCE(write_lock, FALSE), 
+             COALESCE(lock_message, 'Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.')
         FROM night_mode WHERE chat_id = %s;
     """, (chat_id,))
     row = cur.fetchone()
     if not row:
-        # Defaults wie im Schema
-        return (False, 1320, 360, True, True, 'Europe/Berlin', False, None)
+        # Defaults wie im Schema (10 Werte)
+        return (False, 1320, 360, True, True, 'Europe/Berlin', False, None, False, 'Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.')
     return row
 
 @_with_cursor
@@ -2670,7 +2684,9 @@ def set_night_mode(cur, chat_id: int,
                    warn_once=None,
                    timezone=None,
                    hard_mode=None,
-                   override_until=None):
+                   override_until=None,
+                   write_lock=None,
+                   lock_message=None):
     parts, params = [], []
     if enabled is not None: parts.append("enabled=%s"); params.append(enabled)
     if start_minute is not None: parts.append("start_minute=%s"); params.append(start_minute)
@@ -2680,6 +2696,8 @@ def set_night_mode(cur, chat_id: int,
     if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
     if hard_mode is not None: parts.append("hard_mode=%s"); params.append(hard_mode)
     if override_until is not None: parts.append("override_until=%s"); params.append(override_until)
+    if write_lock is not None: parts.append("write_lock=%s"); params.append(write_lock)
+    if lock_message is not None: parts.append("lock_message=%s"); params.append(lock_message)
 
     if not parts:
         return
@@ -2881,7 +2899,9 @@ def migrate_db():
         cur.execute("""
             ALTER TABLE night_mode
             ADD COLUMN IF NOT EXISTS hard_mode BOOLEAN NOT NULL DEFAULT FALSE,
-            ADD COLUMN IF NOT EXISTS override_until TIMESTAMPTZ NULL;
+            ADD COLUMN IF NOT EXISTS override_until TIMESTAMPTZ NULL,
+            ADD COLUMN IF NOT EXISTS write_lock BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS lock_message TEXT DEFAULT 'Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.';
         """)
         
         cur.execute("ALTER TABLE group_settings ADD COLUMN IF NOT EXISTS ai_faq_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
