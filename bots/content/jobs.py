@@ -396,9 +396,15 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id, _ in get_registered_groups():
         try:
-            enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = get_night_mode(chat_id)
-        except Exception:
+            night_data = get_night_mode(chat_id)
+            if not night_data or len(night_data) < 8:
+                logger.debug(f"[night_mode_job] Ungültige Nachtmodus-Daten für {chat_id}: {night_data}")
+                continue
+            enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = night_data[:8]
+        except Exception as e:
+            logger.warning(f"[night_mode_job] Fehler beim Laden von {chat_id}: {e}")
             continue
+        
         if not enabled:
             continue
 
@@ -420,6 +426,7 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
         # Zustandswechsel?
         if active and prev != "active":
             context.application.bot_data[state_key] = "active"
+            logger.info(f"[night_mode_job] Nachtmodus AKTIV für {chat_id}, warn_once={warn_once}, hard_mode={hard_mode}")
             if hard_mode:
                 await _apply_hard_permissions(context, chat_id, True)
             if warn_once:
@@ -428,19 +435,24 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     until_txt = end_t.strftime("%H:%M")
                 try:
-                    await bot.send_message(chat_id, f"🌙 Nachtmodus aktiv bis {until_txt} ({tz.key}).")
-                except Exception:
-                    pass
+                    msg = f"🌙 Nachtmodus aktiv bis {until_txt} ({tz.key})."
+                    await bot.send_message(chat_id, msg)
+                    logger.info(f"[night_mode_job] Nachricht gesendet an {chat_id}: {msg}")
+                except Exception as e:
+                    logger.error(f"[night_mode_job] Fehler beim Senden an {chat_id}: {e}")
 
         if (not active) and prev == "active":
             context.application.bot_data[state_key] = "inactive"
+            logger.info(f"[night_mode_job] Nachtmodus INAKTIV für {chat_id}, warn_once={warn_once}, hard_mode={hard_mode}")
             if hard_mode:
                 await _apply_hard_permissions(context, chat_id, False)
             if warn_once:
                 try:
-                    await bot.send_message(chat_id, "☀️ Nachtmodus beendet.")
-                except Exception:
-                    pass
+                    msg = "☀️ Nachtmodus beendet."
+                    await bot.send_message(chat_id, msg)
+                    logger.info(f"[night_mode_job] Nachricht gesendet an {chat_id}: {msg}")
+                except Exception as e:
+                    logger.error(f"[night_mode_job] Fehler beim Senden an {chat_id}: {e}")
 
         # leichte Drosselung zwischen Chats
         await asyncio.sleep(0.2)
