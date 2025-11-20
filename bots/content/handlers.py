@@ -10,7 +10,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType, ChatMemberStatus
-from ai_core import ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
+from .ai_core import ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
 
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
@@ -1105,7 +1105,6 @@ async def faq_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text(ans, parse_mode="HTML")
    # --- KI-Fallback (nur wenn aktiviert & Pro & Key vorhanden) ---
     from .database import get_ai_settings, is_pro_chat, log_auto_response, get_group_language
-    from .utils import ai_available, ai_summarize
     ai_faq, _ = get_ai_settings(chat.id)
     if not ai_faq:
         logging.info("[FAQ_CMD] KI-Fallback aus (ai_faq_enabled=False)")
