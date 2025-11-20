@@ -7,7 +7,7 @@ from telegram.error import BadRequest
 from .database import (add_rss_feed, list_rss_feeds as db_list_rss_feeds, remove_rss_feed as db_remove_rss_feed, 
 prune_posted_links, get_group_language, set_rss_feed_options, get_rss_feeds_full, set_rss_topic_for_group_feeds, 
 get_last_posted_link, set_last_posted_link, update_rss_http_cache, get_ai_settings, set_pending_input, set_rss_topic_for_feed)
-from .utils import ai_summarize
+from .ai_core import ai_summarize
 import html
 
 logger = logging.getLogger(__name__)
