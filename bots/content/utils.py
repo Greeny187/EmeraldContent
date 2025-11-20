@@ -4,9 +4,111 @@ import logging
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
-from .database import list_members, remove_member
+from .database import list_members, remove_member, mark_member_deleted
 
 logger = logging.getLogger(__name__)
+
+def _extract_domains_from_text(text: str) -> list[str]:
+    """
+    Extrahiert Domain-Namen aus Text (https://example.com, www.example.com, example.com).
+    Gibt Liste von eindeutigen Domain-Namen zurück (ohne http://, www., etc.).
+    """
+    if not text:
+        return []
+    
+    domains = set()
+    
+    # Muster 1: https://domain.com oder http://domain.com
+    url_pattern = r'https?://([^\s/?#]+)'
+    for match in re.finditer(url_pattern, text):
+        host = match.group(1).lower()
+        # Entferne Port falls vorhanden
+        if ':' in host:
+            host = host.split(':')[0]
+        if host:
+            domains.add(host)
+    
+    # Muster 2: www.domain.com (ohne http)
+    www_pattern = r'www\.([^\s/?#]+)'
+    for match in re.finditer(www_pattern, text):
+        host = match.group(0).lower()  # mit www.
+        if ':' in host:
+            host = host.split(':')[0]
+        if host:
+            domains.add(host)
+    
+    # Muster 3: plain domain.com (mit Punkt, ohne www/http)
+    # Nur wenn es aussieht wie ein Domain (z.B. mindestens ein Punkt und alphanumerisch)
+    plain_pattern = r'(?:^|\s)([a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,})(?:\s|$|[/?#])'
+    for match in re.finditer(plain_pattern, text):
+        host = match.group(1).lower()
+        if host and not host.startswith('www.'):  # www. wurde schon oben gehandhabt
+            domains.add(host)
+    
+    return sorted(list(domains))
+
+def heuristic_link_risk(domains: list[str]) -> float:
+    """
+    Berechnet Risiko-Score (0.0-1.0) für eine Liste von Domains.
+    Basiert auf Heuristiken:
+    - Verdächtige TLDs (tk, ml, ga, cf, etc.) -> höheres Risiko
+    - Sehr kurze/lange Domains -> Indiz für Spam
+    - Verdächtige Wörter im Domain-Namen
+    Score: 0.0 = kein Risiko, 1.0 = maximales Risiko
+    """
+    if not domains:
+        return 0.0
+    
+    # Verdächtige TLDs (häufig bei Spam/Phishing)
+    suspicious_tlds = {'tk', 'ml', 'ga', 'cf', 'top', 'download', 'trade', 'stream', 'racing', 'party', 'cricket'}
+    
+    # Verdächtige Keywords in Domains
+    suspicious_keywords = {'bit', 'coin', 'crypto', 'token', 'wallet', 'bank', 'secure', 'verify', 'confirm', 'urgent'}
+    
+    total_risk = 0.0
+    max_risk = 0.0
+    
+    for domain in domains:
+        domain_lower = domain.lower()
+        domain_risk = 0.0
+        
+        # 1) Verdächtige TLD (extrahiere TLD)
+        parts = domain_lower.split('.')
+        if len(parts) > 0:
+            tld = parts[-1]
+            if tld in suspicious_tlds:
+                domain_risk += 0.3
+        
+        # 2) Verdächtige Keywords
+        for keyword in suspicious_keywords:
+            if keyword in domain_lower:
+                domain_risk += 0.2
+        
+        # 3) Sehr kurze Domains (< 5 Zeichen Gesamtlänge ohne TLD)
+        name_part = '.'.join(parts[:-1]) if len(parts) > 1 else domain_lower
+        if len(name_part) < 4:
+            domain_risk += 0.1
+        
+        # 4) Sehr lange Domains (> 30 Zeichen = Indiz für Obfuskation)
+        if len(domain_lower) > 30:
+            domain_risk += 0.1
+        
+        # 5) Domains mit vielen Hyphens (typisch für Phishing)
+        if domain_lower.count('-') > 2:
+            domain_risk += 0.15
+        
+        # Cap bei 1.0
+        domain_risk = min(1.0, domain_risk)
+        max_risk = max(max_risk, domain_risk)
+        total_risk += domain_risk
+    
+    # Durchschnitt über alle Domains
+    avg_risk = total_risk / len(domains) if domains else 0.0
+    
+    # Kombiniere: 70% Durchschnitt + 30% max (höchster Risk)
+    combined_risk = (0.7 * avg_risk) + (0.3 * max_risk)
+    
+    return min(1.0, combined_risk)
 
 async def _apply_hard_permissions(context, chat_id: int, active: bool):
     """
@@ -86,13 +188,13 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
     for uid in user_ids:
         member = await _get_member(bot, chat_id, uid)
         if member is None:
-            # Nicht (mehr) im Chat -> DB aufrÃ¤umen
-            logger.debug(f"[clean_delete] User {uid} not in chat anymore, cleaning DB...")
+            # Nicht (mehr) im Chat -> soft-delete in DB markieren (Audit-Trail)
+            logger.debug(f"[clean_delete] User {uid} not in chat anymore, marking as deleted...")
             try: 
-                remove_member(chat_id, uid)
-                logger.debug(f"[clean_delete] Removed {uid} from DB")
+                mark_member_deleted(chat_id, uid)
+                logger.debug(f"[clean_delete] Marked {uid} as deleted (soft-delete)")
             except Exception as e: 
-                logger.debug(f"[clean_delete] Failed to remove {uid} from DB: {e}")
+                logger.debug(f"[clean_delete] Failed to mark {uid} as deleted: {e}")
             continue
 
         # Gelöschten Status erkennen
@@ -149,14 +251,14 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
         except BadRequest as e:
             logger.warning(f"[clean_delete] Bad request removing {uid}: {e}")
 
-        # DB nur dann aufrÃ¤umen, wenn wirklich drauÃŸen
+        # DB nur dann mit soft-delete markieren, wenn wirklich drauÃŸen
         try:
             member_after = await _get_member(bot, chat_id, uid)
             if kicked or member_after is None or getattr(member_after, "status", "") in ("left", "kicked"):
-                logger.debug(f"[clean_delete] Cleaning DB for {uid} (kicked={kicked}, status after={getattr(member_after, 'status', 'N/A')})")
-                remove_member(chat_id, uid)
+                logger.debug(f"[clean_delete] Marking {uid} as deleted in DB (kicked={kicked}, status after={getattr(member_after, 'status', 'N/A')})")
+                mark_member_deleted(chat_id, uid)  # Soft-delete mit Audit-Trail
         except Exception as e:
-            logger.debug(f"[clean_delete] Failed to clean DB for {uid}: {e}")
+            logger.debug(f"[clean_delete] Failed to mark {uid} as deleted: {e}")
 
     logger.info(f"[clean_delete] Cleanup complete for {chat_id}: removed {removed} deleted accounts (dry_run={dry_run})")
     return removed

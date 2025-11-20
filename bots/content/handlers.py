@@ -33,7 +33,7 @@ from .database import (register_group, get_registered_groups, get_rules, set_wel
     )
 from zoneinfo import ZoneInfo
 from .patchnotes import __version__, PATCH_NOTES
-from .utils import (clean_delete_accounts_for_chat, _apply_hard_permissions)
+from .utils import (clean_delete_accounts_for_chat, _apply_hard_permissions, _extract_domains_from_text, heuristic_link_risk)
 from .statistic import log_spam_event, log_night_event
 from shared.translator import translate_hybrid
 
