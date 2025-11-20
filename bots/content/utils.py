@@ -1,15 +1,12 @@
-﻿import os
-import re
+﻿import re
 import asyncio
 import logging
-import json
 from urllib.parse import urlparse
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
 from .database import list_members, remove_member
 from shared.translator import translate_hybrid
-from .ai_core import ai_available, ai_summarize, ai_moderate_image, ai_moderate_text
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +90,7 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
         logger.error(f"[clean_delete] ABORT in {chat_id}: failed to get permissions: {type(e).__name__}: {e}")
         return 0
     
-    user_ids = list_members(chat_id)
+    user_ids = [uid for uid in list_members(chat_id) if uid and uid > 0]
     logger.info(f"[clean_delete] Scanning {len(user_ids)} members in {chat_id} for deleted accounts...")
     removed = 0
 
