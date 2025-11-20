@@ -5,12 +5,12 @@ import logging
 import random
 import time, telegram
 from collections import deque
-from urllib.parse import urlparse
 from datetime import date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType, ChatMemberStatus
+from ai_core import ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
 
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
@@ -34,9 +34,7 @@ from .database import (register_group, get_registered_groups, get_rules, set_wel
     )
 from zoneinfo import ZoneInfo
 from .patchnotes import __version__, PATCH_NOTES
-from .utils import (clean_delete_accounts_for_chat, ai_summarize, 
-    ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, 
-    heuristic_link_risk, _apply_hard_permissions)
+from .utils import (clean_delete_accounts_for_chat, _apply_hard_permissions)
 from .statistic import log_spam_event, log_night_event
 from shared.translator import translate_hybrid
 

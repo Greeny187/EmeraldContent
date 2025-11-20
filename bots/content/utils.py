@@ -8,21 +8,6 @@ from .database import list_members, remove_member
 
 logger = logging.getLogger(__name__)
 
-# Heuristik: "Deleted Account" in verschiedenen Sprachen/Varianten
-_DELETED_NAME_RX = re.compile(
-    r"(deleted\s+account|gelÃ¶sch(tes|ter)\s+(konto|account)|"
-    r"(Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚\s+ÑƒÐ´Ð°Ð»Ñ‘Ð½|ÑƒÐ´Ð°Ð»Ñ‘Ð½Ð½Ñ‹Ð¹\s+Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚)|"
-    r"(Ø­Ø³Ø§Ø¨\s+Ù…Ø­Ø°ÙˆÙ)|"
-    r"(compte\s+supprimÃ©)|"
-    r"(cuenta\s+eliminada)|"
-    r"(konto\s+gelÃ¶scht|konto\s+usuniÄ™te)|"
-    r"(account\s+cancellato)|"
-    r"(å·²åˆ é™¤çš„å¸æˆ·|å·²åˆªé™¤çš„å¸³è™Ÿ)|"
-    r"(cont\s+È™ters)|"
-    r"(ÑÑ‡ÐµÑ‚\s+ÑƒÐ´Ð°Ð»ÐµÐ½))",
-    re.IGNORECASE
-)
-
 async def _apply_hard_permissions(context, chat_id: int, active: bool):
     """
     Setzt für den Chat harte Schreibsperren (Nachtmodus) an/aus.
