@@ -5,13 +5,12 @@ import logging
 import random
 import time, telegram
 from collections import deque
-from datetime import date, timedelta
+from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ForceReply, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ChatMemberHandler, CallbackQueryHandler
 from telegram.error import BadRequest, Forbidden
 from telegram.constants import ChatType, ChatMemberStatus
-from .ai_core import ai_summarize, ai_available, ai_moderate_text, ai_moderate_image, _extract_domains_from_text, heuristic_link_risk
-
+from .ai_core import ai_summarize, ai_available, ai_moderate_text, ai_moderate_image
 try:
     from .user_manual import help_handler  # falls du das im /help verwendest
 except Exception:
