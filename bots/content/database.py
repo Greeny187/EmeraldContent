@@ -2937,5 +2937,31 @@ def init_all_schemas():
     ensure_ai_moderation_schema()
     logger.info("✅ All schemas initialized successfully")
 
+# --- Clean Delete Helper Functions ---
+@_with_cursor
+def list_members(cur, chat_id: int) -> list[int]:
+    """
+    Holt alle Mitglied-UIDs aus der Datenbank für einen Chat.
+    Wird für Clean-Delete verwendet um gelöschte Accounts zu finden.
+    """
+    cur.execute("""
+        SELECT DISTINCT user_id FROM message_logs
+        WHERE chat_id = %s
+        UNION
+        SELECT DISTINCT user_id FROM member_events
+        WHERE group_id = %s
+        ORDER BY user_id
+    """, (chat_id, chat_id))
+    return [row[0] for row in cur.fetchall()]
+
+@_with_cursor
+def remove_member(cur, chat_id: int, user_id: int):
+    """
+    Entfernt einen Mitglied aus den lokalen Tracking-Tabellen.
+    """
+    cur.execute("DELETE FROM message_logs WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+    cur.execute("DELETE FROM member_events WHERE group_id = %s AND user_id = %s", (chat_id, user_id))
+    logger.debug(f"[clean_delete] Removed user {user_id} from tracking tables for {chat_id}")
+
 if __name__ == "__main__":
     init_all_schemas()
