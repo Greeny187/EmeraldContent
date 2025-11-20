@@ -1,12 +1,10 @@
 ﻿import re
 import asyncio
 import logging
-from urllib.parse import urlparse
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
 from .database import list_members, remove_member
-from shared.translator import translate_hybrid
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +23,9 @@ _DELETED_NAME_RX = re.compile(
     re.IGNORECASE
 )
 
-def _looks_deleted(user) -> bool:
-    """Erkennt gelÃ¶schte Konten anhand Bot-API-Daten (Heuristik)."""
-    if not user or getattr(user, "is_bot", False):
-        return False
-    name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-    # Typischerweise kein @username und Vorname wie "Deleted Account"
-    if not getattr(user, "username", None) and _DELETED_NAME_RX.search(name or ""):
-        return True
-    return False
-
 async def _apply_hard_permissions(context, chat_id: int, active: bool):
     """
-    Setzt fÃ¼r den Chat harte Schreibsperren (Nachtmodus) an/aus.
+    Setzt für den Chat harte Schreibsperren (Nachtmodus) an/aus.
     active=True  -> can_send_messages=False
     active=False -> can_send_messages=True
     """
@@ -54,6 +42,22 @@ async def _apply_hard_permissions(context, chat_id: int, active: bool):
             )
     except Exception as e:
         logger.warning(f"Nachtmodus (hard) set_chat_permissions fehlgeschlagen: {e}")
+
+def is_deleted_account(member) -> bool:
+    """
+    Erkenne gelöschte Accounts anhand der Bot-API-Daten:
+    - Telegram ersetzt first_name durch 'Deleted Account'
+    - oder entfernt alle Namen/Username bei gelöschten Accounts
+    """
+    user = member.user
+    first = (user.first_name or "").lower()
+    # 1) Default-Titel 'Deleted Account' (manchmal variiert: 'Deleted account')
+    if first.startswith("deleted account"):
+        return True
+    # 2) Kein Name, kein Username mehr vorhanden - auch ein Indiz für gelöschten Account
+    if not any([user.first_name, user.last_name, user.username]):
+        return True
+    return False
 
 async def _get_member(bot: ExtBot, chat_id: int, user_id: int) -> ChatMember | None:
     try:
@@ -106,8 +110,8 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
                 logger.debug(f"[clean_delete] Failed to remove {uid} from DB: {e}")
             continue
 
-        # GelÃ¶schten Status erkennen (robuster)
-        looks_del = _looks_deleted(member.user) or is_deleted_account(member)
+        # Gelöschten Status erkennen
+        looks_del = is_deleted_account(member)
 
         # Admin/Owner-Handhabung
         if member.status in ("administrator", "creator"):
@@ -171,50 +175,4 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
 
     logger.info(f"[clean_delete] Cleanup complete for {chat_id}: removed {removed} deleted accounts (dry_run={dry_run})")
     return removed
-
-def tr(text: str, lang: str) -> str:
-    return translate_hybrid(text, target_lang=lang)
-
-def is_deleted_account(member) -> bool:
-    """
-    Erkenne gelÃ¶schte Accounts nur Ã¼ber NamensprÃ¼fung:
-    - Telegram ersetzt first_name durch 'Deleted Account'
-    - oder entfernt alle Namen/Username
-    """
-    user = member.user
-    first = (user.first_name or "").lower()
-    # 1) Default-Titel 'Deleted Account' (manchmal abweichend 'Deleted account')
-    if first.startswith("deleted account"):
-        return True
-    # 2) Kein Name, kein Username mehr vorhanden
-    if not any([user.first_name, user.last_name, user.username]):
-        return True
-    return False
-
-def _extract_domains_from_text(text:str) -> list[str]:
-    if not text: return []
-    urls = re.findall(r'(https?://\S+|www\.\S+)', text, flags=re.I)
-    doms = []
-    for u in urls:
-        if not u.startswith("http"): u = "http://" + u
-        try:
-            d = urlparse(u).netloc.lower()
-            if d.startswith("www."): d = d[4:]
-            if d: doms.append(d)
-        except: pass
-    return doms
-
-def heuristic_link_risk(domains:list[str]) -> float:
-    """
-    Grobe Risikobewertung fÃ¼r Links ohne AI: Shortener/Suspicious TLDs etc.
-    """
-    if not domains: return 0.0
-    shorteners = {"bit.ly","tinyurl.com","goo.gl","t.co","ow.ly","buff.ly","shorturl.at","is.gd","rb.gy","cutt.ly"}
-    bad_tlds   = {".ru",".cn",".tk",".gq",".ml",".ga",".cf"}
-    score = 0.0
-    for d in domains:
-        if d in shorteners: score += 0.4
-        if any(d.endswith(t) for t in bad_tlds): score += 0.3
-        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', d): score += 0.5  # blanke IP
-    return min(1.0, score)
 
