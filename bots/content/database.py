@@ -932,7 +932,7 @@ def count_ai_hits_today(cur, chat_id:int, user_id:int) -> int:
     """, (chat_id, user_id))
     return int(cur.fetchone()[0])
 
-# --- Rewards ---
+# --- User & Wallet Management ---
 
 @_with_cursor
 def get_global_config(cur, key: str) -> dict | None:
@@ -989,8 +989,6 @@ def link_wallet(cur, tg_id: int, wallet_address: str,
         (tg_id, wallet_address, wallet_chain, verified, verified)
     )
 
-# === Rewards / Wallet-Core ================================================
-
 @_with_cursor
 def set_user_wallet(cur, user_id: int, wallet_ton: str) -> None:
     """
@@ -1020,6 +1018,7 @@ def get_user_wallet(cur, user_id: int) -> Optional[str]:
     row = cur.fetchone()
     return row[0] if row else None
 
+# --- Stats-Events (Legacy - verwende emrd_rewards.py für neue Features) ---
 
 @_with_cursor
 def log_stat_event(
@@ -1038,9 +1037,8 @@ def log_stat_event(
         INSERT INTO stats_events (chat_id, user_id, event_type, payload)
         VALUES (%s, %s, %s, %s);
         """,
-        (chat_id, user_id, event_type, Json(payload or {})),
+        (chat_id, user_id, event_type, Json(payload) if payload is not None else None)
     )
-
 
 @_with_cursor
 def add_pending_reward(
@@ -1117,72 +1115,6 @@ def create_reward_claim(
         (user_id,),
     )
     return claim_id
-
-# --- Stats-Events & Rewards (Phase 1) ---
-
-@_with_cursor
-def log_stats_event(cur,
-                    chat_id: int,
-                    user_id: int | None,
-                    event_type: str,
-                    payload: dict | None = None):
-    """
-    Zentraler Event-Logger:
-    z.B. event_type='message_sent', 'joined_group', 'reaction_added', 'feed_posted', ...
-    """
-    cur.execute(
-        """
-        INSERT INTO stats_events(chat_id, user_id, event_type, payload)
-        VALUES (%s, %s, %s, %s);
-        """,
-        (chat_id, user_id, event_type, Json(payload) if payload is not None else None)
-    )
-
-@_with_cursor
-def queue_reward(cur,
-                 chat_id: int,
-                 user_id: int,
-                 points: int,
-                 event_type: str,
-                 payload: dict | None = None):
-    """
-    Schreibt einen Pending-Reward in die Queue.
-    points = interne Punkte (z.B. 100 = 0.000000100 EMRD oder wie du es später definierst).
-    """
-    cur.execute(
-        """
-        INSERT INTO rewards_pending(chat_id, user_id, points, event_type, payload)
-        VALUES (%s, %s, %s, %s, %s);
-        """,
-        (chat_id, user_id, points, event_type, Json(payload) if payload is not None else None)
-    )
-
-@_with_cursor
-def get_user_reward_points(cur, user_id: int, chat_id: int | None = None) -> int:
-    """
-    Liefert die noch nicht verarbeiteten Punkte (processed=FALSE).
-    Optional gefiltert nach Chat.
-    """
-    if chat_id is not None:
-        cur.execute(
-            """
-            SELECT COALESCE(SUM(points),0)
-              FROM rewards_pending
-             WHERE user_id=%s AND chat_id=%s AND processed=FALSE;
-            """,
-            (user_id, chat_id)
-        )
-    else:
-        cur.execute(
-            """
-            SELECT COALESCE(SUM(points),0)
-              FROM rewards_pending
-             WHERE user_id=%s AND processed=FALSE;
-            """,
-            (user_id,)
-        )
-    row = cur.fetchone()
-    return int(row[0]) if row and row[0] is not None else 0
 
 # --- Group Management ---
 @_with_cursor
