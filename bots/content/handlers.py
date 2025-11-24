@@ -548,8 +548,12 @@ async def ai_moderation_enforcer(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         # Delete (falls sinnvoll fÃ¼r alle Aktionsarten)
-        try: await msg.delete()
-        except: pass
+        try:
+            await msg.delete()
+        except (BadRequest, Forbidden):
+            logger.debug(f"Cannot delete message {msg.message_id} in {chat.id}")
+        except Exception as e:
+            logger.error(f"Unexpected error deleting message {msg.message_id}: {e}")
 
         # Warnen
         txt = warn_text
@@ -581,6 +585,37 @@ WALLET_HINT = (
     "Nur so kannst du später EMRD-Rewards claimen."
 )
 
+def _validate_ton_address(addr: str) -> bool:
+    """Validate TON address format (EQxx, UQxx, or 0:xxx)."""
+    if not addr or not isinstance(addr, str):
+        return False
+    addr = addr.strip()
+    # User-friendly format
+    if addr.startswith(('EQ', 'UQ')):
+        if len(addr) < 46 or len(addr) > 50:
+            return False
+        try:
+            import base64
+            padding = (4 - len(addr[2:]) % 4) % 4
+            base64.b64decode(addr[2:] + '=' * padding)
+            return True
+        except Exception:
+            return False
+    # Raw format: 0:xxxx
+    if ':' in addr:
+        parts = addr.split(':')
+        if len(parts) != 2:
+            return False
+        try:
+            int(parts[0])
+            int(parts[1], 16)
+            if len(addr) < 34:
+                return False
+            return True
+        except ValueError:
+            return False
+    return False
+
 async def cmd_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     User verbindet seine TON-Wallet (simple Variante ohne TON-Connect-Flow).
@@ -605,12 +640,14 @@ async def cmd_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wallet = args[0].strip()
 
-    # Sehr einfache Plausi-Prüfung: TON-Adressen fangen häufig mit EQ/UQ an
-    if not re.match(r"^[EU]Q[A-Za-z0-9_-]{30,70}$", wallet):
+    # Validate TON address format
+    if not _validate_ton_address(wallet):
         await msg.reply_text(
-            "Hm, das sieht nicht wie eine gültige TON-Adresse aus.\n"
-            "Bitte prüf sie noch einmal und schick sie dann erneut mit:\n"
-            "`/wallet <deine_ton_adresse>`",
+            "❌ Das ist keine gültige TON-Adresse.\n\n"
+            "TON-Adressen haben das Format:\n"
+            "• `EQxxxx...` oder `UQxxxx...` (User-friendly, 48 Zeichen)\n"
+            "• `0:xxxx...` (Raw format, 34 Zeichen)\n\n"
+            "Sende erneut: `/wallet <ton_adresse>`",
             parse_mode="Markdown",
         )
         return
@@ -639,13 +676,25 @@ async def strikes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Top-Strikes:\n" + "\n".join(lines))
 
 async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg  = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    text = (msg.text or msg.caption or "")
-    if not msg or not chat or chat.type not in ("group","supergroup") or not text:
+    # Check msg first before accessing its properties
+    msg = update.effective_message
+    if not msg:
         return
-
+    
+    # Extract text
+    text = (msg.text or msg.caption or "").strip()
+    if not text:
+        return
+    
+    # Check chat
+    chat = update.effective_chat
+    if not chat or chat.type not in ("group","supergroup"):
+        return
+    
+    user = update.effective_user
+    if not user:
+        return
+    
     logger.debug(f"[FAQ] enter chat={chat.id} mid={msg.message_id} has_text={bool(text)}")
 
     # Heuristik, nur echte Fragen o. explizite FAQ-Trigger
@@ -743,8 +792,27 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(tr("ðŸŒ™ Sofortige Ruhephase aktiv bis", lang) + f" {human} ({tz}).")
 
 async def error_handler(update, context):
-    """Fängt alle nicht abgefangenen Errors auf, loggt und benachrichtigt Telegram-Dev-Chat."""
+    """Log uncaught errors and notify dev chat."""
     logger.error("Uncaught exception", exc_info=context.error)
+    
+    # Notify dev chat of critical errors
+    devdash_chat_id = os.environ.get("DEVDASH_CHAT_ID")
+    if devdash_chat_id and context and context.error:
+        try:
+            error_msg = f"🚨 **Bot Error Alert**\n\n"
+            error_msg += f"Error: `{str(context.error)[:300]}`\n"
+            if update and update.effective_chat:
+                error_msg += f"Chat: {update.effective_chat.id}\n"
+            if update and update.effective_user:
+                error_msg += f"User: {update.effective_user.id}"
+            
+            await context.bot.send_message(
+                chat_id=int(devdash_chat_id),
+                text=error_msg,
+                parse_mode="Markdown"
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to notify dev chat: {notify_error}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -884,22 +952,43 @@ async def topiclimit_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # auch ohne topic_id nutzbar, wenn im Thread ausgefÃ¼hrt
     tid = getattr(msg, "message_thread_id", None)
+    limit = None
+    
     if len(args) >= 2 and args[0].isdigit():
         tid = int(args[0])
         try:
             limit = int(args[1])
-        except:
-            return await msg.reply_text("Bitte eine Zahl fÃ¼r das Limit angeben.")
+        except ValueError:
+            return await msg.reply_text("❌ Limit muss eine Zahl sein.")
     elif tid is not None and len(args) >= 1:
         try:
             limit = int(args[0])
-        except:
-            return await msg.reply_text("Bitte eine Zahl fÃ¼r das Limit angeben.")
+        except ValueError:
+            return await msg.reply_text("❌ Limit muss eine Zahl sein.")
     else:
-        return await msg.reply_text("Nutzung: /topiclimit <topic_id> <anzahl>\nOder im Ziel-Topic: /topiclimit <anzahl>")
+        return await msg.reply_text(
+            "ℹ️ Nutzung:\n"
+            "/topiclimit <topic_id> <anzahl> - im privaten Chat\n"
+            "/topiclimit <anzahl> - im gewünschten Topic/Thread"
+        )
 
-    set_spam_policy_topic(chat.id, tid, per_user_daily_limit=max(0, limit))
-    return await msg.reply_text(f"âœ… Limit fÃ¼r Topic {tid} gesetzt: {limit}/Tag/User (0 = aus).")
+    # CRITICAL: Validate tid before database call
+    if tid is None:
+        return await msg.reply_text("❌ Konnte Topic-ID nicht bestimmen.")
+    
+    if limit is None:
+        return await msg.reply_text("❌ Limit erforderlich.")
+    
+    try:
+        set_spam_policy_topic(chat.id, tid, per_user_daily_limit=max(0, limit))
+        await msg.reply_text(
+            f"✅ Limit gesetzt: **{limit}** Nachrichten/Tag im Topic **{tid}**\n"
+            f"(0 = Limit deaktiviert)",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error setting topic limit: {e}")
+        await msg.reply_text("❌ Fehler beim Setzen des Limits.")
 
 async def myquota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat

@@ -4,12 +4,16 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import hashlib
+import asyncio
+import logging
 from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes
 from bots.crossposter.database import get_pool
 from bots.crossposter.x_client import post_text as x_post_text
 import httpx
+
+logger = logging.getLogger(__name__)
 
 async def _hash_message(update: Update) -> str:
     text = update.effective_message.text or update.effective_message.caption or ""
@@ -36,16 +40,69 @@ async def discord_post(webhook_url: str, content: str, username: str = None, ava
         r.raise_for_status()
 
 async def _get_x_access_token(tenant_id: int):
-    pool = await get_pool()
-    row = await pool.fetchrow("SELECT config FROM connectors WHERE tenant_id=$1 AND type='x' AND active=TRUE ORDER BY id DESC LIMIT 1", tenant_id)
-    if row and row["config"] and "access_token" in row["config"]:
-        return row["config"]["access_token"]
-    return os.environ.get("X_ACCESS_TOKEN")
+    """Get X (Twitter) access token with proper validation."""
+    try:
+        pool = await get_pool()
+        if pool:
+            row = await pool.fetchrow(
+                "SELECT config FROM connectors WHERE tenant_id=$1 AND type='x' AND active=TRUE ORDER BY id DESC LIMIT 1",
+                tenant_id
+            )
+            if row and row.get("config"):
+                config = row["config"]
+                if isinstance(config, dict) and config.get("access_token"):
+                    token = config["access_token"]
+                    # Basic token validation (should be at least 10 chars)
+                    if isinstance(token, str) and len(token) >= 10:
+                        logger.debug(f"Using database X token for tenant {tenant_id}")
+                        return token
+                    else:
+                        logger.warning(f"Invalid X token format for tenant {tenant_id}")
+    except Exception as e:
+        logger.warning(f"Error fetching X token from database: {e}")
+    
+    # Fallback to environment variable
+    token = os.environ.get("X_ACCESS_TOKEN")
+    if not token:
+        logger.error("X_ACCESS_TOKEN environment variable not set")
+        raise ValueError("X_ACCESS_TOKEN not configured")
+    
+    if len(token) < 10:
+        logger.error("X_ACCESS_TOKEN format invalid")
+        raise ValueError("X_ACCESS_TOKEN format invalid")
+    
+    logger.debug("Using environment X token")
+    return token
 
 async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    pool = await get_pool()
-    routes = await pool.fetch("SELECT id, tenant_id, destinations, transform, filters FROM crossposter_routes WHERE source_chat_id=$1 AND active=TRUE", chat_id)
+    
+    # Add pool error handling
+    try:
+        pool = await get_pool()
+        if not pool:
+            logger.error("Database pool unavailable")
+            return
+    except asyncio.TimeoutError:
+        logger.error("Database timeout getting pool")
+        return
+    except Exception as e:
+        logger.error(f"Failed to get database pool: {e}")
+        return
+    
+    # Add routes fetch error handling
+    try:
+        routes = await pool.fetch(
+            "SELECT id, tenant_id, destinations, transform, filters FROM crossposter_routes WHERE source_chat_id=$1 AND active=TRUE",
+            chat_id
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout fetching routes for chat {chat_id}")
+        return
+    except Exception as e:
+        logger.error(f"Error fetching routes for chat {chat_id}: {e}")
+        return
+    
     if not routes:
         return
 
