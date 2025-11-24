@@ -17,9 +17,29 @@ try:
     from bots.crossposter.miniapp import register_miniapp_routes as _register_crossposter_miniapp_routes
 except Exception:
     _register_crossposter_miniapp_routes = None
+try:
+    from bots.trade_api.miniapp import register_miniapp as _register_tradeapi_miniapp
+except Exception:
+    _register_tradeapi_miniapp = None
+try:
+    from bots.trade_dex.miniapp import register_miniapp as _register_tradedex_miniapp
+except Exception:
+    _register_tradedex_miniapp = None
+try:
+    from bots.learning.miniapp import register_miniapp as _register_learning_miniapp
+except Exception:
+    _register_learning_miniapp = None
+try:
+    from bots.dao.miniapp import register_miniapp as _register_dao_miniapp
+except Exception:
+    _register_dao_miniapp = None
+try:
+    from bots.affliate.miniapp import register_miniapp as _register_affiliate_miniapp
+except Exception:
+    _register_affiliate_miniapp = None
 
 
-DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support"]
+DEFAULT_BOT_NAMES = ["content", "trade_api", "trade_dex", "crossposter", "learning", "support", "dao", "affliate"]
 APP_BASE_URL = os.getenv("APP_BASE_URL")
 PORT = int(os.getenv("PORT", "8443"))
 DEVELOPER_CHAT_ID = os.getenv("DEVELOPER_CHAT_ID", "5114518219")
@@ -142,7 +162,53 @@ async def env_handler(_: web.Request):
 async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     
-    content_app.init_schema()
+    # Initialize all bot schemas
+    try:
+        from bots.content.database import init_all_schemas as content_init
+        content_init()
+    except Exception as e:
+        logging.warning("Content schema init failed: %s", e)
+    
+    try:
+        from bots.trade_api.database import init_all_schemas as tradeapi_init
+        tradeapi_init()
+    except Exception as e:
+        logging.warning("Trade API schema init failed: %s", e)
+    
+    try:
+        from bots.trade_dex.database import init_all_schemas as tradedex_init
+        tradedex_init()
+    except Exception as e:
+        logging.warning("Trade DEX schema init failed: %s", e)
+    
+    try:
+        from bots.learning.database import init_all_schemas as learning_init
+        learning_init()
+    except Exception as e:
+        logging.warning("Learning schema init failed: %s", e)
+    
+    try:
+        from bots.support.database import init_all_schemas as support_init
+        support_init()
+    except Exception as e:
+        logging.warning("Support schema init failed: %s", e)
+    
+    try:
+        from bots.dao.database import init_all_schemas as dao_init
+        dao_init()
+    except Exception as e:
+        logging.warning("DAO schema init failed: %s", e)
+    
+    try:
+        from bots.affliate.database import init_all_schemas as affiliate_init
+        affiliate_init()
+    except Exception as e:
+        logging.warning("Affiliate schema init failed: %s", e)
+    try:
+        from bots.crossposter.database import init_all_schemas as crossposter_init
+        crossposter_init()
+    except Exception as e:
+        logging.warning("Crossposter schema init failed: %s", e)
     
     if not BOTS or not BOTS[0]["token"]:
         raise RuntimeError("BOT1_TOKEN (Emerald Content Bot) is required.")
@@ -181,7 +247,7 @@ async def main():
     from devdash_api import register_devdash_routes, ensure_tables, cors_middleware
     webapp = web.Application(middlewares=[cors_middleware])
     
-    # Register miniapp routes if available (beide Varianten erlauben: (app) oder (app, application))
+    # Register miniapp routes for all bots
     if _register_content_miniapp_routes and "content" in APPLICATIONS:
         try:
             _register_content_miniapp_routes(webapp, APPLICATIONS["content"])
@@ -192,6 +258,31 @@ async def main():
             _register_crossposter_miniapp_routes(webapp, APPLICATIONS["crossposter"])
         except TypeError:
             _register_crossposter_miniapp_routes(webapp)
+    if _register_tradeapi_miniapp and "trade_api" in APPLICATIONS:
+        try:
+            await _register_tradeapi_miniapp(webapp)
+        except Exception as e:
+            logging.warning("Trade API miniapp registration failed: %s", e)
+    if _register_tradedex_miniapp and "trade_dex" in APPLICATIONS:
+        try:
+            await _register_tradedex_miniapp(webapp)
+        except Exception as e:
+            logging.warning("Trade DEX miniapp registration failed: %s", e)
+    if _register_learning_miniapp and "learning" in APPLICATIONS:
+        try:
+            await _register_learning_miniapp(webapp)
+        except Exception as e:
+            logging.warning("Learning miniapp registration failed: %s", e)
+    if _register_dao_miniapp and "dao" in APPLICATIONS:
+        try:
+            await _register_dao_miniapp(webapp)
+        except Exception as e:
+            logging.warning("DAO miniapp registration failed: %s", e)
+    if _register_affiliate_miniapp and "affliate" in APPLICATIONS:
+        try:
+            await _register_affiliate_miniapp(webapp)
+        except Exception as e:
+            logging.warning("Affiliate miniapp registration failed: %s", e)
     
     logging.info("DevDash mounting on: %r", type(webapp))
     
