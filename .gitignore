@@ -4,3 +4,5 @@ import_group_once.py
 /bots/__pycache__
 Web.config
 __pycache__/devdash_api.cpython-313.pyc
+.env.example
+START_HERE.md

@@ -19,6 +19,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
 from .access import parse_webapp_user_id, is_admin_or_owner
+from .patchnotes import __version__, PATCH_NOTES
 
 logger = logging.getLogger(__name__)
 
@@ -1236,6 +1237,17 @@ async def _state_json(cid: int) -> dict:
                 }
         ),
         "clean_deleted": clean_deleted,
+        "misc": {
+            "patchnotes": {
+                "version": __version__,
+                "content": PATCH_NOTES
+            },
+            "manual": {
+                "available": True,
+                "command": "/help",
+                "description": "Öffne das vollständige Benutzerhandbuch"
+            }
+        }
     }
 
 
