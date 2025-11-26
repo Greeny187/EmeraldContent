@@ -1,16 +1,45 @@
+"""Learning Bot - Application Setup"""
+
 import logging
-from telegram.ext import CommandHandler
+from telegram.ext import Application
 
-log = logging.getLogger("bot.<name>")
+logger = logging.getLogger(__name__)
 
-async def _start(update, ctx):
-    await update.message.reply_text("Hier entsteht in den nächsten Monaten ein neuer Bot.")
+try:
+    from . import handlers
+    from . import miniapp
+    from . import database
+except ImportError as e:
+    logger.error(f"Failed to import modules: {e}")
+    handlers = miniapp = database = None
 
-def register(app):
-    app.add_handler(CommandHandler("start", _start))
 
-def register_jobs(app):
+def register(app: Application):
+    """Register all Learning handlers"""
+    if handlers and hasattr(handlers, "register_handlers"):
+        handlers.register_handlers(app)
+        logger.info("Learning handlers registered")
+    
+    if miniapp and hasattr(miniapp, "register_miniapp"):
+        miniapp.register_miniapp(app)
+        logger.info("Learning miniapp registered")
+    
+    try:
+        webapp = app.webhook_application()
+        if webapp and miniapp and hasattr(miniapp, "register_miniapp_routes"):
+            miniapp.register_miniapp_routes(webapp, app)
+            logger.info("Learning miniapp routes registered")
+    except Exception as e:
+        logger.warning(f"Could not register miniapp routes: {e}")
+
+
+def register_jobs(app: Application):
+    """Register background jobs"""
     pass
+
 
 def init_schema():
-    pass
+    """Initialize database schema"""
+    if database and hasattr(database, "init_all_schemas"):
+        database.init_all_schemas()
+        logger.info("Learning database schema initialized")

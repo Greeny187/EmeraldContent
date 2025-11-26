@@ -1,16 +1,51 @@
+"""Trade API Bot - Application Setup"""
+
 import logging
-from telegram.ext import CommandHandler
+import os
+from telegram.ext import Application
 
-log = logging.getLogger("bot.<name>")
+logger = logging.getLogger(__name__)
 
-async def _start(update, ctx):
-    await update.message.reply_text("Hier entsteht in den nächsten Monaten ein neuer Bot.")
+# Import bot modules
+try:
+    from . import handlers
+    from . import miniapp
+    from . import database
+except ImportError as e:
+    logger.error(f"Failed to import modules: {e}")
+    handlers = miniapp = database = None
 
-def register(app):
-    app.add_handler(CommandHandler("start", _start))
 
-def register_jobs(app):
+def register(app: Application):
+    """Register all Trade API handlers"""
+    if handlers and hasattr(handlers, "register_handlers"):
+        handlers.register_handlers(app)
+        logger.info("Trade API handlers registered")
+    
+    if miniapp and hasattr(miniapp, "register_miniapp"):
+        miniapp.register_miniapp(app)
+        logger.info("Trade API miniapp registered")
+    
+    # Register miniapp HTTP routes
+    try:
+        webapp = app.webhook_application()
+        if webapp and miniapp and hasattr(miniapp, "register_miniapp_routes"):
+            miniapp.register_miniapp_routes(webapp, app)
+            logger.info("Trade API miniapp routes registered")
+    except Exception as e:
+        logger.warning(f"Could not register miniapp routes: {e}")
+
+
+def register_jobs(app: Application):
+    """Register background jobs"""
+    # Job: Check for triggered alerts
+    # Job: Update market data
+    # Job: Check portfolio health
     pass
+
 
 def init_schema():
-    pass
+    """Initialize database schema"""
+    if database and hasattr(database, "init_all_schemas"):
+        database.init_all_schemas()
+        logger.info("Trade API database schema initialized")
