@@ -651,13 +651,15 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"CleanDelete: {e}")
     
-    # --- Nachtmodus ---
+    # Nachtmodus
     try:
         night = data.get("night") or {}
-        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night) or ("override_until" in night) or ("write_lock" in night) or ("lock_message" in night):
+        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night) \
+           or ("override_until" in night) or ("write_lock" in night) or ("lock_message" in night):
             def _hm_to_min(s, default):
                 try:
-                    h, m = str(s or '').split(':'); return int(h)*60 + int(m)
+                    h, m = str(s or "").split(":")
+                    return int(h) * 60 + int(m)
                 except Exception:
                     return default
 
@@ -665,42 +667,31 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
             start_m = _hm_to_min(night.get("start") or "22:00", 1320)
             end_m   = _hm_to_min(night.get("end") or "07:00", 360)
 
-            tz = (night.get("timezone") or "Europe/Berlin").strip() or "Europe/Berlin"
             override_until = night.get("override_until")
-            if isinstance(override_until, str):
-                s = override_until.strip()
-                if not s:
-                    override_until = None
-                else:
-                    # datetime-local ohne TZ → als lokale Zeit interpretieren und nach UTC konvertieren
-                    # Erwartete Formate: "YYYY-MM-DDTHH:MM" oder ISO mit Sekunden
-                    try:
-                        dt_local = datetime.fromisoformat(s)
-                        if dt_local.tzinfo is None:
-                            dt_local = dt_local.replace(tzinfo=ZoneInfo(tz))
-                        override_until = dt_local.astimezone(ZoneInfo("UTC"))
-                    except Exception:
-                        # Fallback: lieber None als kaputter String
-                        override_until = None
+            if isinstance(override_until, str) and override_until.strip() == "":
+                override_until = None
 
-            write_lock = bool(night.get("write_lock"))
-            lock_message = (night.get("lock_message") or "Die Gruppe ist gerade im Nachtmodus. Schreiben ist nicht möglich.").strip()
+            # Lock-Text säubern (leer = None → DB-Default verwenden)
+            lock_msg = night.get("lock_message")
+            if isinstance(lock_msg, str):
+                lock_msg = lock_msg.strip() or None
 
-            db["set_night_mode"](cid,
+            db["set_night_mode"](
+                cid,
                 enabled=enabled,
                 start_minute=start_m,
                 end_minute=end_m,
                 delete_non_admin_msgs=night.get("delete_non_admin_msgs"),
                 warn_once=night.get("warn_once"),
-                timezone=tz,
+                timezone=night.get("timezone"),
                 hard_mode=night.get("hard_mode"),
                 override_until=override_until,
-                write_lock=write_lock,
-                lock_message=lock_message
+                write_lock=night.get("write_lock"),
+                lock_message=lock_msg,
             )
     except Exception as e:
         errors.append(f"Nachtmodus: {e}")
-
+        
     # --- Topic Router ---
     try:
         if "router_add" in data:

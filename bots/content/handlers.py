@@ -774,7 +774,7 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not dur:
         return await update.message.reply_text(tr("Format: /quietnow 30m oder /quietnow 2h", lang))
 
-    en, s, e, del_non_admin, warn_once, tz, hard_mode, _ = get_night_mode(chat.id)
+    en, s, e, del_non_admin, warn_once, tz, hard_mode, override_until, write_lock, lock_message = get_night_mode(chat.id)
     now = datetime.datetime.now(ZoneInfo(tz))
     until = now + dur
     set_night_mode(chat.id, override_until=until)
@@ -1022,41 +1022,65 @@ async def mood_question_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def nightmode_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
     chat = update.effective_chat
-    if not msg or chat.type not in ("group","supergroup"):
+    if not msg or chat.type not in ("group", "supergroup"):
         return
     if getattr(msg, "new_chat_members", None) or getattr(msg, "left_chat_member", None):
         return
     if not getattr(msg, "from_user", None):
         return
-    enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = get_night_mode(chat.id)
+
+    # Neu: 10 Werte entpacken
+    enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until, write_lock, lock_message = \
+        get_night_mode(chat.id)
     if not enabled:
         return
 
     tz = ZoneInfo(tz_str or "Europe/Berlin")
     now = datetime.datetime.now(tz)
-    start_t = datetime.time(start_minute//60, start_minute%60)
-    end_t   = datetime.time(end_minute//60, end_minute%60)
-    active = (now.time() >= start_t or now.time() < end_t) if start_t > end_t else (start_t <= now.time() < end_t)
+    start_t = datetime.time(start_minute // 60, start_minute % 60)
+    end_t   = datetime.time(end_minute // 60, end_minute % 60)
+
+    # Standard: Nachtfenster (auch über Mitternacht)
+    if start_t > end_t:
+        active = (now.time() >= start_t) or (now.time() < end_t)
+    else:
+        active = (start_t <= now.time() < end_t)
+
+    # Override (quietnow) hat Vorrang
     if override_until:
         active = now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None) < override_until.replace(tzinfo=None)
 
     if not active:
         return
-    if not del_non:
-        return
 
-    # Nur Nicht-Admins lÃ¶schen
+    # Admins / Owner nie einschränken
     try:
         m = await context.bot.get_chat_member(chat.id, msg.from_user.id)
-        if str(getattr(m, "status", "")).lower() in ("administrator","creator"):
+        if str(getattr(m, "status", "")).lower() in ("administrator", "creator"):
             return
     except Exception:
         pass
+
+    # 📝 Schreibsperre: "Schreiben sperren (nicht löschen)"
+    if write_lock:
+        deleted = await _hard_delete_message(context, chat.id, msg)
+        # Hinweis gedrosselt, damit der Chat nicht zugespammt wird
+        if deleted and lock_message and _once(context, ("night_lock", chat.id, msg.from_user.id), ttl=60.0):
+            try:
+                await msg.reply_text(lock_message)
+            except Exception:
+                pass
+        return
+
+    # Klassischer Modus: Nur löschen, wenn Flag gesetzt
+    if not del_non:
+        return
 
     try:
         await msg.delete()
     except Exception:
         pass
+
 
 async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg   = update.effective_message
