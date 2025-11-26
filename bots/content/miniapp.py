@@ -1574,33 +1574,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if lang: db["set_group_language"](cid, lang[:5])
     except Exception as e: errors.append(f"Sprache: {e}")
 
-    # Nachtmodus (erweitert)
-    try:
-        night = data.get("night") or {}
-        if ("on" in night) or ("start" in night) or ("end" in night) or ("timezone" in night):
-            def _hm_to_min(s, default):
-                try:
-                    h,m = str(s or '').split(':'); return int(h)*60 + int(m)
-                except Exception: return default
-            enabled = bool(night.get("on"))
-            start_m = _hm_to_min(night.get("start") or "22:00", 1320)
-            end_m   = _hm_to_min(night.get("end") or "07:00", 360)
-            # Leere Strings zu None für override_until
-            override_until = night.get("override_until")
-            if isinstance(override_until, str) and override_until.strip() == "":
-                override_until = None
-            db["set_night_mode"](cid,
-                enabled=enabled,
-                start_minute=start_m,
-                end_minute=end_m,
-                delete_non_admin_msgs = night.get("delete_non_admin_msgs"),
-                warn_once = night.get("warn_once"),
-                timezone = night.get("timezone"),
-                hard_mode = night.get("hard_mode"),
-                override_until = override_until
-            )
-    except Exception as e: errors.append(f"Nachtmodus: {e}")
-
     # Router
     try:
         if "router_add" in data:
