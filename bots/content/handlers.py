@@ -774,7 +774,7 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not dur:
         return await update.message.reply_text(tr("Format: /quietnow 30m oder /quietnow 2h", lang))
 
-    # NEU: 10 Werte entpacken
+        # NEU: 10 Werte entpacken
     enabled, start_minute, end_minute, del_non_admin, warn_once, tz, hard_mode, override_until, write_lock, lock_message = get_night_mode(chat.id)
     tz = tz or "Europe/Berlin"
 
@@ -787,7 +787,8 @@ async def quietnow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    if hard_mode:
+    # << HIER ändern >>
+    if hard_mode or write_lock:
         # sofort sperren
         await _apply_hard_permissions(context, chat.id, True)
         context.chat_data.setdefault("nm_flags", {})["hard_applied"] = True

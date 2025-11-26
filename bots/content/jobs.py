@@ -396,16 +396,19 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id, _ in get_registered_groups():
         try:
-            night_data = get_night_mode(chat_id)
-            if not night_data or len(night_data) < 8:
-                logger.debug(f"[night_mode_job] Ungültige Nachtmodus-Daten für {chat_id}: {night_data}")
-                continue
-            enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until = night_data[:8]
+            # NEU: Alle 10 Werte holen (inkl. write_lock + lock_message)
+            enabled, start_minute, end_minute, del_non, warn_once, tz_str, hard_mode, override_until, write_lock, lock_message = get_night_mode(chat_id)
         except Exception as e:
             logger.warning(f"[night_mode_job] Fehler beim Laden von {chat_id}: {e}")
             continue
         
         if not enabled:
+            # Wenn Nightmode aus ist, ggf. vorher gesetzte Sperre zurücknehmen
+            state_key = ("nm_state", chat_id)
+            if context.application.bot_data.get(state_key) == "active":
+                context.application.bot_data[state_key] = "inactive"
+                if hard_mode or write_lock:
+                    await _apply_hard_permissions(context, chat_id, False)
             continue
 
         tz = ZoneInfo(tz_str or TIMEZONE)
@@ -416,22 +419,40 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
 
         def _active(now_t):
             if override_until:
+                # Override hat Vorrang (z.B. /quietnow)
                 return now_utc < override_until
-            return (start_t <= now_t < end_t) if start_t < end_t else (now_t >= start_t or now_t < end_t)
+            # Nachtfenster inkl. über Mitternacht
+            if start_t < end_t:
+                return start_t <= now_t < end_t
+            else:
+                return (now_t >= start_t) or (now_t < end_t)
 
         active = _active(now_t)
         state_key = ("nm_state", chat_id)
         prev = context.application.bot_data.get(state_key)
 
-        # Zustandswechsel?
+        # Hard-Mode oder Schreiben sperren -> harte Chat-Permissions
+        hard_or_lock = bool(hard_mode or write_lock)
+
+        # Zustandswechsel: wird jetzt aktiv
         if active and prev != "active":
             context.application.bot_data[state_key] = "active"
-            logger.info(f"[night_mode_job] Nachtmodus AKTIV für {chat_id}, warn_once={warn_once}, hard_mode={hard_mode}")
-            if hard_mode:
+            logger.info(
+                f"[night_mode_job] Nachtmodus AKTIV für {chat_id}, "
+                f"warn_once={warn_once}, hard_mode={hard_mode}, write_lock={write_lock}"
+            )
+
+            if hard_or_lock:
+                # Hier wird die Schreibzeile ausgegraut / deaktiviert
                 await _apply_hard_permissions(context, chat_id, True)
+
             if warn_once:
                 try:
-                    until_txt = (override_until.astimezone(tz).strftime("%H:%M") if override_until else end_t.strftime("%H:%M"))
+                    until_txt = (
+                        override_until.astimezone(tz).strftime("%H:%M")
+                        if override_until else
+                        end_t.strftime("%H:%M")
+                    )
                 except Exception:
                     until_txt = end_t.strftime("%H:%M")
                 try:
@@ -441,11 +462,18 @@ async def night_mode_job(context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"[night_mode_job] Fehler beim Senden an {chat_id}: {e}")
 
+        # Zustandswechsel: wird jetzt inaktiv
         if (not active) and prev == "active":
             context.application.bot_data[state_key] = "inactive"
-            logger.info(f"[night_mode_job] Nachtmodus INAKTIV für {chat_id}, warn_once={warn_once}, hard_mode={hard_mode}")
-            if hard_mode:
+            logger.info(
+                f"[night_mode_job] Nachtmodus INAKTIV für {chat_id}, "
+                f"warn_once={warn_once}, hard_mode={hard_mode}, write_lock={write_lock}"
+            )
+
+            if hard_or_lock:
+                # Schreibrechte wieder freigeben
                 await _apply_hard_permissions(context, chat_id, False)
+
             if warn_once:
                 try:
                     msg = "☀️ Nachtmodus beendet."
