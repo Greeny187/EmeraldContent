@@ -51,7 +51,7 @@ def init_all_schemas():
                 commission NUMERIC(20,2),
                 status VARCHAR(50) DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (referrer_id) REFERENCES aff_referrals(referrer_id)
+                FOREIGN KEY (referrer_id) REFERENCES aff_referrals(id)
             )
         """)
         

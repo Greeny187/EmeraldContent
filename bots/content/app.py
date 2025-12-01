@@ -34,18 +34,6 @@ def register(app):
         payment_handlers.register_payment_handlers(app)
 
     register_miniapp(app)  # Bot-Befehle registrieren
-
-    # HTTP-Routen für Mini-App registrieren
-    try:
-        webapp = app.webhook_application()
-        if webapp:
-            from .miniapp import register_miniapp_routes
-            register_miniapp_routes(webapp, app)
-            # Registriere auch Payment Webhook Routes
-            if hasattr(payment_handlers, "register_payment_routes"):
-                payment_handlers.register_payment_routes(webapp)
-    except Exception as e:
-        logger.warning(f"Could not register miniapp routes: {e}")
     
 def register_jobs(app: Application):
     if hasattr(ads, "register_ads_jobs"):

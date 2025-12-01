@@ -46,7 +46,7 @@ def init_all_schemas():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS support_responses (
                 id SERIAL PRIMARY KEY,
-                ticket_id VARCHAR(50) REFERENCES support_tickets(ticket_id),
+                ticket_id VARCHAR(50) REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
                 user_id BIGINT,
                 message TEXT,
                 is_support_staff BOOLEAN DEFAULT FALSE,

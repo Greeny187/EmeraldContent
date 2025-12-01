@@ -3,14 +3,14 @@ from telegram.ext import ContextTypes, CommandHandler
 from shared.translator import translate_hybrid
 
 # Basis-Handbuch in deutscher Sprache
-HELP_TEXT = '''
+HELP_TEXT = """
 *Emerald Content Bot - Benutzerhandbuch*
 
 *Inhaltsverzeichnis*
 1. Funktionen im Überblick
 2. Bot-Chat: Menü & Miniapp
 3. Gruppen-Chat: Befehle & Abläufe
-4. Erweiterte Features (Pro)
+4. Erweiterte Features (Pro & EMRD)
 5. Support & Kontakt
 
 ---
@@ -18,210 +18,324 @@ HELP_TEXT = '''
 *1. Funktionen im Überblick*
 
 Basis-Features:
-• Begrüßungsnachricht setzen (mit optionalem Foto)
+• Begrüßungsnachrichten setzen (mit optionalem Foto)
 • Regeln festlegen (mit optionalem Foto)
-• Abschiedsnachricht setzen (mit optionalem Foto)
-• Link- & Spam-Schutz pro Topic (inkl. Tageslimit pro Nutzer)
+• Abschiedsnachrichten setzen (mit optionalem Foto)
+• Link- & Spam-Schutz pro Topic
+• Captcha für neue Mitglieder
 • Themenverantwortliche verwalten
-• Gelöschte Accounts automatisch bereinigen (manuell & geplant)
-• RSS-Feed Integration pro Topic
 • FAQ-Datenbank mit Kurzantworten
-• Mood-Meter Umfragen (Stimmung im Thread oder per Direktnachricht)
-• Statistiken & tägliche Reports (Aktivität, Top-Antwortende)
+• RSS-Feeds je Topic
+• Mood-Meter / Stimmungs-Umfragen
+• Nachtmodus (zeitgesteuerte Ruhephase)
+• KI-Moderation (AI-Mod) für Texte, Medien & Links
+• Topic-Router zur automatischen Verteilung von Nachrichten
+• Automatischer Clean-Up gelöschter Accounts
+• Reports & Statistiken
 
-Erweiterte Features:
-• Nachtmodus mit Schreib-Sperre & Hard-Mode
-• KI-Moderation (Text, Bilder, Links) mit Strike-System
-• Topic-Router für automatische Nachrichtenweiterleitung
-• FAQ-System mit KI-gestützten Fallback-Antworten (Pro)
-• Captcha bei neuen Mitgliedern
-• EMRD-Rewards System (Punkte & Claims)
-• Pro-Abo-Konfiguration (Zahlungswege & Beschreibung)
+Erweiterte Features & Pro:
+• Pro-Plan mit verschiedenen Zahlungsoptionen
+• EMRD-Rewards-System
+• Detaillierte Statistik-Ansichten
+• KI-gestützte FAQ-Antworten
+• Erweiterte Moderation (Strike-System, Shadow-Mode)
 
 ---
 
 *2. Bot-Chat: Menü & Miniapp*
 
 Grundlegende Befehle im privaten Chat mit dem Bot:
-/start   – Wähle eine Gruppe und registriere sie
-/miniapp – Öffne das Einstellungs-Panel (Telegram Miniapp)
-/help    – Dieses Handbuch anzeigen
-/version – Zeige aktuelle Patchnotes
+/start    – Bot starten und Gruppe verbinden
+/miniapp  – Einstellungsoberfläche öffnen (Telegram Miniapp)
+/help     – Dieses Handbuch anzeigen
+/version  – Aktuelle Version & Patchnotes anzeigen
 
-Die Miniapp ist in Tabs gegliedert. Inhaltlich lassen sie sich so gruppieren:
+Die Miniapp ist in Tabs (Pills) unterteilt:
 
-ADMIN-EINSTELLUNGEN:
-• Begrüßung, Regeln, Farewell (mit Foto-Upload)
-• Linkschutz & Spam-Filter (Level + Ausnahmen)
-• Captcha für neue Mitglieder (Typ & Verhalten)
+*WELCOME*
+• Begrüßung aktivieren/deaktivieren
+• Optionales Begrüßungsbild hochladen/löschen
+• Begrüßungstext mit Variablen:
+  – {user}  = neuer Nutzer
+  – {title} = Gruppenname
+• Optional: Captcha für neue Mitglieder aktivieren
 
-CONTENT-MANAGEMENT:
-• RSS-Feeds hinzufügen/entfernen, Topic je Feed wählen
-• Optionale KI-Analyse für RSS-Inhalte (je nach Setup)
-• FAQ: Fragen & Antworten anlegen, bearbeiten, löschen
-• Mood-Meter: Frage festlegen, Ziel-Topic bestimmen, Test-Post starten
+*RULES*
+• Regeln aktivieren/deaktivieren
+• Optionales Regelbild hochladen/löschen
+• Freier Regeltext für deine Gruppe
 
-MODERATION & SICHERHEIT:
-• KI-Moderation (AI-Mod) konfigurieren:
-  – Schwellenwerte für Toxizität, Hass, Sexuelles, Belästigung etc.
-  – Aktionen: löschen, warnen, muten, bannen
-  – Strike-Punkte und Eskalationslogik
-• Nachtmodus:
-  – Start-/Endzeit, Zeitzone
-  – Schreib-Sperre (write_lock) & Hard-Mode
-  – Option: nur Admins schreiben, Nicht-Admin-Nachrichten löschen
-• Topic-Router (per /router-Befehl im Chat, siehe unten)
-• Strike-Punkte-Auswertung (über AI-Mod-Logs & Commands)
+*FAREWELL*
+• Abschiedsnachricht aktivieren/deaktivieren
+• Optional: Abschiedsbild
+• Abschiedstext, wenn Nutzer die Gruppe verlassen
 
-STATISTIK & REWARDS:
-• Report-Tab:
-  – Täglicher Gruppen-Report (Topic, Uhrzeit)
-  – „Jetzt senden“-Option für einen Sofortbericht
-• Statistik-Tab:
-  – Zeitraum wählen (Tage)
-  – Überblick: Nachrichten, Aktivität, Top-Antwortende
-• Rewards-Tab:
-  – EMRD-Rewards global konfigurieren (Modus, Mindest-Claim)
-  – Limits pro Nutzer/Chat (cap_user / cap_chat)
-  – Grundlage für spätere Claims & On-Chain-Auszahlung
+*SPAM*
+• Spam-Filter aktivieren
+• Links, Medien und Invite-Links blockieren
+• Policy-Topic (ID) festlegen, in das Meldungen/Logs gehen
+• Aktion auswählen:
+  – Löschen
+  – Warnen
+  – Stummschalten
+• Whitelist-Domains (erlaubte Links)
+• Blacklist-Domains (zu blockierende Links)
+• Emoji- und Flood-Limits pro Zeitraum
+• Option: Antworten im gleichen Topic lassen oder in Policy-Topic verschieben
 
-SONSTIGES & PRO:
-• Clean Deleted Accounts:
-  – Geplante Bereinigung (Uhrzeit, Wochentag, Demote-Option)
-  – Einmalige Sofort-Aktion „Jetzt bereinigen“
-• Handbuch & Patchnotes:
-  – Schnellzugriff auf dieses Handbuch (/help)
-  – Patchnotes über /version einsehbar
-• Pro-Abo-Konfiguration:
-  – Zahlungswege (z.B. TON-Wallet, NEAR-Adresse, PayPal-Link, Coinbase-Key, Stars)
-  – Preise für 1/3/12 Monate
-  – Beschreibungstext für dein Pro-Angebot
-• Sprache & Grundeinstellungen:
-  – Gruppensprache festlegen (für System-Texte & Übersetzungen)
+*RSS*
+• RSS-Feeds hinzufügen, bearbeiten, löschen
+• Je Feed:
+  – Feed-URL
+  – Ziel-Topic (ID)
+  – Posting-Format (Titel, Text, Link)
+• Optional: Zusammenfassung durch KI (wenn KI-Analyse aktiv ist)
+
+*KI / FAQ (AI)*
+• KI/FAQ global aktivieren/deaktivieren
+• RSS-KI-Analyse nutzen (Inhalte werden vorgefiltert/kommentiert)
+• FAQ-Hinweistext definieren (wird für Nutzer angezeigt)
+
+*MOOD*
+• Mood-/Stimmungs-Umfrage aktivieren
+• Frage setzen (z. B. „Wie geht es dir heute?“)
+• Ziel-Topic auswählen (0 = Hauptchat)
+• Button „Umfrage jetzt senden“:
+  – Versendet sofort eine Mood-Umfrage
+  – Nutzer stimmen per 👍 👎 🤔 ab
+• Die Umfrage kann regelmäßig über den Bot-Job ausgelöst werden (z. B. täglich).
+
+*FAQ*
+• Neue FAQ-Einträge anlegen:
+  – Frage
+  – Kurz-Antwort
+• Bestehende Einträge in der Liste ansehen, bearbeiten, löschen
+• Wird von /faq im Gruppenchat verwendet
+
+*NIGHT (Nachtmodus)*
+• Nachtmodus aktivieren/deaktivieren
+• Start- & Endzeit (HH:MM) festlegen
+• Schreib-Sperre (write_lock):
+  – Wenn aktiv, können Nicht-Admins in der Nacht nicht schreiben
+  – Optional: Nachrichten löschen statt nur blocken
+• Lock-Nachricht definieren (Hinweistext, wenn Schreiben gesperrt)
+• Option „Non-Admin Nachrichten löschen (Nachtzeiträume)“
+• Option „Warnung anzeigen“ beim ersten Verstoß
+• Zeitzone festlegen (z. B. Europe/Berlin)
+• Hard-Mode:
+  – Strikter Modus, bei dem der Chat komplett „zu“ sein kann
+
+*AI-MOD (KI Moderation)*
+• AI-Mod aktivieren/deaktivieren
+• Shadow-Mode:
+  – Aktionen nur loggen, ohne live einzugreifen
+• Primär-Aktion:
+  – Löschen, Warnen oder Stummschalten
+• Mute-Minuten definieren
+• Einstellungen für:
+  – Medien-Moderation (Bilder)
+  – Link-Risiko-Bewertung
+  – Strike-Punkte (wie viele Punkte pro Verstoß)
+  – Max. Strikes pro Nachricht
+  – Tägliches Limit für Aktionen (Rate-Limit)
+• Schwellenwerte pro Kategorie:
+  – Toxicity
+  – Hate
+  – Sexual
+  – Harassment
+
+*REPORT*
+• täglichen Report aktivieren/deaktivieren
+• Report-Topic (ID) definieren
+• „Report jetzt posten“:
+  – Sofortiger Report der aktuellen Kennzahlen in das gewählte Topic
+
+*STATS*
+• Zeitraum auswählen (7 / 14 / 30 Tage)
+• Statistik laden:
+  – Aktivität nach Tagen
+  – Top-Antwortende
+  – Überblick über genutzte Topics & Features
+
+*REWARDS (EMRD)*
+• EMRD-Rewards aktivieren/deaktivieren
+• Modus:
+  – Claim (User können selbst claimen)
+  – Auto (Owner erhält gesammelten Reward)
+• Feste Raten definieren:
+  – Punkte pro Nachricht / Antwort etc. (abhängig vom Backend)
+• Mindestbetrag für Claims festlegen
+• Caps:
+  – Cap pro Nutzer/Tag
+  – Cap pro Chat/Tag
+• Test-Button: Claim-Funktion testen
+• Hinweis: EMRD ist ein Utility-Token im TON-Netzwerk.
+
+*SONSTIGES (MORE)*
+• Bereich „Gelöschte Accounts aufräumen“:
+  – Scheduler aktivieren (geplante Bereinigung)
+  – Uhrzeit festlegen
+  – Optionaler Wochentag (oder täglich)
+  – Option: „Admins demoten“, deren Accounts gelöscht wurden
+  – Option: „Ergebnis melden“ (Log-Nachricht nach Lauf)
+  – Button „Jetzt ausführen“:
+    › Sofortige Bereinigung gelöschter Accounts in der Gruppe
+
+*PRO*
+• Pro-Plan Zahlung konfigurieren:
+  – ℹ️ Info-Text: Nutzer können via /buypro upgraden.
+• Blockchain-Zahlungen:
+  – TON Wallet aktivieren & Adresse hinterlegen
+  – NEAR Protocol (falls genutzt) aktivieren & Adresse hinterlegen
+  – Optional: Coinbase Pay Key
+  – Optional: ByBit Pay Key
+• Klassische Zahlungen:
+  – PayPal-Link setzen
+  – Telegram Stars als Zahlungsmittel aktivieren
+  – Kostenloser Testzeitraum (Free-Trial in Tagen)
+• Preise je Laufzeit definieren:
+  – Monatlich
+  – Quartalsweise
+  – Jährlich
+  (die Standardwerte in der Miniapp sind Vorschläge und können angepasst werden)
+• PRO-Beschreibung:
+  – Text, der im /buypro-Menü angezeigt wird (Leistungsumfang)
+• Test-Button:
+  – „PRO Payment Menü öffnen“ zum Überprüfen deiner Einstellungen
 
 ---
 
 *3. Gruppen-Chat: Befehle & Abläufe*
 
-Mood & Umfragen:
-• Mood-Meter wird über die Miniapp gesteuert (Tab „Mood“).
-• Dort legst du Frage & Ziel-Topic fest und startest die Umfrage.
-• Reaktionen werden automatisch gezählt und in der DB erfasst.
+Die wichtigsten Befehle im Gruppenchat (bzw. in Threads):
 
-Verwaltung & Rollen:
-• /settopic @user
-  – Weist einem Nutzer die Verantwortung für das aktuelle Topic zu.
-• /removetopic @user
-  – Entfernt eine bestehende Themenverantwortung.
-• /cleandeleteaccounts
-  – Löscht alle „gelöschten Accounts“ aus der aktuellen Gruppe.
-  – Ergänzt den geplanten Nachtjob aus dem Miniapp-Tab „Sonstiges“.
-• /wallet <ton_adresse>
-  – Speichert die TON-Wallet eines Nutzers für EMRD-Rewards.
-  – Ohne Argument zeigt der Befehl die aktuell hinterlegte Adresse.
+*Rollen & Themen*
+/settopic @user
+• Weist einem Nutzer die Verantwortung für das aktuelle Topic zu.
 
-Topic-Limits & Kontingent:
-• /topiclimit <topic_id> <anzahl>  (im privaten Chat)
-• /topiclimit <anzahl>             (direkt im gewünschten Topic/Thread)
-  – Setzt ein Tageslimit pro Nutzer im jeweiligen Topic.
-  – 0 = Limit deaktiviert.
-• /myquota
-  – Im Topic ausführen: zeigt dein Restkontingent für heute an.
+/removetopic @user
+• Entfernt die Themenverantwortung des Nutzers.
 
-Statistik & Strikes:
-• /mystrikes
-  – Zeigt deine aktuellen Strike-Punkte in dieser Gruppe.
-• /strikes
-  – Zeigt die Top-Strike-Nutzer (Topliste) der Gruppe.
-• Der Rest der Statistik (Verlauf, Top-Antwortende, Reports)
-  – erfolgt über die Tabs „Report“ und „Statistik“ in der Miniapp.
+*Limits & Kontingente*
+/topiclimit <anzahl>       (im Thread)
+/topiclimit <topic_id> <anzahl>   (im Privat-Chat)
+/myquota
+• Tageslimit pro Nutzer und Topic setzen und anzeigen.
+• 0 = kein Limit.
 
-FAQ & Regeln:
-• /faq <stichwort>
-  – Durchsucht die FAQ-Datenbank der Gruppe.
-  – Bei passenden Einträgen wird automatisch geantwortet.
-• /rules
-  – Zeigt die in der Miniapp hinterlegten Gruppenregeln an.
+*Spam & Router*
+/spamlevel off|light|medium|strict [flags]
+• Setzt die Spam-Policy.
+• Mögliche Flags:
+  – emoji=N
+  – emoji_per_min=N
+  – flood10s=N
+  – whitelist=dom1,dom2
+  – blacklist=dom3,dom4
 
-Router & Spam:
-• /router list
-  – Zeigt alle Topic-Router-Regeln.
-• /router add <topic_id> keywords=a,b
-  – Leitet Nachrichten mit bestimmten Schlüsselwörtern in ein Topic um.
-• /router add <topic_id> domains=x.com,y.com
-  – Leitet Links mit bestimmten Domains in ein Topic um.
-• /router del <rule_id>, /router toggle <rule_id> on|off
-  – Löschen bzw. Aktivieren/Deaktivieren einer Regel.
-• /spamlevel <off|light|medium|strict> [flags]
-  – Setzt die Spam-Policy, inkl.:
-    emoji=N, emoji_per_min=N, flood10s=N
-    whitelist=dom1,dom2  blacklist=dom3,dom4
+/router list
+• Listet alle aktiven Router-Regeln.
 
-Nachtmodus & Softruhe:
-• Nachtmodus-Zeiten und Verhalten werden in der Miniapp konfiguriert.
-• /quietnow 30m oder /quietnow 2h
-  – Aktiviert sofort eine temporäre Ruhephase („Softruhe“) bis zur angegebenen Dauer.
-  – Nutzt die aktiven Nightmode-Einstellungen (inkl. Schreib-Sperre).
+/router add <topic_id> keywords=a,b
+/router add <topic_id> domains=x.com,y.com
+• Fügt Router-Regeln hinzu (nach Keywords oder Domains).
+
+/router del <rule_id>
+/router toggle <rule_id> on|off
+• Regeln löschen bzw. aktivieren/deaktivieren.
+
+*FAQ & Regeln*
+/faq <Stichwort>
+• Durchsucht die FAQ-Datenbank der Gruppe nach passenden Einträgen.
+
+/rules
+• Zeigt den in der Miniapp hinterlegten Regeltext an.
+
+*Clean-Up & Nightmode*
+/cleandeleteaccounts
+• Manuelle Bereinigung gelöschter Accounts in der Gruppe
+  (ergänzt den geplanten Scheduler im Tab „Sonstiges“).
+
+/quietnow 30m
+/quietnow 2h
+• Startet sofort eine Ruhephase auf Basis der Nightmode-Einstellungen.
+• Praktisch bei spontanen Eskalationen oder Bedarf an kurzer Pause.
+
+*Strikes & KI-Moderation*
+/mystrikes
+• Zeigt deine aktuellen Strike-Punkte in dieser Gruppe.
+
+/strikes
+• Zeigt eine Übersicht der Nutzer mit den meisten Strike-Punkten.
+
+*Wallet & Rewards*
+/wallet <TON-Adresse>
+• Speichert deine TON-Wallet für EMRD-Rewards.
+/wallet
+• Zeigt die aktuell gespeicherte Adresse.
+
+/buypro
+• Öffnet das PRO-Zahlungsmenü (wenn in der Miniapp konfiguriert).
 
 ---
 
-*4. Erweiterte Features (Pro)*
+*4. Erweiterte Features (Pro & EMRD)*
 
-NACHTMODUS (Pro-optimiert):
-• Zeitgesteuerte Schreib-Sperre für ruhigere Zeiten
-• Konfigurierbare Start- & Endzeiten und Zeitzonen
-• Optional: Nur Admins dürfen schreiben
-• Hard-Mode: Chat vollständig gesperrt
-• Softruhe per /quietnow, z.B. bei spontanen Eskalationen
+*Nachtmodus*
+• Zeitgesteuerte Ruhephasen für deine Gruppe
+• Schreib-Sperre für Nicht-Admins
+• Optionale Löschung von Nachrichten innerhalb der Nachtfenster
+• Hard-Mode für sehr strikte Ruhephasen
+• Softruhe per /quietnow (Dauer individuell bestimmbar)
 
-KI-MODERATION:
-• Automatische Filterung von Spam & schädlichen Inhalten
-• Text-Moderation (Toxizität, Hass, Gewalt etc.)
-• Bild-Moderation (NSFW, Gewalt, Waffen)
-• Link-Risiko-Bewertung
-• Strike-Punkte System mit automatischer Eskalation (Warnung, Mute, Ban)
-• Tägliche Limits für KI-Aktionen & Rate-Limits gegen Missbrauch
+*KI-Moderation (AI-Mod)*
+• Automatischer Schutz vor Hate, Spam, Toxizität & NSFW-Inhalten
+• Shadow-Mode zum Testen ohne echte Eingriffe
+• Strike-System:
+  – Punkte pro Verstoß, Eskalation bei Überschreitung
+• Medien- & Link-Analyse integriert
+• Reports & Logs pro Chat/Topic
 
-TOPIC-ROUTER:
-• Automatische Nachrichtenweiterleitung zu passenden Themen
-• Schlüsselwort-basierte Regeln (z. B. „kaufen“, „verkaufen“)
-• Domain-basierte Regeln (z. B. shop.com → „Angebote“-Topic)
-• Optional: Originalnachricht löschen und Nutzer kurz informieren
+*EMRD-Rewards*
+• EMRD ist ein Utility-Token im TON-Netzwerk.
+• Nutzer verdienen Punkte/Reputation für hilfreiche Beiträge.
+• Rewards-Modi:
+  – Claim (User claimen ihre Rewards selbst)
+  – Auto (Owner erhält gesammelte Rewards)
+• Limits schützen vor Missbrauch:
+  – Max. Punkte pro Nutzer/Tag
+  – Max. Punkte pro Chat/Tag
+• Anspruchsberechtigte Beträge können später on-chain ausgezahlt werden.
 
-FAQ & KI-ANTWORTEN:
-• FAQ-Datenbank mit eigenen Snippets
-• KI beantwortet unbekannte Fragen als Fallback (nur in Pro-Gruppen aktiv)
-• Automatische Erkennung von Fragen im Chat („?“ oder FAQ-Trigger)
-• Logging der Auto-Responses für spätere Optimierung
-
-STATISTIK & REWARDS:
-• Statistik-Tab:
-  – Aktivitätsverlauf, Gruppentrends, Top-Antwortende
-• Report-Tab:
-  – Automatischer Tagesreport ins definierte Topic
-• EMRD-Rewards:
-  – Punkte für Antworten & hilfreiche Inhalte
-  – Tages- & Chatlimits konfigurierbar
-  – Zusammenfassung pending/claimed („Rewards Summary“)
-  – Basis für spätere On-Chain-Auszahlungen
+*Statistiken & Reports*
+• Tägliche Reports (aktivierbar im Tab „Report“)
+• Detaillierte Statistiken:
+  – Zeitliche Aktivität
+  – Top-Antwortende
+  – Nutzung von Topics & Features
+• Hilft bei:
+  – Moderations-Planung
+  – Community-Management
+  – Bewertung des Pro-Plans und der KI-Funktionen
 
 ---
 
 *5. Support & Kontakt*
 
 Website: https://greeny187.github.io/GreenyManagementBots/
-Support-Gruppe: https://t.me/+DkUfIvjyej8zNGVi
-PayPal: greeny187@outlook.de
-TON-Wallet: UQBopac1WFJGC_KOK48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L
+Offizielle Telegram-Gruppe: https://t.me/EmeraldEcoSystem
+PayPal: Emerald@mail.de
+TON Wallet: UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L
 
-Version: Siehe /version für aktuelle Patchnotes
-'''
+Version & Änderungen: Nutze /version oder den entsprechenden Hinweis im Bot,
+um die aktuellen Patchnotes zu sehen.
+"""
 
 async def send_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Sendet das Benutzerhandbuch in der Nutzersprache
+    Sendet das Benutzerhandbuch in der Nutzersprache.
     """
-    user_lang = update.effective_user.language_code or 'de'
+    user_lang = update.effective_user.language_code or "de"
     
     # Übersetze den Text in die Nutzersprache
     translated = translate_hybrid(HELP_TEXT, target_lang=user_lang)
@@ -229,10 +343,10 @@ async def send_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Sende das Handbuch direkt als Nachricht
     await update.message.reply_text(
         translated,
-        parse_mode='Markdown',
+        parse_mode="Markdown",
         disable_web_page_preview=True
     )
 
-help_handler = CommandHandler('help', send_manual)
+help_handler = CommandHandler("help", send_manual)
 
-__all__ = ['help_handler']
+__all__ = ["help_handler"]

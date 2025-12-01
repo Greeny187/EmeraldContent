@@ -23,14 +23,6 @@ def register(app: Application):
     if miniapp and hasattr(miniapp, "register_miniapp"):
         miniapp.register_miniapp(app)
         logger.info("Learning miniapp registered")
-    
-    try:
-        webapp = app.webhook_application()
-        if webapp and miniapp and hasattr(miniapp, "register_miniapp_routes"):
-            miniapp.register_miniapp_routes(webapp, app)
-            logger.info("Learning miniapp routes registered")
-    except Exception as e:
-        logger.warning(f"Could not register miniapp routes: {e}")
 
 
 def register_jobs(app: Application):

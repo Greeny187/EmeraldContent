@@ -304,6 +304,10 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     logging.info(f"Webhook server listening on 0.0.0.0:{PORT}")
     await site.start()
+    
+    # Log all started bots
+    bot_names = ", ".join(sorted([cfg["name"] for cfg in BOTS if cfg["token"]]))
+    logging.info(f"✅ ALL BOTS STARTED SUCCESSFULLY ({len(APPLICATIONS)} bots): {bot_names}")
 
     try:
         while True:
