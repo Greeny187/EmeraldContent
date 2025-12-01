@@ -69,7 +69,7 @@ STATISTIK & REWARDS:
 • Sofort-Statistiken abrufen
 
 SONSTIGES:
-• Handbuch (dieses PDF)
+• Handbuch
 • Patchnotes anzeigen
 • Pro-Abo kaufen/verlängern
 • Sprache & Einstellungen
@@ -143,7 +143,7 @@ Nutzer verdienen EMRD-Token durch Engagement
 *5. Support & Kontakt*
 
 Website: https://greeny187.github.io/EmeraldContent/
-Support: https://t.me/EmeraldContentSupport
+Support: https://t.me/EmeraldEcoSystem
 PayPal: emerald@mail.de
 TON Wallet: UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L
 

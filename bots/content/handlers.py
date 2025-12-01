@@ -715,7 +715,7 @@ async def faq_autoresponder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lang = get_group_language(chat.id) or "de"
     context_info = (
-        "Support: https://t.me/EmeraldContentSupport • "
+        "Support: https://t.me/EmeraldEcosystem • "
     )
     prompt = f"Frage: {text}\n\n{context_info}\n\nAntworte knapp (2–3 Sätze) auf {lang}."
     try:
@@ -830,6 +830,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 Willkommen beim *Emerald Content Bot*!\n\n"
             "Ich helfe dir, deine Telegram-Gruppe automatisch zu verwalten "
             "inklusive Schutz, Statistiken, Rollenverwaltung, Captcha u.v.m.\n\n"
+            "Support: https://t.me/EmeraldEcosystem \n"
             "❓ Mehr Infos: [Zur Website](https://greeny187.github.io/EmeraldContent/)\n\n"
             "🎁 *Unterstütze das Projekt:*\n"
             "• TON Wallet: `UQBopac1WFJGC_K48T8JqcbRoH3evUoUDwS2oItlS-SgpR8L`\n"
