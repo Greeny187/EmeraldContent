@@ -20,6 +20,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
 from .access import parse_webapp_user_id, is_admin_or_owner
 from .patchnotes import __version__, PATCH_NOTES
+from shared.payments import create_payment_order 
 
 logger = logging.getLogger(__name__)
 
@@ -819,6 +820,43 @@ async def route_apply(request):
         )
     return web.Response(text="✅ Einstellungen gespeichert.")
 
+@routes.post('/miniapp/pay')
+async def route_pay(request: web.Request):
+    app: Application = request.app["ptb_app"]
+
+    if request.method == "OPTIONS":
+        return _cors_json({})
+
+    # User & Chat aus Request holen
+    cid = int(request.query.get("cid", "0") or 0)
+    uid = _resolve_uid(request)
+    if uid <= 0:
+        return _cors_json({"error": "auth_required"}, 403)
+
+    # Optional: nur Admins erlauben, oder später lockern
+    if not await _is_admin(app, cid, uid):
+        return _cors_json({"error": "forbidden"}, 403)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    plan = data.get("plan") or "pro_monthly"
+    provider = data.get("provider") or "walletconnect_ton"
+
+    from shared import payments  # falls nötig
+    try:
+        order = payments.create_payment_order(provider, plan, uid, cid)
+    except Exception as e:
+        logging.exception("payment error")
+        return _cors_json({"error": str(e)}, 500)
+
+    pay_url = order.get("pay_url")
+    if not pay_url:
+        return _cors_json({"error": "no_url"}, 500)
+
+    return _cors_json({"ok": True, "url": pay_url, "order_id": order.get("order_id")})
 
 async def route_file(request: web.Request):
     try:

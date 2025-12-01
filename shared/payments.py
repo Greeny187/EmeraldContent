@@ -36,20 +36,43 @@ WALLETCONNECT_PROJECT_ID = os.getenv("WALLETCONNECT_PROJECT_ID", "")
 WALLETCONNECT_ICON = "https://emeraldcontent.com/icon.png"  # Bot Icon URL
 
 PROVIDERS = {
-    "paypal":     {"label":"PayPal", "link_base": os.getenv("PAYPAL_LINK_BASE")},
-    "coinbase":   {"label":"Coinbase Commerce", "api_key": COINBASE_API_KEY, "webhook_secret": COINBASE_WEBHOOK_SECRET},
-    "walletconnect_ton": {"label":"TON Wallet (WalletConnect)", "wallet": TON_WALLET},
-    "walletconnect_near": {"label":"NEAR Wallet (WalletConnect)", "contract": os.getenv("NEAR_CONTRACT", "emeraldcontent.near")},
-    "binance":    {"label":"Binance Pay", "link_base": os.getenv("BINANCE_LINK_BASE")},
-    "bybit":      {"label":"Bybit Pay", "link_base": os.getenv("BYBIT_LINK_BASE")},
-    "revolut":    {"label":"Revolut Pay", "link_base": os.getenv("REVOLUT_LINK_BASE")},
-    "stars":      {"label":"Telegram Stars", "link_base": os.getenv("STARS_DEEPLINK")},
+    "paypal": {
+        "label": "PayPal",
+        "link_base": os.getenv("PAYPAL_LINK_BASE"),
+    },
+    "coinbase": {
+        "label": "Coinbase Commerce",
+        "api_key": COINBASE_API_KEY,
+        "webhook_secret": COINBASE_WEBHOOK_SECRET,
+    },
+    "walletconnect_ton": {
+        "label": "TonConnect (TON / EMRD)",
+        "wallet": TON_WALLET,
+    },
 }
 
+
 PLANS = {
-    "pro_monthly": {"label":"Pro (1 Monat)", "months":1, "price_eur": os.getenv("PRO_PRICE_EUR","4.99"), "price_usd": "5.99"},
-    "pro_yearly":  {"label":"Pro (12 Monate)", "months":12, "price_eur": os.getenv("PRO_YEAR_EUR","49.00"), "price_usd": "59.99"},
+    "pro_monthly": {
+        "label": "Pro (1 Monat)",
+        "months": 1,
+        "price_eur": os.getenv("PRO_PRICE_EUR", "4.95"),
+        "price_usd": "5.49",  # grob, nur Info
+    },
+    "pro_quarterly": {
+        "label": "Pro (3 Monate)",
+        "months": 3,
+        "price_eur": os.getenv("PRO_QUARTER_EUR", "13.95"),
+        "price_usd": "15.49",
+    },
+    "pro_yearly": {
+        "label": "Pro (12 Monate)",
+        "months": 12,
+        "price_eur": os.getenv("PRO_YEAR_EUR", "49.95"),
+        "price_usd": "54.99",
+    },
 }
+
 
 def _build_link(link_base:str, order_id:str, price:str)->str:
     """Generic payment link builder."""
@@ -110,7 +133,7 @@ async def create_coinbase_charge(order_id: str, price_eur: str, description: str
 
 def build_walletconnect_uri(provider: str, amount_eur: str, order_id: str) -> str:
     """
-    Erstelle WalletConnect URI für TON/NEAR Wallets.
+    Erstelle WalletConnect URI für TON Wallets.
     Format für WalletConnect Deep Link:
     - TON: tonclient://transfer?address=<addr>&amount=<nano>&text=<text>
     - Allgemein: wc://...<project_id>
@@ -119,12 +142,6 @@ def build_walletconnect_uri(provider: str, amount_eur: str, order_id: str) -> st
         # TON nanograms (1 TON = 1e9 nano)
         ton_amount = str(int(float(amount_eur) * 4))  # Vereinfachte Konvertierung
         return f"ton://transfer?address={TON_WALLET}&amount={ton_amount}&text=Order%20{order_id}"
-    
-    elif provider == "walletconnect_near":
-        near_amount = amount_eur  # In NEAR (approx. 1 EUR ≈ 0.25 NEAR, aber anpassen)
-        return f"near://call?contract={PROVIDERS['walletconnect_near']['contract']}&method=claim_pro&args=" \
-               f"{{'amount':'{near_amount}','order_id':'{order_id}'}}"
-    
     return ""
 
 def create_checkout(chat_id: int, provider: str, plan_key: str, user_id: int, webhook_url: str = "") -> dict:
@@ -159,7 +176,7 @@ def create_checkout(chat_id: int, provider: str, plan_key: str, user_id: int, we
             "webhook_url": webhook_url or WEBSITE
         }
     
-    elif provider in ("walletconnect_ton", "walletconnect_near"):
+    elif provider == "walletconnect_ton":
         uri = build_walletconnect_uri(provider, price_eur, order_id)
         return {
             "provider": provider,
@@ -183,16 +200,6 @@ def create_checkout(chat_id: int, provider: str, plan_key: str, user_id: int, we
             "order_id": order_id,
             "price": price_eur,
             "months": months
-        }
-    
-    elif provider == "stars":
-        # Telegram Stars - Deep Link
-        return {
-            "provider": "stars",
-            "order_id": order_id,
-            "price": price_eur,
-            "months": months,
-            "action": "telegram_stars"  # App sollte Telegram Stars API aufrufen
         }
     
     else:
@@ -219,22 +226,16 @@ def build_pro_menu(chat_id: int) -> InlineKeyboardMarkup:
     for key, plan in PLANS.items():
         row = []
         for prov_key, meta in PROVIDERS.items():
-            # Skip provider ohne konfiguration
-            if prov_key in ("coinbase", "walletconnect_ton", "walletconnect_near"):
-                # Diese brauchen spezielle Behandlung
-                if prov_key == "coinbase" and not COINBASE_API_KEY:
+            if prov_key == "coinbase":
+                if not COINBASE_API_KEY:
                     continue
-                row.append(InlineKeyboardButton(f"{plan['label']} • {meta['label']}", 
-                                              callback_data=f"pay:{prov_key}:{key}"))
-            elif prov_key in ("stars", "paypal"):
-                # Direct links
-                row.append(InlineKeyboardButton(f"{plan['label']} • {meta['label']}", 
-                                              callback_data=f"pay:{prov_key}:{key}"))
-            elif meta.get("link_base"):
-                row.append(InlineKeyboardButton(f"{plan['label']} • {meta['label']}", 
-                                              callback_data=f"pay:{prov_key}:{key}"))
-        if row:
-            kb.extend([row])
+                row.append(InlineKeyboardButton("coinbase"))
+            elif prov_key == "walletconnect_ton":
+                row.append(InlineKeyboardButton("walletconnect_ton"))
+            elif prov_key == "paypal":
+                row.append(InlineKeyboardButton("paypal"))
+                if row:
+                    kb.extend([row])
     
     kb.append([InlineKeyboardButton("🔎 Status prüfen", callback_data="pay:status")])
     return InlineKeyboardMarkup(kb)

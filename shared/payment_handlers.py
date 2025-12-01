@@ -67,7 +67,7 @@ async def handle_pro_payment_callback(update: Update, context: ContextTypes.DEFA
                 _handle_coinbase_payment(query, result, context)
             )
         
-        elif provider in ("walletconnect_ton", "walletconnect_near"):
+        elif provider in ("walletconnect_ton"):
             # Deep Link zu Wallet
             uri = result.get("uri", "")
             if uri:
