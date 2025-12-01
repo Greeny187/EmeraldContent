@@ -1,6 +1,6 @@
 from telegram.ext import Application
 from . import handlers, rss, mood, jobs as content_jobs
-from . import payment_handlers
+from shared import payment_handlers
 import os
 import logging
 from .miniapp import register_miniapp
