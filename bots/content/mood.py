@@ -10,7 +10,7 @@ from .database import save_mood, get_mood_counts, get_mood_question, set_mood_to
 logger = logging.getLogger(__name__)
 
 async def _call_db(fn, *args, **kwargs):
-    """Hilfsfunktion: unterstÃ¼tzt sync und async DB-Funktionen."""
+    """Hilfsfunktion: unterstützt sync und async DB-Funktionen."""
     try:
         if inspect.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)
@@ -23,7 +23,7 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Startet das Stimmungsbarometer."""
     chat = update.effective_chat
     if chat.type not in ("group", "supergroup"):
-        return await context.bot.send_message(chat_id=chat.id, text="âŒ Dieser Befehl ist nur in Gruppen nutzbar.")
+        return await context.bot.send_message(chat_id=chat.id, text="❌ Dieser Befehl ist nur in Gruppen nutzbar.")
 
     try:
         chat_info = await context.bot.get_chat(chat.id)
@@ -37,13 +37,13 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_forum and not topic_id:
         return await context.bot.send_message(
             chat_id=chat.id,
-            text="âš ï¸ Dieses Chat ist ein Forum. Bitte setze zuerst ein Mood-Topic via /setmoodtopic im gewÃ¼nschten Thema."
+            text="⚠️ Dieser Chat ist ein Forum. Bitte setze zuerst ein Mood-Topic via /setmoodtopic im gewünschten Thema."
         )
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("ðŸ‘", callback_data="mood_like"),
-        InlineKeyboardButton("ðŸ‘Ž", callback_data="mood_dislike"),
-        InlineKeyboardButton("ðŸ¤”", callback_data="mood_think"),
+        InlineKeyboardButton("👍", callback_data="mood_like"),
+        InlineKeyboardButton("👎", callback_data="mood_dislike"),
+        InlineKeyboardButton("🤔", callback_data="mood_think"),
     ]])
 
     try:
@@ -55,12 +55,12 @@ async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         logger.exception("Fehler beim Senden der Mood-Nachricht")
-        await context.bot.send_message(chat_id=chat.id, text="âš ï¸ Mood konnte nicht gesendet werden. PrÃ¼fe das gesetzte Topic.")
+        await context.bot.send_message(chat_id=chat.id, text="⚠️ Mood konnte nicht gesendet werden. Prüfe das gesetzte Topic.")
 
 async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Setzt das Mood-Topic fÃ¼r diesen Chat.
+    """Setzt das Mood-Topic für diesen Chat.
     Nutzung:
-      - In Foren: Command IM gewÃ¼nschten Thema ausfÃ¼hren (oder auf eine Nachricht in diesem Thema antworten).
+      - In Foren: Command IM gewünschten Thema ausführen (oder auf eine Nachricht in diesem Thema antworten).
       - Optional: /setmoodtopic <topic_id>  (setzt explizit auf diese Thread-ID)
       - In normalen Gruppen: setzt 'kein Topic' (globale Nutzung).
     """
@@ -72,7 +72,7 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return await msg.reply_text("Dieser Befehl funktioniert nur in Gruppen.")
 
-    # Admin-Check (nur Admins dÃ¼rfen setzen)
+    # Admin-Check (nur Admins dürfen setzen)
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
         admin_ids = {a.user.id for a in admins}
@@ -91,7 +91,7 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if m:
             topic_id = int(context.args[0].strip())
 
-    # 2) Falls Forum: aus aktuellem Thread oder Reply Ã¼bernehmen
+    # 2) Falls Forum: aus aktuellem Thread oder Reply übernehmen
     if topic_id is None and getattr(chat, "is_forum", False):
         topic_id = msg.message_thread_id or (
             msg.reply_to_message.message_thread_id if msg.reply_to_message else None
@@ -111,7 +111,7 @@ async def set_mood_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _call_db(set_mood_topic, chat.id, int(topic_id) if topic_id is not None else None)
     except Exception:
         logger.exception("Fehler beim Speichern des Mood-Topic")
-        return await msg.reply_text("âš ï¸ Konnte Mood-Topic nicht speichern.")
+        return await msg.reply_text("⚠️ Konnte Mood-Topic nicht speichern.")
 
     # Feedback
     if topic_id is None:
@@ -134,9 +134,9 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _call_db(save_mood, chat.id, message_id, user.id, mood)
         counts = await _call_db(get_mood_counts, chat.id, message_id)
         
-        # Text mit aktuellen ZÃ¤hlungen aktualisieren
+        # Text mit aktuellen Zählungen aktualisieren
         original_text = query.message.text
-        txt = f"{original_text}\n\nðŸ‘ {counts.get('like',0)} | ðŸ‘Ž {counts.get('dislike',0)} | ðŸ¤” {counts.get('think',0)}"
+        txt = f"{original_text}\n\n👍 {counts.get('like',0)} | 👎 {counts.get('dislike',0)} | 🤔 {counts.get('think',0)}"
         
         # Message mit neuen ZÃ¤hlungen editieren
         await query.edit_message_text(
@@ -146,16 +146,13 @@ async def mood_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.exception("Fehler beim Speichern der Mood-Stimme")
-        await query.answer("âš ï¸ Konnte Stimme nicht speichern.", show_alert=True)
+        await query.answer("⚠️ Konnte Stimme nicht speichern.", show_alert=True)
 
-# In mood.py temporÃ¤r hinzufÃ¼gen:
-async def debug_setmoodtopic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"DEBUG: setmoodtopic wurde aufgerufen in Chat {update.effective_chat.id}")
     
 def register_mood(app):
     # Commands und Callbacks in Gruppe -3 (höchste Priorität, BEVOR andere Handler greifen)
     app.add_handler(CommandHandler("mood", mood_command, filters=filters.ChatType.GROUPS), group=-3)
     app.add_handler(CommandHandler("setmoodtopic", set_mood_topic_cmd, filters=filters.ChatType.GROUPS), group=-3)
     # WICHTIG: CallbackQueryHandler MUSS FRÜH registriert sein (gruppe -3), bevor andere patterns greifen
-    app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_"), group=-3)
+    app.add_handler(CallbackQueryHandler(mood_callback, pattern=r"^mood_", filters=filters.ChatType.GROUPS), group=-3)
 
