@@ -1,5 +1,5 @@
 from telegram.ext import Application
-from . import handlers, rss, mood, jobs as content_jobs
+from . import handlers, rss, debug, mood, jobs as content_jobs
 from shared import payment_handlers
 import os
 import logging
@@ -33,6 +33,8 @@ def register(app):
     if hasattr(payment_handlers, "register_payment_handlers"):
         payment_handlers.register_payment_handlers(app)
 
+    if hasattr(debug, "register_debug"):
+        debug.register_debug(app)
     register_miniapp(app)  # Bot-Befehle registrieren
     
 def register_jobs(app: Application):
