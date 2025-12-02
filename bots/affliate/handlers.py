@@ -1,8 +1,13 @@
 """Affiliate Bot - Referral System"""
 
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
+from .database import (
+    create_referral, get_referral_stats, get_tier_info, 
+    verify_ton_wallet, request_payout, get_pending_payouts
+)
 
 logger = logging.getLogger(__name__)
 
@@ -12,35 +17,62 @@ except ImportError:
     async def award_points(*args, **kwargs):
         pass
 
+# Configuration
+AFFILIATE_MINIAPP_URL = os.getenv(
+    "AFFILIATE_MINIAPP_URL",
+    "https://greeny187.github.io/EmeraldContentBots/miniapp/appaffiliate.html"
+)
+MINIMUM_PAYOUT = 1000  # EMRD
+EMRD_CONTRACT = os.getenv("EMRD_CONTRACT", "EQA0rJDTy_2sS30KxQW8HO0_ERqmOGUhMWlwdL-2RpDmCrK5")
+
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Affiliate Bot - Referral Program"""
     user = update.effective_user
     chat = update.effective_chat
     
+    # Check for referral parameter
+    if context.args and context.args[0].startswith("aff_"):
+        referrer_id = int(context.args[0].replace("aff_", ""))
+        if referrer_id != user.id:
+            create_referral(referrer_id, user.id)
+            logger.info(f"New referral: {user.id} referred by {referrer_id}")
+    
     if chat.type == "private":
-        await update.message.reply_text(
-            "💰 **Emerald Affiliate Program**\n\n"
+        welcome_text = (
+            "💚 **Emerald Affiliate Program**\n\n"
             "Verdiene EMRD mit Referrals!\n\n"
-            "🎁 Features:\n"
-            "• Einzigartige Links\n"
-            "• Tracking\n"
-            "• Provisionen\n"
-            "• Statistiken\n",
-            parse_mode="Markdown"
+            "✨ **Features:**\n"
+            "• 🔗 Einzigartige Links\n"
+            "• 📊 Echtzeit Tracking\n"
+            "• 💰 Provisionen (5-20%)\n"
+            "• 🏆 Tier-System\n"
+            "• 🪙 TON Connect & Claiming\n\n"
+            "🎯 **Verdienmodell:**\n"
+            "🥉 Bronze: 5% (0-999 EMRD)\n"
+            "🥈 Silver: 10% (1000-4999 EMRD)\n"
+            "🥇 Gold: 15% (5000-9999 EMRD)\n"
+            "🔶 Platinum: 20% (10000+ EMRD)"
         )
+        await update.message.reply_text(welcome_text, parse_mode="Markdown")
         
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "💰 Dashboard",
-                web_app=WebAppInfo(url="https://greeny187.github.io/EmeraldContentBots/miniapp/appaffiliate.html")
+                web_app=WebAppInfo(url=AFFILIATE_MINIAPP_URL)
             )],
-            [InlineKeyboardButton("📊 Stats", callback_data="aff_stats")],
-            [InlineKeyboardButton("❓ Hilfe", callback_data="aff_help")]
+            [
+                InlineKeyboardButton("📊 Stats", callback_data="aff_stats"),
+                InlineKeyboardButton("🪙 Wallet", callback_data="aff_wallet")
+            ],
+            [
+                InlineKeyboardButton("💬 Support", callback_data="aff_help"),
+                InlineKeyboardButton("🔗 Link", callback_data="aff_link")
+            ]
         ])
         await update.message.reply_text("Wähle eine Option:", reply_markup=keyboard)
     else:
-        await update.message.reply_text("💰 Affiliate Program aktiv!")
+        await update.message.reply_text("💚 Affiliate Program aktiv!")
 
 
 async def cmd_my_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,42 +81,73 @@ async def cmd_my_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     link = f"https://t.me/emerald_bot?start=aff_{user.id}"
     
-    await update.message.reply_text(
+    link_text = (
         f"🔗 **Dein Affiliate Link**\n\n"
         f"`{link}`\n\n"
-        f"Teile ihn und verdiene Provisionen!",
-        parse_mode="Markdown"
+        f"📋 Klick zum Kopieren"
     )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Kopieren", callback_data="aff_copy_link")],
+        [InlineKeyboardButton("📤 Teilen", url=f"https://t.me/share/url?url={link}")],
+    ])
+    
+    await update.message.reply_text(link_text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get referral stats"""
     user = update.effective_user
     
-    await update.message.reply_text(
-        "📊 **Deine Affiliate Stats**\n\n"
-        "Öffne das Dashboard für Details.",
-        parse_mode="Markdown"
+    stats = get_referral_stats(user.id)
+    tier_info = get_tier_info(user.id)
+    
+    stats_text = (
+        f"📊 **Deine Affiliate Stats**\n\n"
+        f"👥 **Referrals:** {stats.get('total_referrals', 0)}\n"
+        f"✅ **Aktive:** {stats.get('active_referrals', 0)}\n\n"
+        f"💰 **Verdienst:**\n"
+        f"Gesamt: {stats.get('total_earned', 0):.2f} EMRD\n"
+        f"Verfügbar: {stats.get('pending', 0):.2f} EMRD\n"
+        f"Ausgezahlt: {stats.get('total_earned', 0) - stats.get('pending', 0):.2f} EMRD\n\n"
     )
+    
+    if tier_info:
+        stats_text += (
+            f"🏆 **Tier:** {tier_info['tier_emoji']} {tier_info['tier'].upper()}\n"
+            f"📈 **Provision:** {tier_info['commission_rate']*100:.0f}%"
+        )
+    
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help"""
     help_text = """
-💰 **Affiliate Bot - Hilfe**
+💚 **Affiliate Bot - Hilfe**
 
-*Befehle:*
+**Befehle:**
 /start - Willkommen
 /link - Affiliate Link
 /stats - Statistiken
-/payouts - Auszahlungen
+/help - Hilfe
 
-*Provisionen:*
-• Neue User: 10 EMRD
-• Aktive User: 5% Rewards
-• Premium: 15% Rewards
+**Provisionen:**
+🥉 Bronze (0-999 EMRD): 5% pro Referral
+🥈 Silver (1-4999 EMRD): 10% pro Referral
+🥇 Gold (5-9999 EMRD): 15% pro Referral
+🔶 Platinum (10000+ EMRD): 20% pro Referral
 
-*Minimum Payout:* 1000 EMRD
+**Minimale Auszahlung:** 1.000 EMRD
+
+**Features:**
+✅ Echtzeit Tracking
+✅ TON Connect Wallet
+✅ EMRD Token Claiming
+✅ Instant Payout
+✅ Tier Bonuses
+
+Fragen? Wende dich an @emeraldecosystem
 """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -94,10 +157,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    user = update.effective_user
+    
     if query.data == "aff_help":
         await cmd_help(update, context)
     elif query.data == "aff_stats":
         await cmd_stats(update, context)
+    elif query.data == "aff_link":
+        await cmd_my_link(update, context)
+    elif query.data == "aff_wallet":
+        wallet_text = (
+            "🪙 **TON Connect Wallet**\n\n"
+            "Öffne das Dashboard um dein TON Wallet zu verbinden.\n\n"
+            "✅ Wallet Connected\n"
+            "✅ EMRD Claiming enabled\n"
+            "✅ Instant Payout aktiv"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "💰 Dashboard",
+                web_app=WebAppInfo(url=AFFILIATE_MINIAPP_URL)
+            )],
+        ])
+        await query.edit_message_text(wallet_text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 def register_handlers(app):

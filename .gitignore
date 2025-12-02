@@ -8,3 +8,5 @@ __pycache__/devdash_api.cpython-313.pyc
 START_HERE.md
 .env
 .env
+bots/affliate/__pycache__/test_config.cpython-313-pytest-8.4.2.pyc
+.env

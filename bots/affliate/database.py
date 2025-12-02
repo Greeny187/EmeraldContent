@@ -4,6 +4,7 @@ import os
 import psycopg2
 from datetime import datetime, timedelta
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +60,13 @@ def init_all_schemas():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS aff_commissions (
                 id SERIAL PRIMARY KEY,
-                referrer_id BIGINT NOT NULL,
+                referrer_id BIGINT NOT NULL UNIQUE,
                 total_earned NUMERIC(20,2) DEFAULT 0,
                 total_withdrawn NUMERIC(20,2) DEFAULT 0,
                 pending NUMERIC(20,2) DEFAULT 0,
                 tier VARCHAR(50) DEFAULT 'bronze',
+                wallet_address VARCHAR(255),
+                ton_connect_verified BOOLEAN DEFAULT FALSE,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
@@ -76,6 +79,7 @@ def init_all_schemas():
                 amount NUMERIC(20,2),
                 status VARCHAR(50) DEFAULT 'pending',
                 tx_hash VARCHAR(255),
+                wallet_address VARCHAR(255),
                 requested_at TIMESTAMP DEFAULT NOW(),
                 completed_at TIMESTAMP,
                 FOREIGN KEY (referrer_id) REFERENCES aff_commissions(referrer_id)
@@ -281,6 +285,133 @@ def get_pending_payouts(referrer_id):
     except Exception as e:
         logger.error(f"Get payouts error: {e}")
         return []
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def verify_ton_wallet(referrer_id, wallet_address):
+    """Verify TON wallet"""
+    conn = get_connection()
+    if not conn:
+        return False
+    
+    try:
+        cur = conn.cursor()
+        
+        cur.execute("""
+            UPDATE aff_commissions SET
+            wallet_address = %s,
+            ton_connect_verified = TRUE
+            WHERE referrer_id = %s
+        """, (wallet_address, referrer_id))
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Verify wallet error: {e}")
+        conn.rollback()
+        return False
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def get_tier_info(referrer_id):
+    """Get tier information"""
+    conn = get_connection()
+    if not conn:
+        return None
+    
+    try:
+        cur = conn.cursor()
+        
+        cur.execute("""
+            SELECT 
+            total_earned,
+            CASE 
+                WHEN total_earned >= 10000 THEN 'platinum'
+                WHEN total_earned >= 5000 THEN 'gold'
+                WHEN total_earned >= 1000 THEN 'silver'
+                ELSE 'bronze'
+            END as tier,
+            CASE 
+                WHEN total_earned >= 10000 THEN '🔶'
+                WHEN total_earned >= 5000 THEN '🥇'
+                WHEN total_earned >= 1000 THEN '🥈'
+                ELSE '🥉'
+            END as tier_emoji,
+            CASE 
+                WHEN total_earned >= 10000 THEN 0.20
+                WHEN total_earned >= 5000 THEN 0.15
+                WHEN total_earned >= 1000 THEN 0.10
+                ELSE 0.05
+            END as commission_rate
+            FROM aff_commissions
+            WHERE referrer_id = %s
+        """, (referrer_id,))
+        
+        row = cur.fetchone()
+        if row:
+            return {
+                'total_earned': float(row[0]),
+                'tier': row[1],
+                'tier_emoji': row[2],
+                'commission_rate': float(row[3])
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Get tier error: {e}")
+        return None
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def complete_payout(payout_id, tx_hash):
+    """Complete payout with transaction hash"""
+    conn = get_connection()
+    if not conn:
+        return False
+    
+    try:
+        cur = conn.cursor()
+        
+        cur.execute("""
+            UPDATE aff_payouts SET
+            status = 'completed',
+            tx_hash = %s,
+            completed_at = NOW()
+            WHERE id = %s
+        """, (tx_hash, payout_id))
+        
+        # Get referrer_id and amount
+        cur.execute("""
+            SELECT referrer_id, amount FROM aff_payouts WHERE id = %s
+        """, (payout_id,))
+        
+        row = cur.fetchone()
+        if row:
+            referrer_id, amount = row
+            # Update total_withdrawn
+            cur.execute("""
+                UPDATE aff_commissions SET
+                total_withdrawn = total_withdrawn + %s
+                WHERE referrer_id = %s
+            """, (amount, referrer_id))
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Complete payout error: {e}")
+        conn.rollback()
+        return False
     finally:
         if cur:
             cur.close()
