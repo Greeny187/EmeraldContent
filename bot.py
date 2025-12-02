@@ -8,7 +8,6 @@ from importlib import import_module
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
-from bots.content import app as content_app
 
 # Support Bot API
 try:
