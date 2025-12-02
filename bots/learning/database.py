@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 import os
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ def mark_module_complete(user_id: int, module_id: int) -> bool:
             conn.close()
 
 
-def issue_certificate(user_id: int, course_id: int) -> str or None:
+def issue_certificate(user_id: int, course_id: int) -> Optional[str]:
     """Issue course certificate"""
     import hashlib
     

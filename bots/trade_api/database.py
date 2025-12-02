@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ def create_portfolio(user_id: int, name: str) -> bool:
         conn.close()
 
 
-def get_portfolio(user_id: int) -> dict or None:
+def get_portfolio(user_id: int) -> Optional[dict]:
     """Get user's portfolio"""
     conn = get_db_connection()
     if not conn:
