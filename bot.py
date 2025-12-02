@@ -9,6 +9,14 @@ from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, PicklePersistence
 from bots.content import app as content_app
+
+# Support Bot API
+try:
+    from bots.support.support_api import router as support_router
+except Exception as e:
+    logging.warning(f"Support API import failed: {e}")
+    support_router = None
+
 try:
     from bots.content.miniapp import register_miniapp_routes as _register_content_miniapp_routes
 except Exception:
@@ -285,6 +293,28 @@ async def main():
             logging.warning("Affiliate miniapp registration failed: %s", e)
     
     logging.info("DevDash mounting on: %r", type(webapp))
+    
+    # Register Support Bot API routes
+    if support_router:
+        try:
+            # Add Support API routes to webapp
+            # These will handle /api/support/* requests
+            async def support_api_handler(request):
+                """Route support API requests to FastAPI router"""
+                # Get path info after /api/support
+                path = request.rel_url.path_qs
+                method = request.method
+                
+                # Simple proxy: match routes and handle
+                # For now, return 404 as FastAPI integration needs ASGI
+                return web.json_response(
+                    {"error": "Support API requires ASGI support"},
+                    status=503
+                )
+            
+            logging.info("Support Bot API router imported (requires ASGI/FastAPI integration)")
+        except Exception as e:
+            logging.warning(f"Support API registration failed: {e}")
     
     await ensure_tables()
     try:

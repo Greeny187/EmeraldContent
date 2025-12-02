@@ -1,171 +1,175 @@
-"""Support Bot - Ticket System & Command Handlers"""
+"""Support Bot - Telegram Handlers (v1.0)"""
 
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 import uuid
 
 logger = logging.getLogger(__name__)
 
-try:
-    from shared.emrd_rewards_integration import award_points
-    from . import database
-except ImportError:
-    database = None
-    async def award_points(*args, **kwargs):
-        pass
+# Webapp URL
+WEBAPP_URL = os.getenv(
+    "SUPPORT_WEBAPP_URL",
+    "https://greeny187.github.io/EmeraldContentBots/miniapp/appsupport.html"
+)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Willkommensbefehl"""
+    """Willkommensbefehl - Starte Support Bot"""
     user = update.effective_user
     chat = update.effective_chat
     
-    if chat.type == "private":
-        await update.message.reply_text(
-            "🎫 **Emerald Support**\n\n"
-            "Brauchst du Hilfe? Erstelle ein Support-Ticket!\n\n"
-            "📋 Services:\n"
-            "• Technical Support\n"
-            "• Account Issues\n"
-            "• Billing & Payments\n"
-            "• General Inquiries\n",
-            parse_mode="Markdown"
-        )
-        
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🎫 Support öffnen",
-                web_app=WebAppInfo(url="https://greeny187.github.io/EmeraldContentBots/miniapp/appsupport.html")
-            )],
-            [InlineKeyboardButton("❓ FAQ", callback_data="support_faq")]
-        ])
-        await update.message.reply_text("Wähle eine Option:", reply_markup=keyboard)
-    else:
-        await update.message.reply_text("🎫 Support Bot aktiv!")
+    text = (
+        "🎫 **Emerald Support**\n\n"
+        "Willkommen! Hier kannst du Support-Tickets erstellen und verwalten.\n\n"
+        "**Wie es funktioniert:**\n"
+        "1. Öffne die Mini-App\n"
+        "2. Wähle eine Kategorie\n"
+        "3. Beschreibe dein Problem\n"
+        "4. Warte auf Support-Antwort\n"
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔧 Support Mini-App öffnen", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [InlineKeyboardButton("❓ FAQ", callback_data="support_faq")],
+        [InlineKeyboardButton("📋 Meine Tickets", callback_data="support_tickets")]
+    ])
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def cmd_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Create new support ticket"""
-    user = update.effective_user
+    """Erstelle Support-Ticket - öffne Mini-App"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Neues Ticket", web_app=WebAppInfo(url=WEBAPP_URL + "?tab=create"))]
+    ])
     
     await update.message.reply_text(
-        "🎫 **Neues Support-Ticket**\n\n"
-        "Beschreibe dein Problem kurz:",
-        parse_mode="Markdown"
+        "📝 **Neues Support-Ticket**\n\nÖffne die Mini-App, um ein neues Ticket zu erstellen.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
     )
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check ticket status"""
-    user = update.effective_user
+    """Überprüfe meine Tickets"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Meine Tickets", web_app=WebAppInfo(url=WEBAPP_URL + "?tab=mine"))]
+    ])
     
-    if database:
-        try:
-            tickets = database.get_user_tickets(user.id)
-            if tickets:
-                text = "🎫 **Deine Tickets:**\n\n"
-                for ticket in tickets:
-                    status = "✅ Gelöst" if ticket['status'] == 'closed' else "⏳ Offen"
-                    text += f"#{ticket['ticket_id']}: {status}\n"
-                await update.message.reply_text(text, parse_mode="Markdown")
-            else:
-                await update.message.reply_text("Du hast noch keine Tickets.")
-        except Exception as e:
-            logger.error(f"Error fetching tickets: {e}")
-            await update.message.reply_text("Fehler beim Abrufen der Tickets.")
-    else:
-        await update.message.reply_text("Ticketsystem nicht verfügbar.")
+    await update.message.reply_text(
+        "🔍 **Meine Tickets überprüfen**\n\nÖffne die Mini-App um deine Tickets zu sehen.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show help"""
+    """Zeige Hilfe"""
     help_text = """
-🎫 **Support Bot - Hilfe**
+🎫 **Emerald Support Bot - Hilfe**
 
-*Befehle:*
+**Verfügbare Befehle:**
 /start - Willkommen
-/ticket - Neues Ticket
-/status - Ticket-Status
-/faq - Häufig gestellte Fragen
+/ticket - Neues Ticket erstellen
+/status - Meine Tickets überprüfen
+/help - Diese Hilfe
 
-*Antwortzeitr:*
-⚡ Critical: < 1 Stunde
-🟠 High: < 4 Stunden
+**Kategorien:**
+• Allgemein - Allgemeine Fragen
+• Technik - Technische Probleme
+• Zahlungen - Rechnungs-/Zahlungsfragen
+• Konto - Konto-Verwaltung
+• Feedback - Dein Feedback
+
+**Antwortzeiten (SLA):**
+⚡ Kritisch: < 1 Stunde
+🟠 Hoch: < 4 Stunden
 🟡 Normal: < 24 Stunden
 
-*Kontakt:*
-📧 support@emerald.com
-💬 Telegram Support Group
+**Support-Zeiten:**
+Montag–Freitag, 9–18 Uhr CET
 """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Button callbacks"""
+    """Handle Button Callbacks"""
     query = update.callback_query
     await query.answer()
     
     if query.data == "support_faq":
         faq_text = """
-❓ **Häufig Gestellte Fragen**
+❓ **Häufig gestellte Fragen**
+
+**Wie erstelle ich ein Ticket?**
+Nutze den /ticket Befehl oder öffne die Mini-App.
 
 **Wie lange dauert Support?**
-Normalerweise 24 Stunden, kritische Fälle schneller.
+Normalerweise 24 Stunden (abhängig von Priorität).
 
-**Kann ich mein Ticket eskalieren?**
-Ja, durch die Mini-App oder /ticket command.
+**Kann ich mein Ticket nachverfolgen?**
+Ja, mit dem /status Befehl oder in der Mini-App.
 
-**Wo finde ich meine Tickets?**
-Nutze /status oder öffne die Mini-App.
+**Welche Kategorien gibt es?**
+Allgemein, Technik, Zahlungen, Konto, Feedback.
+
+**Was ist eine Antwort auf ein Ticket?**
+Du kannst weitere Informationen ergänzen, bevor wir antworten.
 """
         await query.edit_message_text(faq_text, parse_mode="Markdown")
+    
+    elif query.data == "support_tickets":
+        await query.edit_message_text(
+            "📋 Öffne die Mini-App um deine Tickets zu sehen.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔧 Mini-App öffnen", web_app=WebAppInfo(url=WEBAPP_URL))]
+            ])
+        )
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle support messages"""
+    """Handle Text-Messages - Directed to Mini-App"""
     user = update.effective_user
     message = update.message
     
-    try:
-        await award_points(user.id, "message_sent", update.effective_chat.id)
-    except Exception:
-        pass
+    text = (
+        "Für Support nutze bitte die Mini-App oder die verfügbaren Befehle:\n\n"
+        "/ticket - Neues Support-Ticket\n"
+        "/status - Meine Tickets überprüfen\n"
+        "/help - Hilfe\n"
+    )
     
-    # Check if this is a reply to a ticket
-    if message.reply_to_message:
-        if database:
-            try:
-                # Get or create ticket
-                ticket_id = str(uuid.uuid4())[:8]
-                database.create_ticket(user.id, "General", message.text, ticket_id)
-                
-                await message.reply_text(
-                    f"✅ Ticket #{ticket_id} erstellt!\n\n"
-                    f"Wir antworten bald.\n"
-                    f"Nutze /status um den Status zu prüfen.",
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logger.error(f"Error creating ticket: {e}")
-                await message.reply_text("Fehler beim Erstellen des Tickets.")
-    else:
-        if "help" in message.text.lower():
-            await cmd_help(update, context)
-        else:
-            await message.reply_text(
-                "Nutze /ticket um ein neues Support-Ticket zu erstellen.\n"
-                "Tippe /help für Informationen."
-            )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔧 Support öffnen", web_app=WebAppInfo(url=WEBAPP_URL))]
+    ])
+    
+    await message.reply_text(text, reply_markup=keyboard)
 
 
 def register_handlers(app):
-    """Register handlers"""
-    app.add_handler(CommandHandler("start", cmd_start), group=0)
-    app.add_handler(CommandHandler("support", cmd_start), group=0)
+    """Registriere alle Handler"""
+    # Commands
+    app.add_handler(CommandHandler(["start", "support"], cmd_start), group=0)
     app.add_handler(CommandHandler("ticket", cmd_ticket), group=0)
     app.add_handler(CommandHandler("status", cmd_status), group=0)
     app.add_handler(CommandHandler("help", cmd_help), group=0)
     
-    app.add_handler(CallbackQueryHandler(button_callback), group=1)
+    # Callbacks
+    app.add_handler(CommandHandler("callback", button_callback), group=1)
+    
+    # Text messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler), group=2)
+
+
+# Für Integration in main bot.py
+def register(app):
+    """Registriere Handler (wird aus bot.py aufgerufen)"""
+    register_handlers(app)
+    logger.info("Support handlers registered")
+
+
+def register_jobs(app):
+    """Registriere geplante Jobs (optional)"""
+    logger.info("Support jobs registered (empty for v1.0)")
