@@ -6,7 +6,7 @@ from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from shared.telethon_client import telethon_client, start_telethon
-from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
 from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     get_all_group_ids, get_clean_deleted_settings, get_agg_rows, get_last_agg_stat_date, guess_agg_start_date,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
