@@ -127,9 +127,13 @@ async def build_application(bot_cfg: Dict, is_primary: bool) -> Application:
     # Bot-Plugin laden (sauber: bots.<name>.app)
     pkg = import_module(f"bots.{name}.app")
     if hasattr(pkg, "register"):
-        pkg.register(app)
+        result = pkg.register(app)
+        if asyncio.iscoroutine(result):
+            await result
     if is_primary and hasattr(pkg, "register_jobs"):
-        pkg.register_jobs(app)
+        result = pkg.register_jobs(app)
+        if asyncio.iscoroutine(result):
+            await result
 
     async def _post_init(application: Application) -> None:
         try:

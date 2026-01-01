@@ -5,7 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Body
 from pydantic import BaseModel, Field, validator
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-import sql as store
+from . import sql as store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/support", tags=["support"])

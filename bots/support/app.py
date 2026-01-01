@@ -12,7 +12,11 @@ logger = logging.getLogger("bot.support")
 
 # Import handlers and database
 from . import handlers
-from . import sql
+try:
+    from . import sql
+except ImportError as e:
+    logger.warning(f"Could not import sql module: {e}")
+    sql = None
 
 
 async def register(app: Application):

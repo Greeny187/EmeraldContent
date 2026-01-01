@@ -11,7 +11,7 @@ from typing import Optional
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, Application, filters
 
-import sql  # Import SQL layer
+from . import sql  # Import SQL layer
 
 log = logging.getLogger("bot.support.miniapp")
 
