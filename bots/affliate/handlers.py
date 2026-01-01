@@ -6,7 +6,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppI
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 from .database import (
     create_referral, get_referral_stats, get_tier_info, 
-    verify_ton_wallet, request_payout, get_pending_payouts
+    verify_ton_wallet, request_payout, get_pending_payouts,
+    init_commission_record, record_conversion
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ AFFILIATE_MINIAPP_URL = os.getenv(
     "AFFILIATE_MINIAPP_URL",
     "https://greeny187.github.io/EmeraldContentBots/miniapp/appaffiliate.html"
 )
-MINIMUM_PAYOUT = 1000  # EMRD
+MINIMUM_PAYOUT = int(os.getenv("MINIMUM_PAYOUT", 1000))
 EMRD_CONTRACT = os.getenv("EMRD_CONTRACT", "EQA0rJDTy_2sS30KxQW8HO0_ERqmOGUhMWlwdL-2RpDmCrK5")
 
 

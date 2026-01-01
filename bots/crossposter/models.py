@@ -59,6 +59,27 @@ async def stats(tenant_id: int, owner_user_id: int):
     )
     return int(total_routes), [dict(x) for x in last_logs]
 
+# Logs
+async def get_logs(tenant_id: int, route_id: int = None, status: str = None, limit: int = 50):
+    pool = await get_pool()
+    query = "SELECT id, route_id, status, dest_descriptor, error, created_at FROM crossposter_logs WHERE tenant_id=$1"
+    params = [tenant_id]
+    if route_id:
+        query += f" AND route_id=${len(params)+1}"
+        params.append(route_id)
+    if status:
+        query += f" AND status=${len(params)+1}"
+        params.append(status)
+    query += f" ORDER BY created_at DESC LIMIT {limit}"
+    return await pool.fetch(query, *params)
+
+async def log_event(tenant_id: int, route_id: int, source_chat_id: int, source_message_id: int, dest_descriptor: Dict, status: str, error: str = None, dedup_hash: str = None):
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO crossposter_logs (tenant_id, route_id, source_chat_id, source_message_id, dest_descriptor, status, error, dedup_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        tenant_id, route_id, source_chat_id, source_message_id, dest_descriptor, status, error, dedup_hash
+    )
+
 # Connectors
 async def upsert_connector(tenant_id: int, type_: str, label: str, config: dict, active: bool = True):
     pool = await get_pool()
@@ -80,3 +101,13 @@ async def get_connector(tenant_id: int, type_: str):
 async def list_connectors(tenant_id: int):
     pool = await get_pool()
     return await pool.fetch("SELECT id, type, label, active FROM connectors WHERE tenant_id=$1 ORDER BY type, id DESC", tenant_id)
+
+# Validate route before processing
+async def get_route(route_id: int):
+    pool = await get_pool()
+    return await pool.fetchrow("SELECT * FROM crossposter_routes WHERE id=$1", route_id)
+
+async def is_route_active(route_id: int) -> bool:
+    pool = await get_pool()
+    return await pool.fetchval("SELECT active FROM crossposter_routes WHERE id=$1", route_id) or False
+

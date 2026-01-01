@@ -1,14 +1,35 @@
-# __init__.py
-from telegram.ext import CommandHandler, Application
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-import os
+# __init__.py - Support Bot Package
+"""
+Emerald Support Bot - Complete support ticket system for Telegram
+Provides handlers, API endpoints, and WebApp integration
+"""
 
-WEBAPP_URL = os.getenv("SUPPORT_WEBAPP_URL", "https://.../appsupport.html")
+__version__ = "1.0.0"
+__author__ = "Emerald Community"
 
-async def start(update, ctx):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔧 Support Mini-App öffnen", web_app=WebAppInfo(url=WEBAPP_URL))]])
-    await update.message.reply_text("Hier ist der Emerald Support. Öffne die Mini-App:", reply_markup=kb)
+# Main entry points
+from . import app as support_app
+from . import handlers
+from . import config
 
-def register(app: Application):
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("support", start))
+# Expose main functions
+async def register(telegram_app):
+    """Register support bot handlers with main telegram app"""
+    return await support_app.register(telegram_app)
+
+async def register_jobs(telegram_app):
+    """Register support bot jobs with main telegram app"""
+    return await support_app.register_jobs(telegram_app)
+
+async def init_schema():
+    """Initialize database schema"""
+    return await support_app.init_schema()
+
+__all__ = [
+    "support_app",
+    "handlers",
+    "config",
+    "register",
+    "register_jobs",
+    "init_schema",
+]

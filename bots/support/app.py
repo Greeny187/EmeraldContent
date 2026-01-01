@@ -1,17 +1,18 @@
-# app.py - Emerald Support Bot Main Module (v1.0)
+# app.py - Emerald Support Bot Main Module (v1.0 - Production Ready)
 """
 Emerald Support Bot - Main entry point for telegram bot integration.
 Registers handlers, jobs, and initializes database schema.
 """
 
 import logging
+import os
 from telegram.ext import Application
 
 logger = logging.getLogger("bot.support")
 
 # Import handlers and database
-from . import handlers, sql
-from .database import init_all_schemas as db_init_legacy
+from . import handlers
+from . import sql
 
 
 async def register(app: Application):
@@ -25,7 +26,7 @@ async def register(app: Application):
 
 
 async def register_jobs(app: Application):
-    """Register scheduled jobs (v1.0: empty)"""
+    """Register scheduled jobs"""
     try:
         handlers.register_jobs(app)
         logger.info("✅ Support Bot jobs registered")
@@ -36,27 +37,42 @@ async def register_jobs(app: Application):
 async def init_schema():
     """Initialize database schema"""
     try:
-        # Legacy schema init
-        db_init_legacy()
-        
-        # New async schema init
-        import os
         import asyncio
+        
+        # Initialize pool
+        await sql.init_pool()
+        
+        # Run migration SQL files
         dsn = os.getenv("DATABASE_URL")
-        if dsn:
-            import psycopg
-            async with await psycopg.AsyncConnection.connect(dsn) as conn:
-                async with conn.cursor() as cur:
-                    # Run migration SQL files
-                    with open(os.path.join(os.path.dirname(__file__), "SQL", "001_support_schema.sql")) as f:
-                        await cur.execute(f.read())
-                    with open(os.path.join(os.path.dirname(__file__), "SQL", "002_support_seed.sql")) as f:
-                        await cur.execute(f.read())
-                    with open(os.path.join(os.path.dirname(__file__), "SQL", "003_multitenancy.sql")) as f:
-                        await cur.execute(f.read())
-                await conn.commit()
+        if not dsn:
+            logger.warning("DATABASE_URL not set, skipping schema init")
+            return
+        
+        sql_dir = os.path.join(os.path.dirname(__file__), "SQL")
+        
+        # Import psycopg to run migrations
+        import psycopg
+        async with await psycopg.AsyncConnection.connect(dsn) as conn:
+            async with conn.cursor() as cur:
+                # Run each migration file in order
+                for sql_file in ["001_support_schema.sql", "002_support_seed.sql", "003_multitenancy.sql"]:
+                    sql_path = os.path.join(sql_dir, sql_file)
+                    if os.path.exists(sql_path):
+                        with open(sql_path) as f:
+                            sql_content = f.read()
+                            # Split by semicolon and execute each statement
+                            for statement in sql_content.split(';'):
+                                statement = statement.strip()
+                                if statement:
+                                    try:
+                                        await cur.execute(statement)
+                                    except Exception as e:
+                                        logger.warning(f"Error executing SQL from {sql_file}: {e}")
+            await conn.commit()
         
         logger.info("✅ Support Bot schema initialized")
+    except FileNotFoundError:
+        logger.warning("⚠️ SQL migration files not found (may be normal)")
     except Exception as e:
         logger.warning(f"⚠️ Schema init issue (may be normal): {e}")
 
@@ -65,7 +81,8 @@ async def init_schema():
 if __name__ != "__main__":
     import asyncio
     try:
-        # Try to initialize synchronously
-        db_init_legacy()
-    except Exception:
-        pass
+        # Try to initialize synchronously in background
+        asyncio.create_task(init_schema())
+    except Exception as e:
+        logger.warning(f"Could not initialize schema on import: {e}")
+

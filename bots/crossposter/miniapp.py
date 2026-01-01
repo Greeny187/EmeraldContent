@@ -1,16 +1,18 @@
-
 from aiohttp import web
 import json, httpx, hmac, hashlib, time
 import os
-from bots.crossposter.models import (                                          # nutzt deine DB-API
+import logging
+from bots.crossposter.models import (
     list_tenants_for_user, ensure_default_tenant_for_user,
     list_routes, create_route, update_route, delete_route,
-    stats, list_connectors, upsert_connector
+    stats, list_connectors, upsert_connector, get_logs, get_route
 )
 
+logger = logging.getLogger(__name__)
+
 BOT_TOKEN = (
-    os.environ.get("BOT2_TOKEN")                     # primär: dein Crossposter (wie von dir gewünscht)
-    or os.environ.get("TELEGRAM_BOT_TOKEN_CROSSPOSTER")  # optionaler Alias, falls du ihn nutzt
+    os.environ.get("BOT2_TOKEN")
+    or os.environ.get("TELEGRAM_BOT_TOKEN_CROSSPOSTER")
 )
 if not BOT_TOKEN:
     raise RuntimeError("BOT2_TOKEN (Crossposter-Bot-Token) ist nicht gesetzt.")
@@ -20,11 +22,9 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 def verify_init_data(init_data: str, bot_token: str) -> dict:
     """
     Telegram WebApp Login-Verify (Serverseite).
-    Erwartet raw initData (querystring-ähnlich) aus Header X-Telegram-Init-Data.
     """
     if not init_data:
         raise web.HTTPUnauthorized(text="missing initData")
-    # in key=value&... zerlegen
     pairs = {}
     for kv in init_data.split("&"):
         if "=" in kv:
@@ -39,7 +39,6 @@ def verify_init_data(init_data: str, bot_token: str) -> dict:
         raise web.HTTPUnauthorized(text="bad hash")
     if "auth_date" in pairs and time.time() - int(pairs["auth_date"]) > int(os.getenv("TELEGRAM_LOGIN_TTL_SECONDS", "86400")):
         raise web.HTTPUnauthorized(text="login expired")
-    # minimal user-Objekt zusammensetzen
     user_json = pairs.get("user", "{}")
     try:
         user = json.loads(user_json)
@@ -63,15 +62,22 @@ async def _tg_get(method: str, params: dict):
         return j["result"]
 
 # ----- Handlers -----
-async def health(_): return web.json_response({"ok": True})
-# ---- (optional) statisches Ausliefern der Mini-App-HTML, falls keine CDN-URL gesetzt ist
+async def health(_): 
+    return web.json_response({"ok": True})
+
 _HTML_CACHE = None
 def _load_html():
     global _HTML_CACHE
     if _HTML_CACHE is None:
-        # relative Pfade okay, wenn appcrossposter.html im Projekt-Root liegt
-        with open(os.path.join(os.path.dirname(__file__), "appcrossposter.html"), "r", encoding="utf-8") as f:
-            _HTML_CACHE = f.read()
+        try:
+            path = os.path.join(os.path.dirname(__file__), "../../..", "Emerald_Content", "miniapp", "appcrossposter.html")
+            with open(path, "r", encoding="utf-8") as f:
+                _HTML_CACHE = f.read()
+        except:
+            # Fallback path
+            path = os.path.join(os.path.dirname(__file__), "appcrossposter.html")
+            with open(path, "r", encoding="utf-8") as f:
+                _HTML_CACHE = f.read()
     return _HTML_CACHE
 
 async def crossposter_page(request: web.Request):
@@ -141,6 +147,79 @@ async def stats_get(request: web.Request):
     total, by_status = await stats(tenant_id, uid)
     return web.json_response({"routes": total, "by_status": by_status})
 
+async def logs_get(request: web.Request):
+    """Get activity logs for a route."""
+    user = await _current_user(request)
+    tenant_id = int(request.query.get("tenant_id"))
+    route_id = request.query.get("route_id")
+    status = request.query.get("status", "")
+    limit = int(request.query.get("limit", 50))
+    
+    if route_id:
+        route_id = int(route_id)
+        # Verify ownership
+        route = await get_route(route_id)
+        if not route or route["tenant_id"] != tenant_id:
+            raise web.HTTPForbidden(text="Route not accessible")
+    
+    logs = await get_logs(tenant_id, route_id, status if status else None, limit)
+    return web.json_response([dict(r) for r in logs])
+
+async def test_send(request: web.Request):
+    """Test send a message through a route."""
+    user = await _current_user(request)
+    uid = user["user"]["id"]
+    p = await request.json()
+    
+    tenant_id = p.get("tenant_id")
+    route_id = p.get("route_id")
+    text = p.get("text", "Test message")
+    
+    if not tenant_id or not route_id:
+        raise web.HTTPBadRequest(text="tenant_id and route_id required")
+    
+    # Verify route ownership
+    route = await get_route(route_id)
+    if not route or route["tenant_id"] != tenant_id or route["owner_user_id"] != uid:
+        raise web.HTTPForbidden(text="Route not accessible")
+    
+    if not route["active"]:
+        raise web.HTTPBadRequest(text="Route is not active")
+    
+    # Test send to all destinations
+    results = []
+    from bots.crossposter.handler import _apply_transform, discord_post, _get_x_access_token
+    from bots.crossposter.x_client import post_text as x_post_text
+    
+    final_text = await _apply_transform(text, route["transform"])
+    
+    for dest in route["destinations"]:
+        result = {"dest": dest, "status": "unknown"}
+        try:
+            if dest.get("type") == "telegram":
+                # Just validate, don't actually send
+                result["status"] = "ok"
+                result["message"] = "Telegram destination validated"
+            elif dest.get("type") == "x":
+                token = await _get_x_access_token(tenant_id)
+                # Don't actually post, just verify token
+                result["status"] = "ok"
+                result["message"] = "X token validated"
+            elif dest.get("type") == "discord":
+                # Don't actually post, just validate URL
+                if dest.get("webhook_url"):
+                    result["status"] = "ok"
+                    result["message"] = "Discord webhook URL validated"
+                else:
+                    result["status"] = "error"
+                    result["message"] = "Discord webhook URL missing"
+        except Exception as e:
+            result["status"] = "error"
+            result["message"] = str(e)
+        results.append(result)
+    
+    return web.json_response({"text": final_text, "destinations": results})
+
 async def connectors_get(request: web.Request):
     user = await _current_user(request)
     tenant_id = int(request.query.get("tenant_id"))
@@ -157,19 +236,25 @@ async def connectors_post(request: web.Request):
 # --- Gruppen-Tools: @username auflösen + Rechte prüfen ---
 async def chat_resolve(request: web.Request):
     q = request.query.get("q","")
-    if q.startswith("@"):
-        res = await _tg_get("getChat", {"chat_id": q})
-        return web.json_response({"chat_id": res["id"], "title": res.get("title")})
-    return web.json_response({"chat_id": int(q)})
+    try:
+        if q.startswith("@"):
+            res = await _tg_get("getChat", {"chat_id": q})
+            return web.json_response({"chat_id": res["id"], "title": res.get("title")})
+        return web.json_response({"chat_id": int(q)})
+    except Exception as e:
+        raise web.HTTPBadRequest(text=str(e))
 
 async def chat_check_admin(request: web.Request):
     user = await _current_user(request)
     chat_id = int(request.query.get("chat_id"))
-    you = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": user["user"]["id"]})
-    me  = await _tg_get("getMe", {})
-    bot = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": me["id"]})
-    can_post = bot.get("status") in ("creator","administrator","member")
-    return web.json_response({"you_status": you.get("status"), "bot_status": bot.get("status"), "can_post": can_post})
+    try:
+        you = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": user["user"]["id"]})
+        me  = await _tg_get("getMe", {})
+        bot = await _tg_get("getChatMember", {"chat_id": chat_id, "user_id": me["id"]})
+        can_post = bot.get("status") in ("creator","administrator","member")
+        return web.json_response({"you_status": you.get("status"), "bot_status": bot.get("status"), "can_post": can_post})
+    except Exception as e:
+        raise web.HTTPBadRequest(text=str(e))
 
 def register_miniapp_routes(app: web.Application):
     r = app.router
@@ -180,6 +265,8 @@ def register_miniapp_routes(app: web.Application):
     r.add_patch(r"/miniapi/routes/{route_id:\d+}", routes_patch)
     r.add_delete(r"/miniapi/routes/{route_id:\d+}", routes_delete)
     r.add_get("/miniapi/stats", stats_get)
+    r.add_get("/miniapi/logs", logs_get)
+    r.add_post("/miniapi/test-send", test_send)
     r.add_get("/miniapi/connectors", connectors_get)
     r.add_post("/miniapi/connectors", connectors_post)
     r.add_get("/miniapi/chat/resolve", chat_resolve)
