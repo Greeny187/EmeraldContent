@@ -6,7 +6,15 @@ from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram.ext import ContextTypes, Application
 from shared.telethon_client import telethon_client, start_telethon
-from telethon.tl.functions.channels import GetFullChannelRequest, GetForumTopicsRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
+
+# GetForumTopicsRequest wird optional importiert - existiert nicht in allen Telethon-Versionen
+try:
+    from telethon.tl.functions.channels import GetForumTopicsRequest
+    HAS_GET_FORUM_TOPICS = True
+except ImportError:
+    HAS_GET_FORUM_TOPICS = False
+    GetForumTopicsRequest = None
 from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     get_all_group_ids, get_clean_deleted_settings, get_agg_rows, get_last_agg_stat_date, guess_agg_start_date,
                     purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
@@ -95,6 +103,10 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Tagesstatistik-Fehler für {chat_id}: {e}")
 
 async def import_all_forum_topics(context: ContextTypes.DEFAULT_TYPE):
+    if not HAS_GET_FORUM_TOPICS:
+        logger.info("GetForumTopicsRequest nicht verfügbar, überspringe Topic-Import")
+        return
+    
     try:
         if not telethon_client.is_connected():
             await start_telethon()
@@ -138,12 +150,16 @@ async def telethon_stats_job(context: ContextTypes.DEFAULT_TYPE):
 
             # Robust topic count
             topics = 0
-            try:
-                res = await telethon_client(GetForumTopicsRequest(
-                    channel=entity, offset_date=None, offset_id=0, offset_topic=0, limit=1
-                ))
-                topics = getattr(res, "count", 0) or 0
-            except Exception:
+            if HAS_GET_FORUM_TOPICS:
+                try:
+                    res = await telethon_client(GetForumTopicsRequest(
+                        channel=entity, offset_date=None, offset_id=0, offset_topic=0, limit=1
+                    ))
+                    topics = getattr(res, "count", 0) or 0
+                except Exception:
+                    pass
+            
+            if topics == 0:
                 forum_info = getattr(full.full_chat, "forum_info", None)
                 if forum_info and hasattr(forum_info, "topics"):
                     topics = len(forum_info.topics or [])

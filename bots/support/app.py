@@ -36,45 +36,7 @@ async def register_jobs(app: Application):
 
 async def init_schema():
     """Initialize database schema"""
-    try:
-        import asyncio
-        
-        # Initialize pool
-        await sql.init_pool()
-        
-        # Run migration SQL files
-        dsn = os.getenv("DATABASE_URL")
-        if not dsn:
-            logger.warning("DATABASE_URL not set, skipping schema init")
-            return
-        
-        sql_dir = os.path.join(os.path.dirname(__file__), "SQL")
-        
-        # Import psycopg to run migrations
-        import psycopg
-        async with await psycopg.AsyncConnection.connect(dsn) as conn:
-            async with conn.cursor() as cur:
-                # Run each migration file in order
-                for sql_file in ["001_support_schema.sql", "002_support_seed.sql", "003_multitenancy.sql"]:
-                    sql_path = os.path.join(sql_dir, sql_file)
-                    if os.path.exists(sql_path):
-                        with open(sql_path) as f:
-                            sql_content = f.read()
-                            # Split by semicolon and execute each statement
-                            for statement in sql_content.split(';'):
-                                statement = statement.strip()
-                                if statement:
-                                    try:
-                                        await cur.execute(statement)
-                                    except Exception as e:
-                                        logger.warning(f"Error executing SQL from {sql_file}: {e}")
-            await conn.commit()
-        
-        logger.info("✅ Support Bot schema initialized")
-    except FileNotFoundError:
-        logger.warning("⚠️ SQL migration files not found (may be normal)")
-    except Exception as e:
-        logger.warning(f"⚠️ Schema init issue (may be normal): {e}")
+    await init_all_schemas()  # mit await
 
 
 # Auto-initialize on import
