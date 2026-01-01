@@ -12,3 +12,4 @@ bots/affliate/__pycache__/test_config.cpython-313-pytest-8.4.2.pyc
 .env
 /bots/support/SQL
 *.sql
+/bots/support/SQL
