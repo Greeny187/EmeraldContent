@@ -53,10 +53,10 @@ def init_all_schemas():
                 api_fields_enc TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(telegram_id, provider, COALESCE(label, ''))
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS tradeapi_keys_tid_idx ON tradeapi_keys(telegram_id)")
+        cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_tradeapi_keys_unique ON tradeapi_keys(telegram_id, provider, COALESCE(label, ''))""")
         
         # ===== PORTFOLIOS =====
         cur.execute("""
