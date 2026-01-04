@@ -279,10 +279,17 @@ async def spam_enforcer(update, context):
     privileged = bool(is_owner or is_admin or is_anon_admin or is_topic_owner)
 
     # Policy JETZT laden (vor jeglicher Nutzung)
-    policy = get_effective_link_policy(chat_id, topic_id) or {}
+    link_policy = get_effective_link_policy(chat_id, topic_id) or {}
+
+    # User-Whitelist (global) – darf Links posten & wird nicht vom Spamfilter gebremst
+    try:
+        if user and user.id in (link_policy.get("user_whitelist") or []):
+            return
+    except Exception:
+        pass
 
     # Exemptions
-    if (is_topic_owner and policy.get("exempt_topic_owner", True)) or (privileged and policy.get("exempt_admins", True)):
+    if (is_topic_owner and link_policy.get("exempt_topic_owner", True)) or (privileged and link_policy.get("exempt_admins", True)):
         return
 
     # Domains zuverlässig extrahieren (richtige Utils-Funktion!)
@@ -290,15 +297,15 @@ async def spam_enforcer(update, context):
     violation = False
     reason = None
     if domains_in_msg:
-        bl = set((policy.get("blacklist") or []))
-        wl = set((policy.get("whitelist") or []))
+        bl = set((link_policy.get("blacklist") or []))
+        wl = set((link_policy.get("whitelist") or []))
         # Blacklist
         if any(h.endswith("."+d) or h == d for d in bl for h in domains_in_msg):
             reason = "domain_blacklist"
             deleted = await _safe_delete(msg)
             did = "delete" if deleted else "none"
             # Aktion (mute optional)
-            act = (policy.get("action") or "delete").lower()
+            act = (link_policy.get("action") or "delete").lower()
             if act == "mute" and not is_admin and user:
                 try:
                     until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
@@ -315,7 +322,7 @@ async def spam_enforcer(update, context):
                     await context.bot.send_message(
                         chat_id=chat_id,
                         message_thread_id=topic_id,
-                        text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
+                        text=link_policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
                     )
                 except Exception:
                     pass
@@ -326,7 +333,7 @@ async def spam_enforcer(update, context):
             return
 
         # Nur-Admin-Links (Whitelist erlaubt)
-        if policy.get("admins_only") and not is_admin:
+        if link_policy.get("admins_only") and not is_admin:
             def allowed(host): return any(host.endswith("."+d) or host == d for d in wl)
             if not any(allowed(h) for h in domains_in_msg):
                 deleted = await _safe_delete(msg)
@@ -335,7 +342,7 @@ async def spam_enforcer(update, context):
                         await context.bot.send_message(
                             chat_id=chat_id,
                             message_thread_id=topic_id,
-                            text=policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
+                            text=link_policy.get("warning_text") or "🚫 Nur Admins dürfen Links posten."
                         )
                     except Exception:
                         pass
@@ -351,8 +358,9 @@ async def spam_enforcer(update, context):
     daily_lim   = int(spam_pol.get("per_user_daily_limit") or 0)
     notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
 
-    if topic_id and daily_lim > 0 and user and not privileged:
-        used_before = count_topic_user_messages_today(chat_id, topic_id, user.id, tz="Europe/Berlin")
+    if daily_lim > 0 and user and not privileged:
+        tid = int(topic_id or 0)
+        used_before = count_topic_user_messages_today(chat_id, tid, user.id, tz="Europe/Berlin")
         if used_before >= daily_lim:
             deleted = await _hard_delete_message(context, chat_id, msg)
             did_action = "delete" if deleted else "none"
@@ -386,7 +394,7 @@ async def spam_enforcer(update, context):
 
     # 3) Emoji- und Flood-Limits (je nach Level/Override)
     if not privileged:
-        em_lim = policy.get("emoji_max_per_msg") or 0
+        em_lim = spam_pol.get("emoji_max_per_msg") or 0
         if em_lim > 0:
             emc = _count_emojis(text)
             if emc > em_lim:
@@ -397,7 +405,7 @@ async def spam_enforcer(update, context):
                 except Exception: pass
                 return
 
-        flood_lim = policy.get("max_msgs_per_10s") or 0
+        flood_lim = spam_pol.get("max_msgs_per_10s") or 0
         if flood_lim > 0:
             n = _bump_rate(context, chat_id, user.id if user else 0)
             if n > flood_lim:

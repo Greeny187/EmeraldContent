@@ -445,33 +445,120 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     # --- Links/Spam ---
     try:
         sp = data.get("spam") or {}
-        admins_only = bool(sp.get("on") or sp.get("block_links") or data.get("admins_only"))
+
+        # 1) Linkschutz (separat!) – NICHT automatisch beim Spamfilter aktivieren
+        admins_only = bool(sp.get("block_links") or data.get("admins_only"))
         db["set_link_settings"](cid, admins_only=admins_only)
 
-        t_raw = str(sp.get("policy_topic") or "").strip()
-        topic_id = int(t_raw) if t_raw.isdigit() else None
+        # 2) Globaler Spamfilter (spam_policy)
+        on = bool(sp.get("on"))
+        level = (sp.get("level") or "").strip().lower()
+        if not on:
+            level = "off"
+        if on and level not in ("light", "medium", "strict"):
+            level = "medium"
 
-        def _to_list(v):
-            if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
-            if isinstance(v, str):  return [s.strip() for line in v.splitlines() for s in line.split(",") if s.strip()]
+        # User-Whitelist (IDs) – pro User individuelle Ausnahme vom Spamfilter
+        def _to_int_list(v):
+            if v is None:
+                return []
+            if isinstance(v, list):
+                raw = v
+            else:
+                raw = []
+                for line in str(v).splitlines():
+                    raw.extend([x.strip() for x in line.split(",")])
+            out = []
+            for s in raw:
+                if not s:
+                    continue
+                if str(s).strip().lstrip("-").isdigit():
+                    out.append(int(str(s).strip()))
+            return sorted(list(dict.fromkeys(out)))
+
+        user_wl = _to_int_list(sp.get("user_whitelist", ""))
+
+        db["set_spam_policy"](cid, level=level, user_whitelist=user_wl)
+
+        # 3) Topic-Override Editor (spam_policy_topic) – optional, mit Topic-Auswahl
+        t_raw = str(sp.get("policy_topic") or "0").strip()
+        topic_id = int(t_raw) if t_raw.lstrip("-").isdigit() else 0
+
+        def _to_str_list(v):
+            if isinstance(v, list):
+                return [str(x).strip() for x in v if str(x).strip()]
+            if isinstance(v, str):
+                parts = []
+                for line in v.splitlines():
+                    parts.extend([s.strip() for s in line.split(",") if s.strip()])
+                return parts
             return []
 
         fields = {}
-        wl=_to_list(sp.get("whitelist","")); bl=_to_list(sp.get("blacklist",""))
-        if wl: fields["link_whitelist"]   = wl
-        if bl: fields["domain_blacklist"] = bl
-        act=(sp.get("action") or "").strip().lower()
-        if act in ("delete","warn","mute"): fields["action_primary"] = act
-        lim=str(sp.get("per_user_daily_limit") or "").strip()
-        if lim.isdigit(): fields["per_user_daily_limit"] = int(lim)
-        qn=(sp.get("quota_notify") or "").strip().lower()
-        if qn in ("off","smart","always"): fields["quota_notify"]=qn
 
-        if topic_id is not None and fields:
-            db["set_spam_policy_topic"](cid, topic_id, **fields)
+        # Level pro Topic (optional)
+        t_level = (sp.get("topic_level") or "").strip().lower()
+        if t_level in ("off", "light", "medium", "strict"):
+            fields["level"] = t_level
+
+        # Link-Listen / Action
+        fields["link_whitelist"] = _to_str_list(sp.get("whitelist", ""))
+        fields["domain_blacklist"] = _to_str_list(sp.get("blacklist", ""))
+
+        act = (sp.get("action") or "").strip().lower()
+        if act in ("delete", "warn", "mute"):
+            fields["action_primary"] = act
+
+        lim = str(sp.get("per_user_daily_limit") or "").strip()
+        if lim.isdigit():
+            fields["per_user_daily_limit"] = int(lim)
+        else:
+            fields["per_user_daily_limit"] = 0
+
+        qn = (sp.get("quota_notify") or "").strip().lower()
+        if qn in ("off", "smart", "always"):
+            fields["quota_notify"] = qn
+
+        meaningful = (
+            int(topic_id) == 0 or
+            bool(fields.get("link_whitelist")) or bool(fields.get("domain_blacklist")) or
+            bool(fields.get("action_primary")) or int(fields.get("per_user_daily_limit") or 0) > 0 or
+            bool(fields.get("quota_notify")) or bool(fields.get("level"))
+        )
+
+        if meaningful:
+            db["set_spam_policy_topic"](cid, int(topic_id), **fields)
+
+        # 4) Direkt-Aktionen aus Buttons
+        if isinstance(data.get("spam_topic_del"), dict):
+            tid = data["spam_topic_del"].get("topic_id")
+            if str(tid).lstrip("-").isdigit():
+                db["delete_spam_policy_topic"](cid, int(tid))
+
+        if isinstance(data.get("topic_user_set"), dict):
+            u = data["topic_user_set"].get("user_id")
+            t = data["topic_user_set"].get("topic_id")
+            if str(u).lstrip("-").isdigit() and str(t).lstrip("-").isdigit():
+                # topic_name optional auflösen
+                topic_name = None
+                try:
+                    topics = db["list_forum_topics"](cid, limit=200, offset=0) or []
+                    for (tid, name, _ls) in topics:
+                        if int(tid) == int(t):
+                            topic_name = name
+                            break
+                except Exception:
+                   pass
+                db["assign_topic"](cid, int(u), int(t), topic_name)
+
+        if isinstance(data.get("topic_user_del"), dict):
+            u = data["topic_user_del"].get("user_id")
+            if str(u).lstrip("-").isdigit():
+                db["remove_topic"](cid, int(u))
+
     except Exception as e:
         errors.append(f"Spam/Links: {e}")
-
+        
     # --- RSS add/del/update ---
     if "rss" in data or "rss_update" in data or "rss_del" in data:
         r = data.get("rss") or {}
@@ -919,7 +1006,9 @@ def _db():
             set_welcome, delete_welcome, get_welcome,
             set_rules, delete_rules, get_rules, get_group_stats,
             set_farewell, delete_farewell, get_farewell, get_agg_summary, get_heatmap,
-            get_link_settings, set_link_settings, set_spam_policy_topic,
+            get_link_settings, set_link_settings, get_spam_policy, set_spam_policy, get_spam_policy_topic, set_spam_policy_topic,
+            list_spam_policy_topics, delete_spam_policy_topic,
+            list_forum_topics, assign_topic, remove_topic, list_user_topics,
             get_rss_topic, set_rss_topic_for_group_feeds, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
             get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
             set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
@@ -949,7 +1038,16 @@ def _db():
             "get_farewell": get_farewell,
             "get_link_settings": get_link_settings,
             "set_link_settings": set_link_settings,
+            "get_spam_policy": get_spam_policy,
+            "set_spam_policy": set_spam_policy,
+            "get_spam_policy_topic": get_spam_policy_topic,
             "set_spam_policy_topic": set_spam_policy_topic,
+            "list_spam_policy_topics": list_spam_policy_topics,
+            "delete_spam_policy_topic": delete_spam_policy_topic,
+            "list_forum_topics": list_forum_topics,
+            "assign_topic": assign_topic,
+            "remove_topic": remove_topic,
+            "list_user_topics": list_user_topics,
             "set_rss_topic": set_rss_topic_for_group_feeds,
             "get_rss_topic": get_rss_topic,
             "add_rss_feed": add_rss_feed,
@@ -1098,6 +1196,28 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         link = {}
 
+    # Spam-Policy (global) + Topic-Overrides + Topic/User-Mapping
+    try:
+        sp_global = db["get_spam_policy"](cid) or {}
+    except Exception:
+        sp_global = {"level": "off", "user_whitelist": []}
+
+    try:
+        topics_rows = db["list_forum_topics"](cid, limit=200, offset=0) or []
+        topics = [{"id": int(tid), "name": str(name or f"Topic {tid}")} for (tid, name, _ls) in topics_rows]
+    except Exception:
+        topics = []
+
+    try:
+        topic_policies = db["list_spam_policy_topics"](cid) or []
+    except Exception:
+        topic_policies = []
+
+    try:
+        topic_users = db["list_user_topics"](cid) or []
+    except Exception:
+        topic_users = []
+    
     # RSS voll
     feeds = []
     try:
@@ -1160,17 +1280,53 @@ async def _state_json(cid: int) -> dict:
     except Exception:
         night = {"enabled": False, "start": "22:00", "end":"07:00", "write_lock": False, "lock_message": ""}
 
+    try:
+        topic0_policy = db["get_spam_policy_topic"](cid, 0) or {}
+    except Exception:
+        topic0_policy = {}
+
+    # Sorge dafür, dass die UI immer einen "Topic 0" Datensatz zum Bearbeiten hat
+    try:
+        has0 = any(int(p.get("topic_id", -1)) == 0 for p in (topic_policies or []))
+        if not has0:
+            topic_policies = [{
+                "topic_id": 0,
+                "level": topic0_policy.get("level") or "",
+                "link_whitelist": eff.get("whitelist") or [],
+                "domain_blacklist": eff.get("blacklist") or [],
+                "action_primary": topic0_policy.get("action_primary") or eff.get("action") or "delete",
+                "per_user_daily_limit": int(topic0_policy.get("per_user_daily_limit") or 0),
+                "quota_notify": topic0_policy.get("quota_notify") or "smart",
+            }] + (topic_policies or [])
+    except Exception:
+        pass
+
     spam_block = {
-        "on":           bool(eff.get("admins_only") or link.get("only_admin_links")),
-        "block_links":  bool(eff.get("admins_only") or link.get("only_admin_links")),
-        "block_media":  False,
-        "block_invite_links": False,
+        # Globaler Spamfilter (spam_policy)
+        "on":           (str(sp_global.get("level") or "off").lower() != "off"),
+        "level":        str(sp_global.get("level") or "off").lower(),
+        "user_whitelist": sp_global.get("user_whitelist") or [],
+
+        # Linkschutz (group_settings)
+        "block_links":  bool(link.get("only_admin_links")),
+
+        # Topic-Override Editor (default: Topic 0)
         "policy_topic": 0,
+        "topic_level":  (topic0_policy.get("level") or ""),
         "whitelist":    eff.get("whitelist") or [],
         "blacklist":    eff.get("blacklist") or [],
-        "action":       eff.get("action") or "delete",
-        "per_user_daily_limit": 0,
-        "quota_notify": None
+        "action":       (topic0_policy.get("action_primary") or eff.get("action") or "delete"),
+        "per_user_daily_limit": int(topic0_policy.get("per_user_daily_limit") or 0),
+        "quota_notify": (topic0_policy.get("quota_notify") or "smart"),
+
+        # Read-only Listen zur Kontrolle
+        "topics": topics,
+        "topic_policies": topic_policies,
+        "topic_users": topic_users,
+
+        # (noch nicht implementiert)
+        "block_media":  False,
+        "block_invite_links": False
     }
 
     # AI Flags

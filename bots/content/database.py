@@ -1810,6 +1810,114 @@ def get_spam_policy_topic(cur, chat_id:int, topic_id:int) -> dict|None:
     return dict(zip(cols, row)) if row else None
 
 @_with_cursor
+def get_spam_policy(cur, chat_id: int) -> dict:
+    """Liest die globale Spam-Policy (spam_policy) für eine Gruppe."""
+    cols = [
+        "level", "link_whitelist", "user_whitelist", "domain_blacklist",
+        "emoji_max_per_msg", "emoji_max_per_min", "max_msgs_per_10s",
+        "new_member_link_block",
+        "action_primary", "action_secondary", "escalation_threshold"
+    ]
+    cur.execute(f"""
+        SELECT {", ".join(cols)}
+          FROM spam_policy
+         WHERE chat_id=%s;
+    """, (chat_id,))
+    row = cur.fetchone()
+    if not row:
+        # Default-ähnliches Dict (ohne Upsert) zurückgeben
+        return {
+            "level": "off",
+            "link_whitelist": [],
+            "user_whitelist": [],
+            "domain_blacklist": [],
+            "emoji_max_per_msg": 0,
+            "emoji_max_per_min": 0,
+            "max_msgs_per_10s": 0,
+            "new_member_link_block": True,
+            "action_primary": "delete",
+            "action_secondary": "mute",
+            "escalation_threshold": 3,
+        }
+    d = dict(zip(cols, row))
+    d["link_whitelist"] = list(d.get("link_whitelist") or [])
+    d["domain_blacklist"] = list(d.get("domain_blacklist") or [])
+    d["user_whitelist"] = list(d.get("user_whitelist") or [])
+    return d
+
+@_with_cursor
+def set_spam_policy(cur, chat_id: int, **fields):
+    """Upsert für globale Spam-Policy (spam_policy).
+
+    Erlaubte Felder: level, user_whitelist, action_primary, action_secondary, escalation_threshold,
+    emoji_max_per_msg, emoji_max_per_min, max_msgs_per_10s, link_whitelist, domain_blacklist,
+    new_member_link_block
+    """
+    allowed = {
+        "level", "user_whitelist", "action_primary", "action_secondary", "escalation_threshold",
+        "emoji_max_per_msg", "emoji_max_per_min", "max_msgs_per_10s",
+        "link_whitelist", "domain_blacklist",
+        "new_member_link_block",
+    }
+    upd = {k: v for k, v in fields.items() if k in allowed}
+    if not upd:
+        return
+
+    cols = list(upd.keys())
+    values = [upd[c] for c in cols]
+    sets = ", ".join([f"{c}=%s" for c in cols])
+    cur.execute("""
+        INSERT INTO spam_policy(chat_id) VALUES(%s)
+        ON CONFLICT (chat_id) DO NOTHING;
+    """, (chat_id,))
+    cur.execute(f"""
+        UPDATE spam_policy
+           SET {sets}, updated_at=NOW()
+         WHERE chat_id=%s;
+    """, (*values, chat_id))
+
+@_with_cursor
+def list_spam_policy_topics(cur, chat_id: int) -> list[dict]:
+    """Listet alle vorhandenen Topic-Overrides (spam_policy_topic) einer Gruppe."""
+    cols = [
+        "topic_id",
+        "level", "link_whitelist", "domain_blacklist",
+        "emoji_max_per_msg", "emoji_max_per_min", "max_msgs_per_10s",
+        "per_user_daily_limit", "quota_notify",
+        "action_primary", "action_secondary", "escalation_threshold"
+    ]
+    cur.execute(f"""
+        SELECT {", ".join(cols)}
+          FROM spam_policy_topic
+         WHERE chat_id=%s
+         ORDER BY topic_id ASC;
+    """, (chat_id,))
+    rows = cur.fetchall() or []
+    out = []
+    for r in rows:
+        d = dict(zip(cols, r))
+        d["link_whitelist"] = list(d.get("link_whitelist") or [])
+        d["domain_blacklist"] = list(d.get("domain_blacklist") or [])
+        out.append(d)
+    return out
+
+@_with_cursor
+def delete_spam_policy_topic(cur, chat_id: int, topic_id: int):
+    cur.execute("""DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;""", (chat_id, topic_id))
+
+@_with_cursor
+def list_user_topics(cur, chat_id: int) -> list[dict]:
+    """Listet Topic-Owner/Zuordnungen (user_topics) einer Gruppe."""
+    cur.execute("""
+        SELECT user_id, topic_id, COALESCE(topic_name,'') AS topic_name
+          FROM user_topics
+         WHERE chat_id=%s
+         ORDER BY topic_id ASC, user_id ASC;
+    """, (chat_id,))
+    rows = cur.fetchall() or []
+    return [{"user_id": int(u), "topic_id": int(t), "topic_name": n or ""} for (u, t, n) in rows]
+
+@_with_cursor
 def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
     cur.execute("DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
 
@@ -1843,27 +1951,68 @@ def _extract_link_flags(link_settings):
     # Fallback
     return False, False, DEFAULT_TEXT, True
 
-def effective_spam_policy(chat_id:int, topic_id:int|None, link_settings) -> dict:
-    """
-    link_settings kann tuple/list oder dict sein.
-    """
-    prot_on, warn_on, warn_text, except_on = _extract_link_flags(link_settings)
+def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_settings) -> dict:
+    """Berechnet die effektive Spam-Policy.
 
+    - Global: spam_policy (level, user_whitelist, actions, …)
+    - Topic-Overrides: spam_policy_topic (für Topic=0 als Default + ggf. spezifisches Topic)
+    """
     base = _default_policy()
-    base["level"] = "strict" if prot_on else "off"
 
-    # Preset anhand Level
-    base.update(_LEVEL_PRESETS.get(base["level"], {}))
+    # 1) Global aus spam_policy
+    cur.execute("""
+        SELECT level, user_whitelist, emoji_max_per_msg, emoji_max_per_min, max_msgs_per_10s,
+               action_primary, action_secondary, escalation_threshold
+          FROM spam_policy
+         WHERE chat_id=%s;
+    """, (chat_id,))
+    row = cur.fetchone()
+    if row:
+        base["level"] = (row[0] or "off").lower()
+        base["user_whitelist"] = list(row[1] or [])
+        if row[2] is not None: base["emoji_max_per_msg"] = int(row[2] or 0)
+        if row[3] is not None: base["emoji_max_per_min"] = int(row[3] or 0)
+        if row[4] is not None: base["max_msgs_per_10s"] = int(row[4] or 0)
+        if row[5] is not None: base["action_primary"] = row[5] or base["action_primary"]
+        if row[6] is not None: base["action_secondary"] = row[6] or base["action_secondary"]
+        if row[7] is not None: base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
+    else:
+        base["user_whitelist"] = []
 
-    # Topic-Overrides mergen
-    if topic_id:
-        ov = get_spam_policy_topic(chat_id, topic_id)
-        if ov:
-            for k, v in ov.items():
-                if v is not None:
-                    base[k] = v
-            # ggf. erneut Preset ziehen, falls das Override den Level geändert hat
-            base.update(_LEVEL_PRESETS.get(base["level"], {}))
+    def _apply_level_constraints(policy: dict):
+        lvl = (policy.get("level") or "off").lower()
+        policy["level"] = lvl
+        if lvl == "off":
+            policy["emoji_max_per_msg"] = 0
+            policy["emoji_max_per_min"] = 0
+            policy["max_msgs_per_10s"] = 0
+            return
+        preset = _LEVEL_PRESETS.get(lvl, {})
+        for k, v in preset.items():
+            try:
+                curv = int(policy.get(k) or 0)
+            except Exception:
+                curv = 0
+            if curv <= 0:
+                policy[k] = int(v)
+            else:
+                policy[k] = min(int(curv), int(v))
+
+    _apply_level_constraints(base)
+
+    # 2) Topic-Overrides: erst Topic=0, dann ggf. topic_id
+    tids: list[int] = [0]
+    if topic_id is not None and int(topic_id) != 0:
+        tids.append(int(topic_id))
+
+    for tid in tids:
+        ov = get_spam_policy_topic(chat_id, tid)
+        if not ov:
+            continue
+        for k, v in ov.items():
+            if v is not None:
+                base[k] = v
+        _apply_level_constraints(base)
 
     return base
 
@@ -2426,48 +2575,68 @@ def _norm_dom(s: str) -> str:
 
 @_with_cursor
 def get_effective_link_policy(cur, chat_id: int, topic_id: int | None):
-    # 1) Gruppenweite Link-Flags
+    
+    """Berechnet die effektive Link-Policy (Whitelist/Blacklist/Action) für ein Topic.
+
+    Wichtig: Topic=0 gilt als Gruppen-Default. Wenn topic_id None ist (Main Chat),
+    wird Topic=0 angewendet. Für echte Topic-Nachrichten werden zuerst Topic=0 und
+    anschließend das spezifische Topic gemerged.
+    """
+    # 1) Link-Protection Flags (nur group_settings)
     cur.execute("""
         SELECT link_protection_enabled, link_warning_enabled, link_warning_text
-          FROM group_settings WHERE chat_id=%s;
+          FROM group_settings
+         WHERE chat_id=%s;
     """, (chat_id,))
-    row = cur.fetchone() or (False, False, '⚠️ Nur Admins dürfen Links posten.')
-    admins_only  = bool(row[0])
-    warn_enabled = bool(row[1])
-    warn_text    = row[2] or '⚠️ Nur Admins dürfen Links posten.'
+    row = cur.fetchone()
+    admins_only = bool(row[0]) if row else False
+    warn_once   = bool(row[1]) if row else False
+    warn_text   = row[2] if row and row[2] else None
 
-    # 2) Basis aus spam_policy (ohne topic_id) – nur Whitelist/Blacklist/Aktion
+    # 2) Basis-Policy aus spam_policy (global)
     cur.execute("""
-        SELECT link_whitelist, domain_blacklist, action_primary
+        SELECT link_whitelist, domain_blacklist, action_primary, user_whitelist
           FROM spam_policy
          WHERE chat_id=%s;
     """, (chat_id,))
-    wl_base, bl_base, act = cur.fetchone() or ([], [], 'delete')
-    wl = { _norm_dom(d) for d in (wl_base or []) }
-    bl = { _norm_dom(d) for d in (bl_base or []) }
-    action = act or 'delete'
+    sp = cur.fetchone()
+    wl = list(sp[0] or []) if sp else []
+    bl = list(sp[1] or []) if sp else []
+    action = (sp[2] or "delete") if sp else "delete"
+    user_whitelist = list(sp[3] or []) if sp else []
 
-    # 3) Topic-Overrides aus spam_policy_topic mergen
-    if topic_id is not None:
+    # 3) Topic-Overrides (Topic=0 immer als Default; danach ggf. topic_id)
+    tids: list[int] = [0]
+    if topic_id is not None and int(topic_id) != 0:
+        tids.append(int(topic_id))
+
+    for tid in tids:
         cur.execute("""
             SELECT link_whitelist, domain_blacklist, action_primary
-              FROM spam_policy_topic
-             WHERE chat_id=%s AND topic_id=%s;
-        """, (chat_id, int(topic_id)))
-        row = cur.fetchone()
-        if row:
-            wl_top, bl_top, act_top = row
-            if wl_top: wl |= { _norm_dom(d) for d in wl_top }
-            if bl_top: bl |= { _norm_dom(d) for d in bl_top }
-            if act_top: action = act_top
+                FROM spam_policy_topic
+                WHERE chat_id=%s AND topic_id=%s;
+        """, (chat_id, tid))
+        r = cur.fetchone()
+        if not r:
+            continue
+        if r[0] is not None:
+            wl = list(r[0] or [])
+        if r[1] is not None:
+            bl = list(r[1] or [])
+        if r[2] is not None:
+            action = (r[2] or action)
 
     return {
         "admins_only": admins_only,
-        "warning_enabled": warn_enabled,
+        "only_admin_links": admins_only,  # alias
+        "warn_once": warn_once,
+        "warn_text": warn_text,
         "warning_text": warn_text,
-        "whitelist": sorted(wl),
-        "blacklist": sorted(bl),
-        "action": action or "delete",
+        "warning_enabled": warn_once,
+        "whitelist": wl,
+        "blacklist": bl,
+        "action": action,
+        "user_whitelist": user_whitelist,
     }
 
 def _pending_inputs_col(cur) -> str:
