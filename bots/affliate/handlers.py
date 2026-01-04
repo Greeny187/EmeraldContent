@@ -2,12 +2,12 @@
 
 import logging
 import os
+from urllib.parse import quote
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 from .database import (
     create_referral, get_referral_stats, get_tier_info, 
-    verify_ton_wallet, request_payout, get_pending_payouts,
-    init_commission_record, record_conversion
+    verify_ton_wallet, request_payout, get_pending_payouts, ensure_commission_row
 )
 
 logger = logging.getLogger(__name__)
@@ -19,23 +19,41 @@ except ImportError:
         pass
 
 # Configuration
+AFFILIATE_BOT_USERNAME = os.getenv("AFFILIATE_BOT_USERNAME", os.getenv("BOT_USERNAME", "emerald_affiliate_bot")).lstrip("@")
+AFFILIATE_API_BASE_URL = os.getenv("AFFILIATE_API_BASE_URL", "").rstrip("/")
 AFFILIATE_MINIAPP_URL = os.getenv(
     "AFFILIATE_MINIAPP_URL",
     "https://greeny187.github.io/EmeraldContentBots/miniapp/appaffiliate.html"
 )
-MINIMUM_PAYOUT = int(os.getenv("MINIMUM_PAYOUT", 1000))
+MINIMUM_PAYOUT = int(os.getenv("AFFILIATE_MINIMUM_PAYOUT", "1000"))  # EMRD
 EMRD_CONTRACT = os.getenv("EMRD_CONTRACT", "EQA0rJDTy_2sS30KxQW8HO0_ERqmOGUhMWlwdL-2RpDmCrK5")
+
+
+def build_referral_link(referrer_id: int) -> str:
+    """Build Telegram deep link for the affiliate bot."""
+    return f"https://t.me/{AFFILIATE_BOT_USERNAME}?start=aff_{referrer_id}"
+
+
+def build_miniapp_url() -> str:
+    """Optionally append ?api=<backend> so the static GitHub Pages miniapp can reach your backend."""
+    url = AFFILIATE_MINIAPP_URL
+    if AFFILIATE_API_BASE_URL and "api=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}api={quote(AFFILIATE_API_BASE_URL, safe=':/?&=')}"
+    return url
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Affiliate Bot - Referral Program"""
     user = update.effective_user
     chat = update.effective_chat
+    logger.info(f"/start from user={user.id} chat_type={chat.type} args={context.args}")
     
     # Check for referral parameter
     if context.args and context.args[0].startswith("aff_"):
         referrer_id = int(context.args[0].replace("aff_", ""))
         if referrer_id != user.id:
+            ensure_commission_row(referrer_id)
             create_referral(referrer_id, user.id)
             logger.info(f"New referral: {user.id} referred by {referrer_id}")
     
@@ -60,7 +78,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "💰 Dashboard",
-                web_app=WebAppInfo(url=AFFILIATE_MINIAPP_URL)
+                web_app=WebAppInfo(url=build_miniapp_url())
             )],
             [
                 InlineKeyboardButton("📊 Stats", callback_data="aff_stats"),
@@ -80,7 +98,7 @@ async def cmd_my_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get affiliate link"""
     user = update.effective_user
     
-    link = f"https://t.me/emerald_bot?start=aff_{user.id}"
+    link = build_referral_link(user.id)
     
     link_text = (
         f"🔗 **Dein Affiliate Link**\n\n"
@@ -90,7 +108,7 @@ async def cmd_my_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Kopieren", callback_data="aff_copy_link")],
-        [InlineKeyboardButton("📤 Teilen", url=f"https://t.me/share/url?url={link}")],
+        [InlineKeyboardButton("📤 Teilen", url=f"https://t.me/share/url?url={quote(link, safe='')}")],
     ])
     
     await update.message.reply_text(link_text, parse_mode="Markdown", reply_markup=keyboard)
@@ -177,7 +195,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "💰 Dashboard",
-                web_app=WebAppInfo(url=AFFILIATE_MINIAPP_URL)
+                web_app=WebAppInfo(url=build_miniapp_url())
             )],
         ])
         await query.edit_message_text(wallet_text, parse_mode="Markdown", reply_markup=keyboard)

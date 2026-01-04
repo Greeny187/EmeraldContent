@@ -19,6 +19,19 @@ except ImportError as e:
     sql = None
 
 
+async def init_all_schemas():
+    """Initialize all database schemas"""
+    if sql:
+        try:
+            await sql.init_schema()
+            logger.info("✅ Database schemas initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize schemas: {e}")
+            raise
+    else:
+        logger.warning("⚠️ SQL module not available, skipping schema initialization")
+
+
 async def register(app: Application):
     """Register Support Bot handlers into main Application"""
     try:

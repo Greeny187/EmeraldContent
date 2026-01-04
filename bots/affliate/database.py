@@ -2,10 +2,8 @@
 
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -17,32 +15,6 @@ def get_connection():
     except Exception as e:
         logger.error(f"DB connection error: {e}")
         return None
-
-
-def init_commission_record(referrer_id):
-    """Initialize commission record for new referrer"""
-    conn = get_connection()
-    if not conn:
-        return False
-    
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO aff_commissions (referrer_id, total_earned, pending, tier)
-            VALUES (%s, 0, 0, 'bronze')
-            ON CONFLICT (referrer_id) DO NOTHING
-        """, (referrer_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Init commission error: {e}")
-        conn.rollback()
-        return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
 
 
 def init_all_schemas():
@@ -68,7 +40,7 @@ def init_all_schemas():
             )
         """)
         
-        # Conversions table
+        # Conversions table (no FK to aff_referrals: referrer_id is a Telegram user id, not aff_referrals.id)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS aff_conversions (
                 id SERIAL PRIMARY KEY,
@@ -78,9 +50,26 @@ def init_all_schemas():
                 value NUMERIC(20,2),
                 commission NUMERIC(20,2),
                 status VARCHAR(50) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (referrer_id) REFERENCES aff_referrals(id)
+                created_at TIMESTAMP DEFAULT NOW()
             )
+        """)
+
+        # If the table existed before with a wrong FK, drop all FKs safely
+        cur.execute("""
+        DO $$
+        DECLARE r RECORD;
+        BEGIN
+            IF to_regclass('public.aff_conversions') IS NOT NULL THEN
+                FOR r IN (
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'aff_conversions'::regclass
+                      AND contype = 'f'
+                ) LOOP
+                    EXECUTE format('ALTER TABLE aff_conversions DROP CONSTRAINT IF EXISTS %I', r.conname);
+                END LOOP;
+            END IF;
+        END$$;
         """)
         
         # Commissions table
@@ -113,6 +102,11 @@ def init_all_schemas():
             )
         """)
         
+        # Helpful indexes
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_aff_referrals_referrer ON aff_referrals(referrer_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_aff_conversions_referrer ON aff_conversions(referrer_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_aff_payouts_referrer ON aff_payouts(referrer_id)")
+
         conn.commit()
         logger.info("Affiliate schemas initialized")
         return True
@@ -127,7 +121,38 @@ def init_all_schemas():
             conn.close()
 
 
-def create_referral(referrer_id, referral_id):
+
+def ensure_commission_row(referrer_id: int) -> bool:
+    """Ensure a commissions row exists for a referrer (idempotent)."""
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aff_commissions (referrer_id)
+            VALUES (%s)
+            ON CONFLICT (referrer_id) DO NOTHING
+            """,
+            (referrer_id,),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Ensure commission row error: {e}")
+        conn.rollback()
+        return False
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        conn.close()
+
+
+
+def create_referral(referrer_id, referral_id, referral_link: str | None = None):
     """Create referral"""
     conn = get_connection()
     if not conn:
@@ -136,17 +161,16 @@ def create_referral(referrer_id, referral_id):
     try:
         cur = conn.cursor()
         
-        # Ensure commission record exists for referrer
-        init_commission_record(referrer_id)
-        
+        # make sure the referrer exists in aff_commissions
+        ensure_commission_row(referrer_id)
+
         cur.execute("""
-            INSERT INTO aff_referrals (referrer_id, referral_id, status)
-            VALUES (%s, %s, 'active')
+            INSERT INTO aff_referrals (referrer_id, referral_id, referral_link, status)
+            VALUES (%s, %s, %s, 'active')
             ON CONFLICT DO NOTHING
-        """, (referrer_id, referral_id))
+        """, (referrer_id, referral_id, referral_link))
         
         conn.commit()
-        logger.info(f"Referral created: {referral_id} -> {referrer_id}")
         return True
     except Exception as e:
         logger.error(f"Create referral error: {e}")
@@ -160,7 +184,7 @@ def create_referral(referrer_id, referral_id):
 
 
 def record_conversion(referrer_id, referral_id, conversion_type, value):
-    """Record conversion event and credit commission"""
+    """Record conversion event"""
     conn = get_connection()
     if not conn:
         return False
@@ -168,52 +192,39 @@ def record_conversion(referrer_id, referral_id, conversion_type, value):
     try:
         cur = conn.cursor()
         
-        # Get tier info for referrer to calculate correct commission
-        cur.execute("""
-            SELECT total_earned FROM aff_commissions WHERE referrer_id = %s
-        """, (referrer_id,))
-        
+        # Calculate commission based on current tier
+        ensure_commission_row(referrer_id)
+        cur.execute("SELECT total_earned FROM aff_commissions WHERE referrer_id = %s", (referrer_id,))
         row = cur.fetchone()
-        total_earned = row[0] if row else 0
-        
-        # Calculate commission based on tier
+        total_earned = float(row[0]) if row and row[0] is not None else 0.0
+        # tier thresholds are mirrored in get_tier_info(); we re-use the same logic here
         if total_earned >= 10000:
-            commission_rate = 0.20  # Platinum
+            rate = 0.20
         elif total_earned >= 5000:
-            commission_rate = 0.15  # Gold
+            rate = 0.15
         elif total_earned >= 1000:
-            commission_rate = 0.10  # Silver
+            rate = 0.10
         else:
-            commission_rate = 0.05  # Bronze
+            rate = 0.05
+        commission = float(value) * rate
         
-        commission = value * commission_rate
-        
-        # Insert conversion
         cur.execute("""
             INSERT INTO aff_conversions
             (referrer_id, referral_id, conversion_type, value, commission)
             VALUES (%s, %s, %s, %s, %s)
         """, (referrer_id, referral_id, conversion_type, value, commission))
         
-        # Ensure commission record exists
-        init_commission_record(referrer_id)
-        
         # Update commission total
         cur.execute("""
-            UPDATE aff_commissions SET
-            total_earned = total_earned + %s,
-            pending = pending + %s,
-            tier = CASE 
-                WHEN total_earned + %s >= 10000 THEN 'platinum'
-                WHEN total_earned + %s >= 5000 THEN 'gold'
-                WHEN total_earned + %s >= 1000 THEN 'silver'
-                ELSE 'bronze'
-            END
-            WHERE referrer_id = %s
-        """, (commission, commission, commission, commission, commission, referrer_id))
+            INSERT INTO aff_commissions (referrer_id, total_earned, pending)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (referrer_id) DO UPDATE SET
+                total_earned = aff_commissions.total_earned + EXCLUDED.total_earned,
+                pending = aff_commissions.pending + EXCLUDED.pending,
+                updated_at = NOW()
+        """, (referrer_id, commission, commission))
         
         conn.commit()
-        logger.info(f"Conversion recorded: {referrer_id} earned {commission} EMRD")
         return True
     except Exception as e:
         logger.error(f"Record conversion error: {e}")
@@ -235,13 +246,17 @@ def get_referral_stats(referrer_id):
     try:
         cur = conn.cursor()
         
+        ensure_commission_row(referrer_id)
+
         cur.execute("""
             SELECT
-            COUNT(DISTINCT referral_id) as total_referrals,
-            COUNT(CASE WHEN status = 'active' THEN 1 END) as active_referrals,
-            COALESCE(SUM(commission), 0) as total_commissions
-            FROM aff_referrals
-            WHERE referrer_id = %s AND status = 'active'
+                COUNT(DISTINCT r.referral_id) AS total_referrals,
+                COUNT(*) FILTER (WHERE r.status = 'active') AS active_referrals,
+                COALESCE(SUM(c.commission), 0) AS total_commissions
+            FROM aff_referrals r
+            LEFT JOIN aff_conversions c
+                ON c.referrer_id = r.referrer_id AND c.referral_id = r.referral_id
+            WHERE r.referrer_id = %s
         """, (referrer_id,))
         
         row = cur.fetchone()
@@ -271,37 +286,75 @@ def get_referral_stats(referrer_id):
             conn.close()
 
 
-def request_payout(referrer_id, amount):
-    """Request payout"""
+def request_payout(referrer_id, amount, wallet_address: str | None = None):
+    """Request payout.
+
+    Requires a verified TON wallet address (stored via TON Connect).
+    """
     conn = get_connection()
     if not conn:
         return False
-    
+
     try:
         cur = conn.cursor()
-        
-        # Check pending balance
-        cur.execute("""
-            SELECT pending FROM aff_commissions WHERE referrer_id = %s
-        """, (referrer_id,))
-        
-        row = cur.fetchone()
-        if not row or row[0] < amount:
-            return False
-        
-        # Create payout request
-        cur.execute("""
-            INSERT INTO aff_payouts (referrer_id, amount, status)
-            VALUES (%s, %s, 'pending')
-        """, (referrer_id, amount))
-        
-        # Update pending
-        cur.execute("""
-            UPDATE aff_commissions SET
-            pending = pending - %s
+
+        ensure_commission_row(referrer_id)
+
+        # Check pending balance + wallet verification
+        cur.execute(
+            """
+            SELECT pending, ton_connect_verified, wallet_address
+            FROM aff_commissions
             WHERE referrer_id = %s
-        """, (amount, referrer_id))
-        
+            """,
+            (referrer_id,),
+        )
+
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        pending, verified, stored_wallet = row
+
+        if pending is None or float(pending) < float(amount):
+            return False
+
+        # If caller provided a wallet, store/verify it
+        if wallet_address:
+            stored_wallet = wallet_address
+            verified = True
+            cur.execute(
+                """
+                UPDATE aff_commissions
+                SET wallet_address=%s, ton_connect_verified=TRUE, updated_at=NOW()
+                WHERE referrer_id=%s
+                """,
+                (wallet_address, referrer_id),
+            )
+
+        if not verified or not stored_wallet:
+            logger.warning(f"Payout requested without verified wallet: referrer_id={referrer_id}")
+            return False
+
+        # Create payout request
+        cur.execute(
+            """
+            INSERT INTO aff_payouts (referrer_id, amount, status, wallet_address)
+            VALUES (%s, %s, 'pending', %s)
+            """,
+            (referrer_id, amount, stored_wallet),
+        )
+
+        # Update pending
+        cur.execute(
+            """
+            UPDATE aff_commissions
+            SET pending = pending - %s, updated_at = NOW()
+            WHERE referrer_id = %s
+            """,
+            (amount, referrer_id),
+        )
+
         conn.commit()
         return True
     except Exception as e:
@@ -309,11 +362,11 @@ def request_payout(referrer_id, amount):
         conn.rollback()
         return False
     finally:
-        if cur:
+        try:
             cur.close()
-        if conn:
-            conn.close()
-
+        except Exception:
+            pass
+        conn.close()
 
 def get_pending_payouts(referrer_id):
     """Get pending payouts"""
@@ -361,11 +414,13 @@ def verify_ton_wallet(referrer_id, wallet_address):
         cur = conn.cursor()
         
         cur.execute("""
-            UPDATE aff_commissions SET
-            wallet_address = %s,
-            ton_connect_verified = TRUE
-            WHERE referrer_id = %s
-        """, (wallet_address, referrer_id))
+            INSERT INTO aff_commissions (referrer_id, wallet_address, ton_connect_verified)
+            VALUES (%s, %s, TRUE)
+            ON CONFLICT (referrer_id) DO UPDATE SET
+                wallet_address = EXCLUDED.wallet_address,
+                ton_connect_verified = TRUE,
+                updated_at = NOW()
+        """, (referrer_id, wallet_address))
         
         conn.commit()
         return True
@@ -466,140 +521,11 @@ def complete_payout(payout_id, tx_hash):
             """, (amount, referrer_id))
         
         conn.commit()
-        logger.info(f"Payout completed: {payout_id} with tx {tx_hash}")
         return True
     except Exception as e:
         logger.error(f"Complete payout error: {e}")
         conn.rollback()
         return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-
-def get_referral_link(referrer_id):
-    """Get or create referral link"""
-    conn = get_connection()
-    if not conn:
-        return None
-    
-    try:
-        cur = conn.cursor()
-        
-        cur.execute("""
-            SELECT referral_link FROM aff_referrals
-            WHERE referrer_id = %s LIMIT 1
-        """, (referrer_id,))
-        
-        row = cur.fetchone()
-        if row and row[0]:
-            return row[0]
-        
-        # Generate new link
-        link = f"https://t.me/emerald_bot?start=aff_{referrer_id}"
-        return link
-    except Exception as e:
-        logger.error(f"Get referral link error: {e}")
-        return None
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-
-def get_all_referrals(referrer_id):
-    """Get all referrals with details"""
-    conn = get_connection()
-    if not conn:
-        return []
-    
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT 
-                referral_id,
-                status,
-                created_at,
-                COALESCE((
-                    SELECT SUM(commission) FROM aff_conversions 
-                    WHERE referrer_id = aff_referrals.referrer_id 
-                    AND referral_id = aff_referrals.referral_id
-                ), 0) as earned
-            FROM aff_referrals
-            WHERE referrer_id = %s
-            ORDER BY created_at DESC
-        """, (referrer_id,))
-        
-        rows = cur.fetchall()
-        return [dict(row) for row in rows]
-    except Exception as e:
-        logger.error(f"Get all referrals error: {e}")
-        return []
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-
-def get_payout_history(referrer_id, limit=20):
-    """Get payout history"""
-    conn = get_connection()
-    if not conn:
-        return []
-    
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT id, amount, status, tx_hash, requested_at, completed_at
-            FROM aff_payouts
-            WHERE referrer_id = %s
-            ORDER BY requested_at DESC
-            LIMIT %s
-        """, (referrer_id, limit))
-        
-        rows = cur.fetchall()
-        return [dict(row) for row in rows]
-    except Exception as e:
-        logger.error(f"Get payout history error: {e}")
-        return []
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-
-def calculate_payout_fee(amount):
-    """Calculate payout fee (1% of amount)"""
-    return amount * 0.01
-
-
-def get_available_for_payout(referrer_id):
-    """Get available amount after fees"""
-    conn = get_connection()
-    if not conn:
-        return 0
-    
-    try:
-        cur = conn.cursor()
-        
-        cur.execute("""
-            SELECT pending FROM aff_commissions WHERE referrer_id = %s
-        """, (referrer_id,))
-        
-        row = cur.fetchone()
-        if row:
-            return float(row[0]) - calculate_payout_fee(row[0])
-        return 0
-    except Exception as e:
-        logger.error(f"Get available error: {e}")
-        return 0
     finally:
         if cur:
             cur.close()

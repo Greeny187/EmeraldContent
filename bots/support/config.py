@@ -69,13 +69,14 @@ KB_SEARCH_MAX_RESULTS = 20
 FEATURES = {
     "tickets_enabled": True,
     "kb_search_enabled": True,
-    "group_settings_enabled": True,
-    "stats_enabled": True,
+    "group_settings_enabled": False,
+    "stats_enabled": False,
     "ai_faq_enabled": True,
-    "ai_rss_enabled": True,
-    "mood_question_enabled": True,
-    "daily_stats_enabled": True,
+    "ai_rss_enabled": False,
+    "mood_question_enabled": False,
+    "daily_stats_enabled": False,
 }
+
 
 # ============ Default Messages ============
 
