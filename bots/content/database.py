@@ -1388,6 +1388,37 @@ def remove_topic(cur, chat_id: int, user_id: int):
     cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
 @_with_cursor
+def list_user_topics(cur, chat_id: int):
+    """Listet Topic-User Zuordnungen (user_topics) einer Gruppe – für MiniApp-Übersicht."""
+    cur.execute("""
+        SELECT user_id, topic_id, COALESCE(topic_name,'') AS topic_name
+          FROM user_topics
+         WHERE chat_id=%s
+         ORDER BY topic_id ASC, user_id ASC;
+    """, (chat_id,))
+    rows = cur.fetchall() or []
+    return [{"user_id": int(u), "topic_id": int(t), "topic_name": (n or "")} for (u, t, n) in rows]
+
+@_with_cursor
+def sync_user_topic_names(cur, chat_id: int) -> int:
+    """Synchronisiert Topic-Namen in user_topics anhand forum_topics.
++
+    Hintergrund: Topic-Namen werden durch Bot-Events/last_seen in forum_topics aktuell gehalten.
+    Diese Funktion zieht die aktuellen Namen in die User-Zuordnung nach (MiniApp „Sync“).
+    """
+    cur.execute("""
+        UPDATE user_topics ut
+           SET topic_name = ft.name
+          FROM forum_topics ft
+         WHERE ut.chat_id=%s
+           AND ft.chat_id = ut.chat_id
+           AND ft.topic_id = ut.topic_id
+           AND COALESCE(ft.name,'') <> ''
+           AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
+    """, (chat_id,))
+    return cur.rowcount
+
+@_with_cursor
 def has_topic(cur, chat_id: int, user_id: int, topic_id: int = None) -> bool:
     """
     Prüft, ob ein User für ein Topic als Owner eingetragen ist.

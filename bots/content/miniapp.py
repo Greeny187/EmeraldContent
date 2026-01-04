@@ -443,6 +443,25 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         errors.append(f"Farewell: {e}")
 
     # --- Links/Spam ---
+        # Quick-Actions aus der UI (ohne die restlichen Settings anzufassen)
+    try:
+        rst = data.get("spam_topic_reset")
+        if isinstance(rst, dict) and str(rst.get("topic_id","")).strip().lstrip("-").isdigit():
+            tid = int(str(rst.get("topic_id")).strip())
+            db["delete_spam_policy_topic"](cid, tid)
+    except Exception as e:
+        errors.append(f"Spam Reset: {e}")
+
+    try:
+        if data.get("topics_sync") is True:
+            try:
+                db["sync_user_topic_names"](cid)
+            except Exception:
+                pass
+    except Exception as e:
+        errors.append(f"Topics Sync: {e}")
+
+        # Haupt-Speicherlogik    
     try:
         sp = data.get("spam") or {}
 
@@ -1008,6 +1027,7 @@ def _db():
             set_farewell, delete_farewell, get_farewell, get_agg_summary, get_heatmap,
             get_link_settings, set_link_settings, get_spam_policy, set_spam_policy, get_spam_policy_topic, set_spam_policy_topic,
             list_spam_policy_topics, delete_spam_policy_topic,
+            list_forum_topics, sync_user_topic_names, list_user_topics, delete_spam_policy_topic, effective_spam_policy,
             list_forum_topics, assign_topic, remove_topic, list_user_topics,
             get_rss_topic, set_rss_topic_for_group_feeds, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
             get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
@@ -1047,6 +1067,11 @@ def _db():
             "list_forum_topics": list_forum_topics,
             "assign_topic": assign_topic,
             "remove_topic": remove_topic,
+            "list_forum_topics": list_forum_topics,
+            "sync_user_topic_names": sync_user_topic_names,
+            "list_user_topics": list_user_topics,
+            "delete_spam_policy_topic": delete_spam_policy_topic,
+            "effective_spam_policy": effective_spam_policy,
             "list_user_topics": list_user_topics,
             "set_rss_topic": set_rss_topic_for_group_feeds,
             "get_rss_topic": get_rss_topic,
@@ -1509,7 +1534,104 @@ async def route_stats(request: web.Request):
         "top_responders": top,
         "agg": agg,
     })
-    
+
+async def route_spam_effective(request: web.Request):
+    """Test-Endpoint: liefert effektive Link-Policy & Spam-Policy für ein Topic."""
+    webapp = request.app
+    if request.method == "OPTIONS":
+        return _cors_json({})
+
+    try:
+        cid = int(request.query.get("cid", "0") or 0)
+        topic_raw = request.query.get("topic_id", None)
+        topic_id = None
+        if topic_raw is not None and str(topic_raw).strip() != "":
+            try:
+                topic_id = int(str(topic_raw).strip())
+            except Exception:
+                topic_id = None
+
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _cors_json({"error": "auth_failed"}, 403)
+        if cid <= 0:
+            return _cors_json({"error": "bad_params"}, 400)
+        if not await _is_admin(webapp, cid, uid):
+            return _cors_json({"error": "forbidden"}, 403)
+
+        db = _db()
+        link_settings = None
+        try:
+            link_settings = db["get_link_settings"](cid)
+        except Exception:
+            link_settings = None
+
+        try:
+            link_policy = db["get_effective_link_policy"](cid, topic_id)
+        except Exception:
+            link_policy = {}
+
+        try:
+            spam_policy = db["effective_spam_policy"](cid, topic_id, link_settings)
+        except Exception:
+            spam_policy = {}
+
+        return _cors_json({
+            "ok": True,
+            "cid": cid,
+            "topic_id": topic_id,
+            "link_policy": link_policy,
+            "spam_policy": spam_policy
+        })
+
+    except Exception as e:
+        logger.exception("route_spam_effective failed")
+        return _cors_json({"error": "server_error", "detail": str(e)}, 500)
+
+
+async def route_topics_sync(request: web.Request):
+    """Sync-Endpoint: zieht aktuelle Topic-Namen aus forum_topics in user_topics."""
+    webapp = request.app
+    if request.method == "OPTIONS":
+        return _cors_json({})
+
+    try:
+        cid = int(request.query.get("cid", "0") or 0)
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _cors_json({"error": "auth_failed"}, 403)
+        if cid <= 0:
+            return _cors_json({"error": "bad_params"}, 400)
+        if not await _is_admin(webapp, cid, uid):
+            return _cors_json({"error": "forbidden"}, 403)
+
+        db = _db()
+
+        updated = 0
+        try:
+            updated = int(db["sync_user_topic_names"](cid) or 0)
+        except Exception:
+            updated = 0
+
+        topics = []
+        try:
+            rows = db["list_forum_topics"](cid, limit=200, offset=0) or []
+            topics = [{"topic_id": int(tid), "name": str(name or f"Topic {tid}"), "last_seen": str(ls) if ls else None} for (tid, name, ls) in rows]
+        except Exception:
+            topics = []
+
+        topic_users = []
+        try:
+            topic_users = db["list_user_topics"](cid) or []
+        except Exception:
+            topic_users = []
+
+        return _cors_json({"ok": True, "updated": updated, "topics": topics, "topic_users": topic_users})
+
+    except Exception as e:
+        logger.exception("route_topics_sync failed")
+        return _cors_json({"error": "server_error", "detail": str(e)}, 500)
+   
 async def route_send_mood(request: web.Request):
     webapp = request.app
     if request.method == "OPTIONS":
@@ -1841,8 +1963,12 @@ def register_miniapp_routes(webapp, app):
     webapp.router.add_route("GET", "/miniapp/file",      route_file)
     webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
     webapp.router.add_route("POST", "/miniapp/apply",    route_apply)
+    webapp.router.add_route("GET",  "/miniapp/spam/effective", route_spam_effective)
+    webapp.router.add_route("POST", "/miniapp/topics/sync",   route_topics_sync)
     for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats",
               "/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
+        webapp.router.add_route("OPTIONS", p, _cors_ok)
+    for p in ("/miniapp/spam/effective","/miniapp/topics/sync"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
     webapp["_miniapp_routes_attached"] = True
     logger.info("[miniapp] HTTP-Routen registriert")
