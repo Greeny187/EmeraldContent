@@ -712,6 +712,28 @@ def init_db(cur):
             PRIMARY KEY (ctx_chat_id, user_id, key)
         );
     """)
+    
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_topics_map (
+            chat_id BIGINT,
+            user_id BIGINT,
+            topic_id BIGINT,
+            topic_name TEXT,
+            PRIMARY KEY (chat_id, user_id, topic_id)
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_user_topics_map_topic ON user_topics_map(chat_id, topic_id);")
+    # Best effort: vorhandene Single-Assignments in die Map spiegeln (ohne Überschreiben)
+    try:
+        cur.execute(
+            "INSERT INTO user_topics_map(chat_id,user_id,topic_id,topic_name) "
+            "SELECT chat_id,user_id,topic_id,topic_name FROM user_topics "
+            "ON CONFLICT DO NOTHING;"
+        )
+    except Exception:
+        pass
 
     _pending_inputs_col(cur)
 
@@ -1459,11 +1481,27 @@ def get_forum_topic_name(cur, chat_id:int, topic_id:int) -> Optional[str]:
 # --- Themenzuweisung für Linksperre-Ausnahme ---
 @_with_cursor
 def assign_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name: Optional[str] = None):
+    """Ordnet einem User ein Topic zu (ohne Überschreiben).
+
+    - Speichert zusätzlich in user_topics_map (mehrere Topics pro User möglich)
+    - Legacy user_topics wird nur initial befüllt (Backwards-Compat)
+    Rückgabe: True wenn in der Map neu eingefügt, sonst False.
+    """
+    # Multi-Mapping (neu)
     cur.execute(
-        "INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name) VALUES (%s, %s, %s, %s) "
-        "ON CONFLICT (chat_id, user_id) DO UPDATE SET topic_id = EXCLUDED.topic_id, topic_name = EXCLUDED.topic_name;",
+        "INSERT INTO user_topics_map (chat_id, user_id, topic_id, topic_name) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (chat_id, user_id, topic_id) DO NOTHING;",
         (chat_id, user_id, topic_id, topic_name)
     )
+    inserted = cur.rowcount > 0
+
+    # Legacy-Tabelle nur initial füllen (nicht überschreiben!)
+    cur.execute(
+        "INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (chat_id, user_id) DO NOTHING;",
+        (chat_id, user_id, topic_id, topic_name)
+    )
+    return inserted
 
 @_with_cursor
 def add_user_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name: Optional[str] = None) -> bool:
@@ -1487,8 +1525,40 @@ def list_user_topics(cur, chat_id: int):
 
 
 @_with_cursor
-def remove_topic(cur, chat_id: int, user_id: int):
-    cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+def remove_topic(cur, chat_id: int, user_id: int, topic_id: int | None = None):
+    """Entfernt Topic-Zuordnungen.
+
+    - topic_id=None: entfernt alle Topics des Users (Map + Legacy)
+    - topic_id gesetzt: entfernt nur dieses Topic aus der Map; Legacy wird nur gelöscht,
+      wenn es exakt dieses Topic war (und dann ggf. mit einem verbleibenden Topic nachgefüllt).
+    """
+    if topic_id is None:
+        cur.execute("DELETE FROM user_topics_map WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+        cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+        return
+
+    cur.execute(
+        "DELETE FROM user_topics_map WHERE chat_id = %s AND user_id = %s AND topic_id = %s;",
+        (chat_id, user_id, topic_id)
+    )
+
+    # Legacy ggf. bereinigen
+    cur.execute("SELECT topic_id FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+    r = cur.fetchone()
+    if r and int(r[0]) == int(topic_id):
+        cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+        # Falls noch Topics existieren: eines als Legacy-Placeholder setzen
+        cur.execute(
+            "SELECT topic_id, topic_name FROM user_topics_map WHERE chat_id=%s AND user_id=%s ORDER BY topic_id ASC LIMIT 1;",
+            (chat_id, user_id)
+        )
+        rr = cur.fetchone()
+        if rr:
+            cur.execute(
+                "INSERT INTO user_topics(chat_id,user_id,topic_id,topic_name) VALUES(%s,%s,%s,%s) "
+                "ON CONFLICT (chat_id,user_id) DO NOTHING;",
+                (chat_id, user_id, int(rr[0]), rr[1])
+            )
 
 @_with_cursor
 def list_user_topics(cur, chat_id: int):
@@ -1523,20 +1593,99 @@ def sync_user_topic_names(cur, chat_id: int) -> int:
 
 @_with_cursor
 def has_topic(cur, chat_id: int, user_id: int, topic_id: int = None) -> bool:
-    """
-    Prüft, ob ein User für ein Topic als Owner eingetragen ist.
+    """Prüft, ob ein User für ein Topic als Owner eingetragen ist.
+    Neu: prüft zuerst user_topics_map (multi), danach user_topics (legacy).
     topic_id ist optional (wenn nicht angegeben, prüft nur auf irgendein Topic).
     """
     if topic_id is not None:
-        cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s AND topic_id = %s;", (chat_id, user_id, topic_id))
+        cur.execute(
+            "SELECT 1 FROM user_topics_map WHERE chat_id = %s AND user_id = %s AND topic_id = %s;",
+            (chat_id, user_id, topic_id)
+        )
+        if cur.fetchone() is not None:
+            return True
+        cur.execute(
+            "SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s AND topic_id = %s;",
+            (chat_id, user_id, topic_id)
+        )
     else:
+        cur.execute("SELECT 1 FROM user_topics_map WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
+        if cur.fetchone() is not None:
+            return True
         cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
     return cur.fetchone() is not None
 
 @_with_cursor
 def get_topic_owners(cur, chat_id: int) -> List[int]:
-    cur.execute("SELECT user_id FROM user_topics WHERE chat_id = %s;", (chat_id,))
+
+    cur.execute(
+        '''
+        SELECT DISTINCT user_id
+          FROM (
+                SELECT user_id FROM user_topics_map WHERE chat_id=%s
+                UNION ALL
+                SELECT user_id FROM user_topics WHERE chat_id=%s
+          ) x;
+        ''',
+        (chat_id, chat_id)
+    )
     return [row[0] for row in cur.fetchall()]
+
+@_with_cursor
+def list_user_topics(cur, chat_id: int) -> list[dict]:
+    """Listet alle Topic-User Zuordnungen einer Gruppe.
+
+    Kombiniert user_topics_map (multi) + user_topics (legacy) ohne Duplikate.
+    """
+    cur.execute(
+        '''
+        SELECT user_id, topic_id, COALESCE(topic_name,'') AS topic_name
+          FROM (
+                SELECT user_id, topic_id, topic_name FROM user_topics_map WHERE chat_id=%s
+                UNION ALL
+                SELECT user_id, topic_id, topic_name FROM user_topics WHERE chat_id=%s
+          ) x
+         GROUP BY user_id, topic_id, topic_name
+         ORDER BY topic_id ASC, user_id ASC;
+        ''',
+        (chat_id, chat_id)
+    )
+    rows = cur.fetchall() or []
+    return [{"user_id": int(u), "topic_id": int(t), "topic_name": (n or "")} for (u, t, n) in rows]
+
+@_with_cursor
+def sync_user_topic_names(cur, chat_id: int) -> int:
+    """Synchronisiert Topic-Namen in user_topics_map (und legacy) anhand forum_topics."""
+    cur.execute(
+        '''
+        UPDATE user_topics_map ut
+           SET topic_name = ft.name
+          FROM forum_topics ft
+         WHERE ut.chat_id=%s
+           AND ft.chat_id = ut.chat_id
+           AND ft.topic_id = ut.topic_id
+           AND COALESCE(ft.name,'') <> ''
+           AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
+        ''',
+        (chat_id,)
+    )
+    updated = cur.rowcount
+
+    cur.execute(
+        '''
+        UPDATE user_topics ut
+           SET topic_name = ft.name
+          FROM forum_topics ft
+         WHERE ut.chat_id=%s
+           AND ft.chat_id = ut.chat_id
+           AND ft.topic_id = ut.topic_id
+           AND COALESCE(ft.name,'') <> ''
+           AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
+        ''',
+        (chat_id,)
+    )
+    updated += cur.rowcount
+    return updated
 
 @_with_cursor
 def get_link_settings(cur, chat_id:int):
@@ -2085,6 +2234,7 @@ def _extract_link_flags(link_settings):
     # Fallback
     return False, False, DEFAULT_TEXT, True
 
+@_with_cursor
 def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_settings) -> dict:
     """Berechnet die effektive Spam-Policy.
 

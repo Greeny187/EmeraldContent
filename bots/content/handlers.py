@@ -1200,7 +1200,12 @@ async def set_topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from .database import get_forum_topic_name
         tname = get_forum_topic_name(chat.id, topic_id) or None
-        assign_topic(chat.id, target_user.id, topic_id, tname)
+        inserted = assign_topic(chat.id, target_user.id, topic_id, tname)
+        if not inserted:
+            return await update.message.reply_text(
+                f"ℹ️ Bereits vorhanden: {target_user.mention_html()} → Topic {topic_id}",
+                parse_mode="HTML"
+            )
         return await update.message.reply_text(
             f"âœ… Ausnahme gesetzt: {target_user.mention_html()} â†’ Topic {topic_id}",
             parse_mode="HTML"

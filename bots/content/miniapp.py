@@ -1053,8 +1053,8 @@ def _db():
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
             get_captcha_settings, set_captcha_settings, get_global_config, set_global_config,
-            list_forum_topics, upsert_forum_topic, add_user_topic, list_user_topics,
-            assign_topic, remove_topic, get_story_settings, set_story_settings
+            list_forum_topics, count_forum_topics, upsert_forum_topic,
+            list_user_topics, sync_user_topic_names, get_story_settings, set_story_settings
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
@@ -1126,11 +1126,10 @@ def _db():
             "get_global_config": get_global_config,
             "set_global_config": set_global_config,
             "list_forum_topics": list_forum_topics,
+            "count_forum_topics": count_forum_topics,
             "upsert_forum_topic": upsert_forum_topic,
-            "add_user_topic": add_user_topic,
             "list_user_topics": list_user_topics,
-            "assign_topic": assign_topic,
-            "remove_topic": remove_topic,
+            "sync_user_topic_names": sync_user_topic_names,
         }
     except ImportError as e:
         logger.error(f"Database import failed: {e}")
@@ -1620,29 +1619,13 @@ async def route_spam_effective(request: web.Request):
 
 
 async def route_topics_sync(request: web.Request):
-    # Sync-Endpoint fuer Forum-Topics.
-    # - akzeptiert negative Chat-IDs (Telegram Supergroups)
-    # - optional: Client kann eine topics-Liste senden, die wir in die DB upserten
+    """Forum-Topics aus DB liefern (für Dropdowns) und optional aus Client-Payload upserten.
+
+    Wichtig: Telegram Chat IDs für Gruppen/Supergroups sind negativ → cid != 0 ist gültig.
+    """
     webapp = request.app
     if request.method == "OPTIONS":
         return _cors_json({})
-
-    try:
-        cid = int(request.query.get("cid", "0") or 0)
-        uid = _resolve_uid(request)
-    except Exception:
-        return _cors_json({"error": "bad_params"}, 400)
-
-    # Telegram Chat IDs sind bei Gruppen i.d.R. negativ → 0 ist der einzige "ungültige" Standard
-    if cid == 0:
-        return _cors_json({"error": "bad_params"}, 400)
-
-    if uid <= 0:
-        return _cors_json({"error": "auth_required"}, 403)
-    if not await _is_admin(webapp, cid, uid):
-        return _cors_json({"error": "forbidden"}, 403)
-
-    db = _db()
 
     payload = {}
     try:
@@ -1651,9 +1634,26 @@ async def route_topics_sync(request: web.Request):
     except Exception:
         payload = {}
 
-    # Optional: Topics aus dem Payload in DB übernehmen
+    # cid: bevorzugt aus Query, fallback aus Body
+    try:
+        cid = int(request.query.get("cid") or payload.get("cid") or payload.get("chat_id") or 0)
+    except Exception:
+        cid = 0
+
+    if cid == 0:
+        return _cors_json({"error": "bad_params"}, 400)
+
+    uid = _resolve_uid(request)
+    if uid <= 0:
+        return _cors_json({"error": "auth_required"}, 403)
+    if not await _is_admin(webapp, cid, uid):
+        return _cors_json({"error": "forbidden"}, 403)
+
+    db = _db()
+
+    # Optional: topics aus dem Payload übernehmen (falls Frontend sie liefern kann)
     topics_in = payload.get("topics") if isinstance(payload, dict) else None
-    if isinstance(topics_in, list) and ("upsert_forum_topic" in db):
+    if isinstance(topics_in, list) and db.get("upsert_forum_topic"):
         for t in topics_in:
             if not isinstance(t, dict):
                 continue
@@ -1665,18 +1665,21 @@ async def route_topics_sync(request: web.Request):
             except Exception:
                 continue
 
-    # Aktuellen Stand zurückgeben
+    # Namen im Mapping syncen (nice-to-have)
     try:
-        rows = db["list_forum_topics"](cid, limit=200, offset=0) or []
-        topics = [{"id": int(tid), "name": str(name or f"Topic {tid}")} for (tid, name, _ls) in rows]
+        if db.get("sync_user_topic_names"):
+            db["sync_user_topic_names"](cid)
+    except Exception:
+        pass
+
+    # Aktuelle Topics aus DB liefern
+    try:
+        rows = db["list_forum_topics"](cid, limit=200, offset=0) if db.get("list_forum_topics") else []
+        topics = [{"id": int(tid), "name": (name or f"Topic {tid}")} for (tid, name, _ls) in (rows or [])]
     except Exception:
         topics = []
 
-        return _cors_json({"ok": True, "topics": topics, "count": len(topics)})
-
-    except Exception as e:
-        logger.exception("route_topics_sync failed")
-        return _cors_json({"error": "server_error", "detail": str(e)}, 500)
+    return _cors_json({"ok": True, "cid": cid, "count": len(topics), "topics": topics})
    
 async def route_send_mood(request: web.Request):
     webapp = request.app
