@@ -56,6 +56,31 @@ ROOT = pathlib.Path(__file__).parent.resolve()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+def _install_log_security() -> None:
+    """Reduziert das Risiko, dass Tokens/Secrets in Logs landen (z.B. Telegram Bot Token in URLs)."""
+    import re
+
+    class _RedactTelegramBotTokenFilter(logging.Filter):
+        _pat = re.compile(r"(https://api\.telegram\.org/bot)([^/\s]+)")
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            try:
+                msg = record.getMessage()
+                redacted = self._pat.sub(r"\1<REDACTED>", msg)
+                record.msg = redacted
+                record.args = ()
+            except Exception:
+                pass
+            return True
+
+    # httpx/httpcore auf WARNING, damit keine Request-URLs (mit Token) geloggt werden
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    for h in logging.getLogger().handlers:
+        h.addFilter(_RedactTelegramBotTokenFilter())
+
+
 def load_bots_env():
     bots = []
     for idx, name in enumerate(DEFAULT_BOT_NAMES, start=1):
@@ -81,17 +106,18 @@ def mask(value: str, show: int = 6):
     return "*" * (len(value) - show) + value[-show:]
 
 def sanitize_env() -> Dict[str, str]:
-    env = {}
-    sensitive_markers = ("TOKEN","SECRET","KEY","PASS","PWD","HASH","API","ACCESS","PRIVATE")
-    whitelist_prefixes = ("APP_", "PORT", "BOT", "DATABASE_URL", "REDIS_URL", "TG_", "TELETHON", "PAYPAL_", "COINBASE_", "BINANCE_", "BYBIT_", "REVOLUT_", "OPENAI_", "ANTHROPIC_", "GEMINI_")
+    safe: Dict[str, str] = {}
+    # Nur Meta/Runtime Infos – alles andere lieber nicht exposen.
+    allowed_exact = {
+        "APP_ENV", "APP_NAME", "HEROKU_APP_NAME", "HEROKU_RELEASE_VERSION",
+        "HEROKU_SLUG_COMMIT", "DYNO", "PORT", "WEB_CONCURRENCY", "TZ"
+    }
+    allowed_prefixes = ("APP_", "HEROKU_",)
     for k, v in os.environ.items():
-        if not any(k.startswith(p) for p in whitelist_prefixes):
-            continue
-        if any(m in k for m in sensitive_markers):
-            env[k] = mask(v or "", 6)
-        else:
-            env[k] = v
-    return env
+        if k in allowed_exact or k.startswith(allowed_prefixes):
+            # Immer als String, None -> ""
+            safe[k] = str(v or "")
+    return safe
 
 APPLICATIONS: Dict[str, Application] = {}
 ROUTEKEY_TO_NAME: Dict[str, str] = {}
@@ -172,6 +198,7 @@ async def env_handler(_: web.Request):
 
 async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+    _install_log_security()
     
     # Initialize all bot schemas
     try:
@@ -329,7 +356,9 @@ async def main():
     register_devdash_routes(webapp)
     
     webapp.router.add_get("/health", health_handler)
-    webapp.router.add_get("/env", env_handler)
+    # /env ist ein Debug-Endpoint – standardmäßig AUS (sonst riskanter Leak)
+    if os.getenv("ENABLE_ENV_ENDPOINT", "0") == "1":
+        webapp.router.add_get("/env", env_handler)
     webapp.router.add_post("/webhook/{route_key}", webhook_handler)
     
     runner = web.AppRunner(webapp)

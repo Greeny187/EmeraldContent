@@ -78,22 +78,24 @@ def _verify_with_secret(init_data: str, secret: bytes) -> int:
         return 0
 
 def _verify_init_data_any(init_data: str) -> int:
+    """
+    Verifiziert Telegram WebApp initData.
+    SECURITY: Ohne gültige Hash-Verifikation wird KEIN user.id akzeptiert.
+    (Spoofing-Schutz)
+    """
     if not init_data:
         return 0
-    # 1) hash-Variante gegen alle bekannten Tokens
-    for secret in _all_token_secrets():
-        uid = _verify_with_secret(init_data, secret)
-        if uid > 0:
-            return uid
-    # 2) Fallback: Einige Clients liefern 'signature'; wir nutzen dann
-    #    *nur* die user.id ohne kryptografische Prüfung – Admin-Check folgt serverseitig.
+
+    # Offizieller Weg: hash-basierte Verifikation gegen bekannte BOT_TOKENs
     try:
-        parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
-        if parsed.get("signature") and parsed.get("user"):
-            user = json.loads(parsed["user"])
-            return int(user.get("id") or 0)
+        for secret in _all_token_secrets():  
+            uid = _verify_with_secret(init_data, secret)  
+            if uid:
+                return uid
     except Exception:
         pass
+
+    # Kein unsicherer Fallback in PROD.
     return 0
 
 def _resolve_uid(request: web.Request) -> int:
@@ -110,7 +112,7 @@ def _resolve_uid(request: web.Request) -> int:
 
     # 2) Fallback: uid in der Query (für Browser-Tests)
     q_uid = request.query.get("uid")
-    if q_uid and str(q_uid).lstrip("-").isdigit():
+    if os.getenv("ALLOW_BROWSER_DEV", "0") == "1" and q_uid and str(q_uid).lstrip("-").isdigit():
         return int(q_uid)
 
     # 3) Optionaler Dev-Bypass
@@ -2061,12 +2063,14 @@ def register_miniapp_routes(webapp, app):
     try:
         from .story_api import register_story_api
         res = register_story_api(webapp)
-        # Falls async implementiert: korrekt "fire-and-forget" im laufenden Loop
-        if asyncio.iscoroutine(res):
-            asyncio.create_task(res)
-    except Exception as e:
-        logger.warning(f"[miniapp] Story API Registrierung fehlgeschlagen: {e}")
-        
+        import inspect, asyncio
+        if inspect.iscoroutine(res):
+            try:
+                asyncio.get_running_loop().create_task(res)
+            except RuntimeError:
+                logger.warning("[miniapp] Story API coroutine konnte nicht geplant werden (kein event loop)")
+    except Exception as e:  # ✅ Fehlender except Block
+        logger.warning(f"[miniapp] Story API registration failed: {e}")
     webapp["_miniapp_routes_attached"] = True
     logger.info("[miniapp] HTTP-Routen registriert")
     return True

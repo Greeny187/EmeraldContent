@@ -16,6 +16,27 @@ def get_db_connection():
         logger.error(f"DB error: {e}")
         return None
 
+def migrate_tradedex_schema(cur) -> None:
+    """
+    Migration/Repair für ältere Deployments.
+    Fix: fehlende Spalten wie dex_name (CREATE TABLE IF NOT EXISTS ergänzt keine Columns).
+    """
+    # Pools
+    cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS dex_name VARCHAR(50);")
+    cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS tvl_usd DOUBLE PRECISION DEFAULT 0;")
+    cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS volume_24h_usd DOUBLE PRECISION DEFAULT 0;")
+    # Positions
+    cur.execute("ALTER TABLE tradedex_positions ADD COLUMN IF NOT EXISTS dex_name VARCHAR(50);")
+
+    # Unique constraint nur anlegen, wenn nicht vorhanden
+    cur.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_pool') THEN
+            ALTER TABLE tradedex_pools ADD CONSTRAINT unique_pool UNIQUE (dex_name, pool_address);
+        END IF;
+    END $$;
+    """)
 
 def init_all_schemas():
     """Initialize DEX database schemas"""
@@ -212,7 +233,8 @@ def init_all_schemas():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_balances_user_id ON tradedex_balances(user_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_alerts_user_id ON tradedex_alerts(user_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_strategies_user_id ON tradedex_strategies(user_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_pools_dex ON tradedex_pools(dex_name)")
+        migrate_tradedex_schema(cur)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_pools_dex ON tradedex_pools(dex_name);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tradedex_price_history_token ON tradedex_price_history(token_address, timestamp DESC)")
         
         conn.commit()
@@ -235,7 +257,7 @@ def get_pools() -> list:
     
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM tradedex_pools ORDER BY tvl DESC LIMIT 50")
+        cur.execute("SELECT * FROM tradedex_pools ORDER BY tvl_usd DESC LIMIT 50")
         return cur.fetchall()
     except Exception as e:
         logger.error(f"Error fetching pools: {e}")
