@@ -271,17 +271,17 @@ async def main():
             _register_crossposter_miniapp_routes(webapp)
     if _register_tradeapi_miniapp and "trade_api" in APPLICATIONS:
         try:
-            await _register_tradeapi_miniapp(webapp)
+            _register_tradeapi_miniapp(APPLICATIONS["trade_api"])
         except Exception as e:
             logging.warning("Trade API miniapp registration failed: %s", e)
     if _register_tradedex_miniapp and "trade_dex" in APPLICATIONS:
         try:
-            await _register_tradedex_miniapp(webapp)
+            _register_tradedex_miniapp(APPLICATIONS["trade_dex"])
         except Exception as e:
             logging.warning("Trade DEX miniapp registration failed: %s", e)
     if _register_learning_miniapp and "learning" in APPLICATIONS:
         try:
-            await _register_learning_miniapp(webapp)
+            _register_learning_miniapp(APPLICATIONS["learning"])
         except Exception as e:
             logging.warning("Learning miniapp registration failed: %s", e)
     if _register_dao_miniapp and "dao" in APPLICATIONS:

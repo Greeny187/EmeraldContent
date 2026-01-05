@@ -18,6 +18,8 @@ from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
+
+from bots.content.database import upsert_forum_topic
 from .access import parse_webapp_user_id, is_admin_or_owner
 from .patchnotes import __version__, PATCH_NOTES
 from shared.payments import create_payment_order 
@@ -1048,8 +1050,9 @@ def _db():
             set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
-            get_captcha_settings, set_captcha_settings, get_global_config, set_global_config, 
-            get_story_settings, set_story_settings
+            get_captcha_settings, set_captcha_settings, get_global_config, set_global_config,
+            list_forum_topics, upsert_forum_topic, add_user_topic, list_user_topics,
+            assign_topic, remove_topic, get_story_settings, set_story_settings
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
@@ -1120,7 +1123,12 @@ def _db():
             "set_pro_until": set_pro_until,
             "get_global_config": get_global_config,
             "set_global_config": set_global_config,
-            # ggf. weitere Funktionen ergänzen
+            "list_forum_topics": list_forum_topics,
+            "upsert_forum_topic": upsert_forum_topic,
+            "add_user_topic": add_user_topic,
+            "list_user_topics": list_user_topics,
+            "assign_topic": assign_topic,
+            "remove_topic": remove_topic,
         }
     except ImportError as e:
         logger.error(f"Database import failed: {e}")
@@ -1610,7 +1618,9 @@ async def route_spam_effective(request: web.Request):
 
 
 async def route_topics_sync(request: web.Request):
-    """Sync-Endpoint: zieht aktuelle Topic-Namen aus forum_topics in user_topics."""
+    # Sync-Endpoint fuer Forum-Topics.
+    # - akzeptiert negative Chat-IDs (Telegram Supergroups)
+    # - optional: Client kann eine topics-Liste senden, die wir in die DB upserten
     webapp = request.app
     if request.method == "OPTIONS":
         return _cors_json({})
@@ -1618,35 +1628,49 @@ async def route_topics_sync(request: web.Request):
     try:
         cid = int(request.query.get("cid", "0") or 0)
         uid = _resolve_uid(request)
-        if uid <= 0:
-            return _cors_json({"error": "auth_failed"}, 403)
-        if cid <= 0:
-            return _cors_json({"error": "bad_params"}, 400)
-        if not await _is_admin(webapp, cid, uid):
-            return _cors_json({"error": "forbidden"}, 403)
+    except Exception:
+        return _cors_json({"error": "bad_params"}, 400)
 
-        db = _db()
+    # Telegram Chat IDs sind bei Gruppen i.d.R. negativ → 0 ist der einzige "ungültige" Standard
+    if cid == 0:
+        return _cors_json({"error": "bad_params"}, 400)
 
-        updated = 0
-        try:
-            updated = int(db["sync_user_topic_names"](cid) or 0)
-        except Exception:
-            updated = 0
+    if uid <= 0:
+        return _cors_json({"error": "auth_required"}, 403)
+    if not await _is_admin(webapp, cid, uid):
+        return _cors_json({"error": "forbidden"}, 403)
 
+    db = _db()
+
+    payload = {}
+    try:
+        if request.can_read_body:
+            payload = await request.json()
+    except Exception:
+        payload = {}
+
+    # Optional: Topics aus dem Payload in DB übernehmen
+    topics_in = payload.get("topics") if isinstance(payload, dict) else None
+    if isinstance(topics_in, list) and ("upsert_forum_topic" in db):
+        for t in topics_in:
+            if not isinstance(t, dict):
+                continue
+            try:
+                tid = int(t.get("id"))
+                name = (t.get("name") or "").strip() or None
+                if tid >= 0:
+                    db["upsert_forum_topic"](cid, tid, name)
+            except Exception:
+                continue
+
+    # Aktuellen Stand zurückgeben
+    try:
+        rows = db["list_forum_topics"](cid, limit=200, offset=0) or []
+        topics = [{"id": int(tid), "name": str(name or f"Topic {tid}")} for (tid, name, _ls) in rows]
+    except Exception:
         topics = []
-        try:
-            rows = db["list_forum_topics"](cid, limit=200, offset=0) or []
-            topics = [{"topic_id": int(tid), "name": str(name or f"Topic {tid}"), "last_seen": str(ls) if ls else None} for (tid, name, ls) in rows]
-        except Exception:
-            topics = []
 
-        topic_users = []
-        try:
-            topic_users = db["list_user_topics"](cid) or []
-        except Exception:
-            topic_users = []
-
-        return _cors_json({"ok": True, "updated": updated, "topics": topics, "topic_users": topic_users})
+        return _cors_json({"ok": True, "topics": topics, "count": len(topics)})
 
     except Exception as e:
         logger.exception("route_topics_sync failed")
@@ -1831,6 +1855,47 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if qn in ("off","smart","always"): fields["quota_notify"]=qn
         if topic_id is not None and fields:
             db["set_spam_policy_topic"](cid, topic_id, **fields)
+            
+        # --- Topic→User Zuordnung (ohne Überschreiben) ---
+        tus = data.get("topic_user_set") or sp.get("topic_user_set")
+        if isinstance(tus, dict):
+            u = tus.get("user_id")
+            t = tus.get("topic_id")
+            if str(u).lstrip("-").isdigit() and str(t).lstrip("-").isdigit():
+                topic_name = None
+                try:
+                    rows = db.get("list_forum_topics") and db["list_forum_topics"](cid, limit=200, offset=0) or []
+                    for (tid, name, _ls) in rows:
+                        if int(tid) == int(t):
+                            topic_name = name
+                            break
+                except Exception:
+                    pass
+
+                inserted = False
+                try:
+                    if "add_user_topic" in db:
+                        inserted = bool(db["add_user_topic"](cid, int(u), int(t), topic_name))
+                    elif "assign_topic" in db:
+                        # Fallback: altes Verhalten (überschreibt)
+                        db["assign_topic"](cid, int(u), int(t), topic_name)
+                        inserted = True
+                except Exception as e:
+                    errors.append(f"Topic-User: {e}")
+
+                if inserted is False:
+                    errors.append("Topic-User: User hat bereits eine Zuordnung (bitte erst entfernen).")
+
+        tud = data.get("topic_user_del") or sp.get("topic_user_del")
+        if isinstance(tud, dict):
+            u = tud.get("user_id")
+            if str(u).lstrip("-").isdigit():
+                try:
+                    if "remove_topic" in db:
+                        db["remove_topic"](cid, int(u))
+                except Exception as e:
+                    errors.append(f"Topic-User-Del: {e}")
+        
     except Exception as e: errors.append(f"Spam/Links: {e}")
 
     # RSS: add/del + update (enabled/post_images)
@@ -1982,11 +2047,12 @@ def register_miniapp_routes(webapp, app):
     webapp.router.add_route("GET", "/miniapp/stats",     route_stats)
     webapp.router.add_route("GET", "/miniapp/file",      route_file)
     webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
+    webapp.router.add_route("POST", "/miniapp/topics/sync", route_topics_sync)
     webapp.router.add_route("POST", "/miniapp/apply",    route_apply)
     webapp.router.add_route("GET",  "/miniapp/spam/effective", route_spam_effective)
     webapp.router.add_route("POST", "/miniapp/topics/sync",   route_topics_sync)
     for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats",
-              "/miniapp/file","/miniapp/send_mood","/miniapp/apply"):
+              "/miniapp/file","/miniapp/send_mood","/miniapp/topics/sync","/miniapp/apply"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
     for p in ("/miniapp/spam/effective","/miniapp/topics/sync"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
@@ -1994,7 +2060,10 @@ def register_miniapp_routes(webapp, app):
     # --- Story-Sharing API (Emerald) ---
     try:
         from .story_api import register_story_api
-        register_story_api(webapp)
+        res = register_story_api(webapp)
+        # Falls async implementiert: korrekt "fire-and-forget" im laufenden Loop
+        if asyncio.iscoroutine(res):
+            asyncio.create_task(res)
     except Exception as e:
         logger.warning(f"[miniapp] Story API Registrierung fehlgeschlagen: {e}")
         

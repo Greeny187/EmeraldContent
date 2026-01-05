@@ -1466,6 +1466,27 @@ def assign_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name:
     )
 
 @_with_cursor
+def add_user_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_name: Optional[str] = None) -> bool:
+    # Fuegt eine Topic-Zuweisung hinzu, ueberschreibt aber NICHT bestehende Zuordnungen.
+    # Rueckgabe: True wenn neu eingefuegt, False wenn bereits vorhanden.
+    cur.execute(
+        "INSERT INTO user_topics (chat_id, user_id, topic_id, topic_name) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (chat_id, user_id) DO NOTHING;",
+        (chat_id, user_id, topic_id, topic_name)
+    )
+    return cur.rowcount > 0
+
+@_with_cursor
+def list_user_topics(cur, chat_id: int):
+    # Liest alle User->Topic-Zuweisungen fuer den Chat.
+    cur.execute(
+        "SELECT user_id, topic_id, topic_name FROM user_topics WHERE chat_id = %s ORDER BY user_id;",
+        (chat_id,)
+    )
+    return [(int(u), int(tid), name) for (u, tid, name) in cur.fetchall()]
+
+
+@_with_cursor
 def remove_topic(cur, chat_id: int, user_id: int):
     cur.execute("DELETE FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
 
