@@ -876,6 +876,18 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
     except Exception as e:
         errors.append(f"CleanDelete: {e}")
 
+    # --- Story-Sharing speichern (pro Gruppe) ---
+    try:
+        if isinstance(data.get("sharing"), dict):
+            sh = data["sharing"]
+            # Normalisiere Template-Schalter
+            if isinstance(sh.get("templates"), dict):
+                sh["templates"] = {k: bool(v) for k, v in sh["templates"].items()}
+            if "set_story_settings" in db:
+                db["set_story_settings"](cid, sh)
+    except Exception as e:
+        errors.append(f"StorySharing: {e}")
+
     return errors
 
 
@@ -1036,7 +1048,8 @@ def _db():
             set_group_language, set_night_mode, add_topic_router_rule, get_effective_link_policy, 
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
-            get_captcha_settings, set_captcha_settings, get_global_config, set_global_config
+            get_captcha_settings, set_captcha_settings, get_global_config, set_global_config, 
+            get_story_settings, set_story_settings
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
@@ -1354,6 +1367,12 @@ async def _state_json(cid: int) -> dict:
         "block_invite_links": False
     }
 
+    # Story-Sharing Settings (pro Gruppe)
+    try:
+        sharing_block = db.get("get_story_settings", lambda *_: None)(cid) or {}
+    except Exception:
+        sharing_block = {}
+
     # AI Flags
     try:
         (ai_faq, ai_rss) = db["get_ai_settings"](cid)
@@ -1416,6 +1435,7 @@ async def _state_json(cid: int) -> dict:
         "captcha": captcha,
         "links":   {"only_admin_links": bool(link.get("only_admin_links"))},
         "spam":    spam_block,
+        "sharing": sharing_block,
         "ai":      {"on": bool(ai_faq or ai_rss), "faq": ""},
         "aimod":   aimod,
         "faqs":    faqs,
@@ -1970,6 +1990,14 @@ def register_miniapp_routes(webapp, app):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
     for p in ("/miniapp/spam/effective","/miniapp/topics/sync"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
+        
+    # --- Story-Sharing API (Emerald) ---
+    try:
+        from .story_api import register_story_api
+        register_story_api(webapp)
+    except Exception as e:
+        logger.warning(f"[miniapp] Story API Registrierung fehlgeschlagen: {e}")
+        
     webapp["_miniapp_routes_attached"] = True
     logger.info("[miniapp] HTTP-Routen registriert")
     return True

@@ -10,6 +10,26 @@ import json
 
 logger = logging.getLogger(__name__)
 
+def _is_asyncpg_pool(obj) -> bool:
+    return hasattr(obj, "acquire") and callable(getattr(obj, "acquire", None))
+
+def _is_psycopg2_pool(obj) -> bool:
+    return hasattr(obj, "getconn") and hasattr(obj, "putconn")
+
+async def _psycopg2_fetchval(pool, sql: str, params=()):
+    """Runs a single-value query against a psycopg2 pool in a thread."""
+    def _run():
+        conn = pool.getconn()
+        try:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            cur.close()
+            return row[0] if row else None
+        finally:
+            pool.putconn(conn)
+    return await asyncio.to_thread(_run)
+
 class StorySystemHealthCheck:
     """Comprehensive health check for story-sharing system"""
     
@@ -41,36 +61,54 @@ class StorySystemHealthCheck:
                     'status': 'WARN',
                     'message': 'No database pool provided'
                 }
-            
-            async with self.db_pool.acquire() as conn:
-                # Check tables exist
-                tables = ['story_shares', 'story_clicks', 'story_conversions']
+
+            tables = ['story_shares', 'story_clicks', 'story_conversions']
+
+            # asyncpg style
+            if _is_asyncpg_pool(self.db_pool) and not _is_psycopg2_pool(self.db_pool):
+                async with self.db_pool.acquire() as conn:
+                    for table in tables:
+                        exists = await conn.fetchval(
+                            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name=%s)",
+                            table
+                        )
+                        if not exists:
+                            return {
+                                'name': '🗄️ Database Schema',
+                                'status': 'FAIL',
+                                'message': f'Missing table: {table}'
+                            }
+
+            # psycopg2 pool style
+            elif _is_psycopg2_pool(self.db_pool):
                 for table in tables:
-                    result = await conn.fetchval(
+                    exists = await _psycopg2_fetchval(
+                        self.db_pool,
                         "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name=%s)",
-                        table
+                        (table,)
                     )
-                    if not result:
+                    if not exists:
                         return {
                             'name': '🗄️ Database Schema',
                             'status': 'FAIL',
-                            'message': f'Table {table} not found'
+                            'message': f'Missing table: {table}'
                         }
-                
-                # Check indexes
-                result = await conn.fetchval(
-                    "SELECT COUNT(*) FROM pg_indexes WHERE tablename='story_shares'"
-                )
-                if result < 3:
-                    logger.warning(f'Missing indexes on story_shares (found {result})')
-                
+
+            else:
+                return {
+                    'name': '🗄️ Database Schema',
+                    'status': 'WARN',
+                    'message': 'Unknown pool type (expected asyncpg or psycopg2 pool)'
+                }
+
             return {
                 'name': '🗄️ Database Schema',
                 'status': 'PASS',
-                'message': f'All {len(tables)} tables exist with indexes'
+                'message': 'All story tables exist'
             }
-        
+
         except Exception as e:
+            logger.error(f"Database schema check error: {e}")
             return {
                 'name': '🗄️ Database Schema',
                 'status': 'FAIL',

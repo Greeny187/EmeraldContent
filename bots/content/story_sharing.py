@@ -12,6 +12,13 @@ from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
+BOT_USERNAME = (
+    os.getenv("BOT_USERNAME")
+    or os.getenv("TELEGRAM_BOT_USERNAME")
+    or os.getenv("EMERALD_BOT_USERNAME")
+    or "emerald_bot"
+)
+
 # Story Template Typen
 STORY_TEMPLATES = {
     "group_bot": {
@@ -111,6 +118,15 @@ def init_story_sharing_schema():
             )
         """)
         
+        # Performance-Indizes (Leaderboards / Rate-Limits / Auswertungen)
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_chat_user_ts ON story_shares(chat_id, user_id, shared_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_user_ts ON story_shares(user_id, shared_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_clicks_share_ts ON story_clicks(share_id, clicked_at DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_conversions_share_ts ON story_conversions(share_id, converted_at DESC);")
+        except Exception as _idx_e:
+            logger.warning(f"Index creation skipped: {_idx_e}")
+        
         conn.commit()
         logger.info("✅ Story sharing schema initialized")
         return True
@@ -145,8 +161,8 @@ def create_story_share(
         cur = conn.cursor()
         
         # Generiere Referral-Link
-        # Format: t.me/emerald_bot?start=story_USERID_SHAREID
-        referral_link = f"https://t.me/emerald_bot?start=story_{user_id}"
+        # Format: t.me/<bot>?start=story_USERID_SHAREID
+        referral_link = None
         
         cur.execute("""
             INSERT INTO story_shares 
@@ -156,6 +172,14 @@ def create_story_share(
         """, (user_id, chat_id, template, referral_link))
         
         share_id = cur.fetchone()[0]
+        
+        # Jetzt Referral-Link mit share_id bauen (für korrektes Tracking)
+        referral_link = f"https://t.me/{BOT_USERNAME}?start=story_{user_id}_{share_id}"
+        try:
+            cur.execute("UPDATE story_shares SET referral_link=%s WHERE id=%s;", (referral_link, share_id))
+        except Exception as _e:
+            logger.warning(f"Could not update referral_link for share_id={share_id}: {_e}")
+
         conn.commit()
         
         template_info = STORY_TEMPLATES[template]
@@ -181,6 +205,70 @@ def create_story_share(
         if conn:
             conn.close()
 
+def count_shares_today(user_id: int, chat_id: int) -> int:
+    """Counts how many shares a user created today in a specific group."""
+    conn = get_connection()
+    if not conn:
+        return 0
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM story_shares WHERE user_id=%s AND chat_id=%s AND shared_at::date = NOW()::date;",
+            (user_id, chat_id)
+        )
+        return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.error(f"count_shares_today error: {e}")
+        return 0
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_share_by_id(share_id: int) -> Optional[dict]:
+    """Fetch a share row by id."""
+    conn = get_connection()
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, user_id, chat_id, story_template, referral_link, shared_at, clicks, conversions, status "
+            "FROM story_shares WHERE id=%s;",
+            (share_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "share_id": row[0],
+            "user_id": row[1],
+            "chat_id": row[2],
+            "template": row[3],
+            "referral_link": row[4] or "",
+            "shared_at": row[5],
+            "clicks": row[6],
+            "conversions": row[7],
+            "status": row[8]
+        }
+    except Exception as e:
+        logger.error(f"get_share_by_id error: {e}")
+        return None
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def track_story_click(share_id: int, visitor_id: int, source: str = "story") -> bool:
     """Track when someone clicks on a shared story"""

@@ -948,6 +948,81 @@ def set_global_config(cur, key: str, value: dict):
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
     """, (key, Json(value)))
 
+
+# --- Story-Sharing (pro Gruppe, gespeichert in global_config als JSON) ---
+STORY_SHARING_DEFAULT = {
+    "enabled": True,
+    "referral_tracking": True,
+    "show_analytics": True,
+    "leaderboard_enabled": True,
+    "daily_limit": 5,
+    "templates": {
+        "group_bot": True,
+        "stats": True,
+        "content": True,
+        "emrd_rewards": True,
+        "affiliate": True
+    },
+    # Reward-Schalter (die tatsächliche Vergabe kann bot-abhängig implementiert werden)
+    "reward_share": True,
+    "reward_clicks": False,
+    "reward_referral": True
+}
+
+def _story_key(chat_id: int) -> str:
+    return f"story_sharing:{int(chat_id)}"
+
+@_with_cursor
+def get_story_settings(cur, chat_id: int) -> dict:
+    """Lädt Story-Sharing Settings für eine Gruppe (cid)."""
+    cur.execute("SELECT value FROM global_config WHERE key=%s;", (_story_key(chat_id),))
+    row = cur.fetchone()
+    raw = row[0] if row else None
+    if not isinstance(raw, dict):
+        raw = {}
+    # Merge defaults (shallow) + templates (nested)
+    out = dict(STORY_SHARING_DEFAULT)
+    out.update({k: v for k, v in raw.items() if k != "templates"})
+    tmpl = dict(STORY_SHARING_DEFAULT.get("templates", {}))
+    if isinstance(raw.get("templates"), dict):
+        tmpl.update(raw["templates"])
+    out["templates"] = tmpl
+    # Types
+    try:
+        out["daily_limit"] = int(out.get("daily_limit", 5))
+    except Exception:
+        out["daily_limit"] = 5
+    return out
+
+@_with_cursor
+def set_story_settings(cur, chat_id: int, settings: dict):
+    """Speichert Story-Sharing Settings für eine Gruppe (cid)."""
+    if not isinstance(settings, dict):
+        settings = {}
+    # Sanitize minimal
+    clean = {}
+    for k in ("enabled","referral_tracking","show_analytics","leaderboard_enabled","daily_limit",
+              "reward_share","reward_clicks","reward_referral","templates"):
+        if k in settings:
+            clean[k] = settings[k]
+    # normalize types
+    for k in ("enabled","referral_tracking","show_analytics","leaderboard_enabled","reward_share","reward_clicks","reward_referral"):
+        if k in clean:
+            clean[k] = bool(clean[k])
+    if "daily_limit" in clean:
+        try:
+            clean["daily_limit"] = int(clean["daily_limit"])
+        except Exception:
+            clean["daily_limit"] = STORY_SHARING_DEFAULT["daily_limit"]
+    if "templates" in clean and isinstance(clean["templates"], dict):
+        # keep only known templates
+        clean["templates"] = {t: bool(clean["templates"].get(t, True)) for t in STORY_SHARING_DEFAULT["templates"].keys()}
+    cur.execute("""
+      INSERT INTO global_config(key, value)
+      VALUES (%s,%s)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+    """, (_story_key(chat_id), Json(clean)))
+
 @_with_cursor
 def touch_user(cur, tg_id: int):
     """

@@ -9,22 +9,82 @@ from datetime import datetime
 import os
 
 from .story_sharing import (
-    create_story_share,
-    track_story_click,
-    record_story_conversion,
-    get_share_stats,
-    get_user_shares,
-    get_top_shares,
-    init_story_sharing_schema,
+    create_story_share, track_story_click,
+    record_story_conversion, get_share_stats, get_user_shares,
+    get_top_shares, init_story_sharing_schema, count_shares_today, get_share_by_id,
     STORY_TEMPLATES
 )
 from .story_card_generator import generate_share_card, generate_share_card_html
-from shared.emrd_rewards_integration import award_points
+try:
+    from shared.emrd_rewards_integration import award_points
+except Exception:
+    def award_points(*args, **kwargs):
+        return None
+
+from .database import get_story_settings
 
 logger = logging.getLogger(__name__)
 
+def _allowed_origin(request: web.Request) -> str:
+    try:
+        return request.app.get("allowed_origin") or "*"
+    except Exception:
+        return "*"
 
-async def register_story_api(webapp):
+def _cors_headers(request: web.Request) -> dict:
+    return {
+        "Access-Control-Allow-Origin": _allowed_origin(request),
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data, x-telegram-web-app-data",
+    }
+
+async def _cors_ok(request: web.Request) -> web.Response:
+    return web.Response(status=204, headers=_cors_headers(request))
+
+def _json(request: web.Request, payload: dict, status: int = 200) -> web.Response:
+    return web.json_response(payload, status=status, headers=_cors_headers(request))
+
+# Telegram WebApp Auth (wie in miniapp.py)
+def _resolve_uid(request: web.Request) -> int:
+    try:
+        from .access import parse_webapp_user_id
+    except Exception:
+        parse_webapp_user_id = None
+    init_str = (
+        request.headers.get("X-Telegram-Init-Data")
+        or request.headers.get("x-telegram-web-app-data")
+        or request.query.get("init_data")
+    )
+    uid = 0
+    try:
+        if parse_webapp_user_id:
+            uid = int(parse_webapp_user_id(init_str) or 0)
+    except Exception:
+        uid = 0
+    if uid > 0:
+        return uid
+    q_uid = request.query.get("uid")
+    if q_uid and str(q_uid).lstrip("-").isdigit():
+        return int(q_uid)
+    return 0
+
+async def _is_admin(webapp_or_app, chat_id: int, user_id: int) -> bool:
+    """Server-seitiger Admincheck (wichtig, weil Story-Sharing farmbar ist)."""
+    app = None
+    try:
+        app = webapp_or_app.get("ptb_app") if not hasattr(webapp_or_app, "bot") else webapp_or_app
+    except Exception:
+        app = None
+    if not app:
+        return False
+    try:
+        cm = await app.bot.get_chat_member(chat_id, user_id)
+        status = (getattr(cm, "status", "") or "").lower()
+        return status in ("administrator", "creator")
+    except Exception:
+        return False
+
+def register_story_api(webapp: web.Application):
     """Register story sharing API routes"""
     
     # Initialize schema
@@ -38,9 +98,23 @@ async def register_story_api(webapp):
     webapp.router.add_get("/api/stories/user/{user_id}", get_user_stories)
     webapp.router.add_get("/api/stories/top", get_top)
     webapp.router.add_get("/api/stories/card/{template}", get_card_image)
-    
-    logger.info("✅ Story sharing API routes registered")
+    webapp.router.add_get("/api/stories/card/share/{share_id}", get_share_card_image)
 
+    # CORS Preflight
+    for p in (
+        "/api/stories/templates",
+        "/api/stories/create",
+        "/api/stories/click",
+        "/api/stories/convert",
+        "/api/stories/top",
+        "/api/stories/card/{template}",
+        "/api/stories/card/share/{share_id}",
+        "/api/stories/stats/{share_id}",
+        "/api/stories/user/{user_id}",
+    ):
+        webapp.router.add_route("OPTIONS", p, _cors_ok)
+        
+    logger.info("✅ Story sharing API routes registered")
 
 async def get_templates(request: web.Request) -> web.Response:
     """GET /api/stories/templates - Get available story templates"""
@@ -56,7 +130,7 @@ async def get_templates(request: web.Request) -> web.Response:
                 "reward_points": template["reward_points"]
             })
         
-        return web.json_response({
+        return _json(request, {
             "success": True,
             "templates": templates
         })
@@ -67,72 +141,110 @@ async def get_templates(request: web.Request) -> web.Response:
             status=500
         )
 
-
 async def create_share(request: web.Request) -> web.Response:
-    """POST /api/stories/create - Create a new story share"""
+    """POST /api/stories/create - Create a new story share (JSON)"""
     try:
         data = await request.json()
-        
-        user_id = int(data.get("user_id"))
-        chat_id = int(data.get("chat_id", 0))
-        template = data.get("template", "group_bot")
-        group_name = data.get("group_name", "Meine Gruppe")
-        
-        if not user_id:
-            return web.json_response(
-                {"success": False, "error": "user_id erforderlich"},
-                status=400
-            )
-        
-        if template not in STORY_TEMPLATES:
-            return web.json_response(
-                {"success": False, "error": f"Unknown template: {template}"},
-                status=400
-            )
-        
-        # Create share
-        share_info = create_story_share(user_id, chat_id, template, group_name)
-        
-        if not share_info:
-            return web.json_response(
-                {"success": False, "error": "Fehler beim Erstellen des Shares"},
-                status=500
-            )
-        
-        # Generate card image
-        card_image = generate_share_card(
-            template,
-            group_name,
-            share_info["referral_link"],
-            ""
-        )
-        
-        # Award points for sharing
-        try:
-            reward_points = STORY_TEMPLATES[template]["reward_points"]
-            award_points(
-                user_id=user_id,
-                chat_id=chat_id,
-                event_type="story_shared",
-                custom_points=reward_points,
-                metadata={"template": template, "group_name": group_name}
-            )
-        except Exception as e:
-            logger.warning(f"Could not award points: {e}")
-        
-        return web.json_response({
-            "success": True,
-            "share": share_info,
-            "has_image": card_image is not None
-        })
-        
-    except Exception as e:
-        logger.error(f"Create share error: {e}")
-        return web.json_response(
-            {"success": False, "error": str(e)},
-            status=500
-        )
+        uid = _resolve_uid(request)
+        chat_id = int(data.get("chat_id", 0) or 0)
+        template = (data.get("template") or "group_bot").strip()
 
+        if uid <= 0:
+            return _json(request, {"success": False, "error": "auth_required"}, status=403)
+        if chat_id == 0:
+            return _json(request, {"success": False, "error": "chat_id erforderlich"}, status=400)
+
+        # Admin-Check (pro Gruppe)
+        if not await _is_admin(request.app, chat_id, uid):
+            return _json(request, {"success": False, "error": "forbidden"}, status=403)
+
+        # Settings pro Gruppe
+        try:
+            sharing = get_story_settings(chat_id) or {}
+        except Exception:
+            sharing = {}
+
+        if not bool(sharing.get("enabled", True)):
+            return _json(request, {"success": False, "error": "story_sharing_disabled"}, status=403)
+
+        templates = sharing.get("templates") or {}
+        if template in templates and not bool(templates.get(template)):
+            return _json(request, {"success": False, "error": "template_disabled"}, status=403)
+
+        # Rate-Limit (pro User, pro Gruppe, pro Tag)
+        try:
+            limit = int(sharing.get("daily_limit", 5) or 5)
+        except Exception:
+            limit = 5
+        used = count_shares_today(uid, chat_id)
+        if used >= limit:
+            return _json(request, {"success": False, "error": "rate_limited", "limit": limit, "used": used}, status=429)
+
+        # Gruppenname (für Card) – best effort
+        group_name = (data.get("group_name") or "").strip() or "Meine Gruppe"
+        share = create_story_share(uid, chat_id, template, group_name=group_name)
+        if not share:
+            return _json(request, {"success": False, "error": "create_failed"}, status=500)
+
+        origin = f"{request.scheme}://{request.host}"
+        card_url = f"{origin}/api/stories/card/share/{share['share_id']}"
+
+        return _json(request, {
+            "success": True,
+            "share": {
+                "share_id": share["share_id"],
+                "chat_id": chat_id,
+                "template": share["template"],
+                "referral_link": share["referral_link"],
+                "card_url": card_url,
+                "title": share.get("title"),
+                "description": share.get("description"),
+            }
+        })
+    except Exception as e:
+        logger.error(f"Create share error: {e}", exc_info=True)
+        return _json(request, {"success": False, "error": str(e)}, status=500)
+
+
+async def get_share_card_image(request: web.Request) -> web.Response:
+    """GET /api/stories/card/share/{share_id} - Card by share_id (best for Telegram Story)."""
+    try:
+        share_id = int(request.match_info.get("share_id", "0"))
+        row = get_share_by_id(share_id)
+        if not row:
+            return _json(request, {"success": False, "error": "not_found"}, status=404)
+
+        template = row.get("template") or "group_bot"
+        referral_link = row.get("referral_link") or ""
+        chat_id = int(row.get("chat_id") or 0)
+
+        group_name = "Meine Gruppe"
+        if chat_id:
+            try:
+                import psycopg2
+                from .database import db_url
+                conn = psycopg2.connect(db_url)
+                cur = conn.cursor()
+                cur.execute("SELECT title FROM group_settings WHERE chat_id=%s;", (chat_id,))
+                r = cur.fetchone()
+                if r and r[0]:
+                    group_name = str(r[0])
+                cur.close(); conn.close()
+            except Exception:
+                pass
+
+        card_data = generate_share_card(template, group_name, referral_link)
+        if not card_data:
+            return _json(request, {"success": False, "error": "card_failed"}, status=500)
+
+        return web.Response(
+            body=card_data,
+            content_type="image/png",
+            headers={**_cors_headers(request), "Cache-Control": "public, max-age=3600"}
+        )
+    except Exception as e:
+        logger.error(f"Get share card image error: {e}", exc_info=True)
+        return _json(request, {"success": False, "error": str(e)}, status=500)
 
 async def click_share(request: web.Request) -> web.Response:
     """POST /api/stories/click - Track a story click"""
@@ -315,12 +427,11 @@ async def get_card_image(request: web.Request) -> web.Response:
         return web.Response(
             body=card_data,
             content_type="image/png",
-            headers={"Cache-Control": "public, max-age=3600"}
+            headers={**_cors_headers(request), "Cache-Control": "public, max-age=3600"}
         )
         
     except Exception as e:
         logger.error(f"Get card image error: {e}")
-        return web.json_response(
-            {"success": False, "error": str(e)},
-            status=500
-        )
+        return _json(request, {
+            "success": False, "error": str(e)
+            }, status=500)

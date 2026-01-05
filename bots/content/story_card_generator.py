@@ -91,8 +91,8 @@ def generate_share_card(
     group_name: str = "Meine Gruppe",
     referral_link: str = "",
     user_display: str = "",
-    width: int = 1200,
-    height: int = 630
+    width: int = 1080,
+    height: int = 1920
 ) -> Optional[bytes]:
     """
     Generate a story share card image
@@ -107,16 +107,21 @@ def generate_share_card(
         
         style = CARD_STYLES[template]
         
+        # Skalierung (Story-Format): halte Proportionen flexibel
+        scale = height / 1920.0
+        def S(px: int) -> int:
+            return max(12, int(px * scale))
+        
         # Create gradient background
         img = create_gradient_bg(width, height, style["bg_gradient"][0], style["bg_gradient"][1])
         draw = ImageDraw.Draw(img)
         
         # Try to load custom fonts, fallback to default
         try:
-            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
-            subtitle_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
-            text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
-            small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+            title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", S(74))
+            subtitle_font = ImageFont.truetype("DejaVuSans.ttf", S(46))
+            text_font = ImageFont.truetype("DejaVuSans.ttf", S(40))
+            small_font = ImageFont.truetype("DejaVuSans.ttf", S(30))
         except:
             # Fallback to default
             title_font = ImageFont.load_default()
@@ -126,7 +131,6 @@ def generate_share_card(
         
         # Add semi-transparent overlay for text legibility
         overlay = Image.new('RGBA', (width, height), (0, 0, 0, 100))
-        img.paste(Image.new('RGB', (width, height), 'black'), (0, 0))
         img = Image.alpha_composite(
             img.convert('RGBA'),
             overlay
