@@ -23,7 +23,7 @@ async def init_all_schemas():
     """Initialize all database schemas"""
     if sql:
         try:
-            await sql.init_schema()
+            await sql.init_all_schemas()
             logger.info("✅ Database schemas initialized")
         except Exception as e:
             logger.error(f"❌ Failed to initialize schemas: {e}")
