@@ -353,8 +353,8 @@ async def spam_enforcer(update, context):
                 return
 
     # --- QUOTA / FLOOD (pro Topic & User) ---
-    link_flags  = get_link_settings(chat_id)
-    spam_pol    = effective_spam_policy(chat_id, topic_id, link_flags)
+    link_settings  = get_link_settings(chat_id)
+    spam_pol       = effective_spam_policy(chat_id, topic_id, link_settings)
     daily_lim   = int(spam_pol.get("per_user_daily_limit") or 0)
     notify_mode = (spam_pol.get("quota_notify") or "smart").lower()
 

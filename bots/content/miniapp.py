@@ -577,7 +577,11 @@ async def _save_from_payload(cid:int, uid:int, data:dict, app:Application|None) 
         if isinstance(data.get("topic_user_del"), dict):
             u = data["topic_user_del"].get("user_id")
             if str(u).lstrip("-").isdigit():
-                db["remove_topic"](cid, int(u))
+                t = data["topic_user_del"].get("topic_id")
+                if str(t).lstrip("-").isdigit():
+                    db["remove_topic"](cid, int(u), int(t))
+                else:
+                    db["remove_topic"](cid, int(u))
 
     except Exception as e:
         errors.append(f"Spam/Links: {e}")
