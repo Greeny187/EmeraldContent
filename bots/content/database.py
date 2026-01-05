@@ -1024,6 +1024,13 @@ def set_story_settings(cur, chat_id: int, settings: dict):
     """, (_story_key(chat_id), Json(clean)))
 
 @_with_cursor
+def get_group_title(cur, chat_id: int) -> Optional[str]:
+    cur.execute("SELECT title FROM group_settings WHERE chat_id=%s;", (chat_id,))
+    r = cur.fetchone()
+    return str(r[0]) if (r and r[0]) else None
+
+
+@_with_cursor
 def touch_user(cur, tg_id: int):
     """
     Legt einen User an (falls noch nicht vorhanden) und aktualisiert last_seen.
