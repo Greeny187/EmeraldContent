@@ -1,23 +1,19 @@
 """
 Emerald Story Sharing System
-Users können direkt aus der Miniapp Stories teilen mit automatischem Referral-Link
+Users können direkt aus der Miniapp Stories teilen mit automatischem Referral-Link.
+Settings/Rate-Limits werden pro Gruppe (chat_id) gesteuert (siehe database.get_story_settings()).
 """
 
 import logging
 import os
-from typing import Optional, Tuple
-from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
+
 import psycopg2
-from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
-BOT_USERNAME = (
-    os.getenv("BOT_USERNAME")
-    or os.getenv("TELEGRAM_BOT_USERNAME")
-    or os.getenv("EMERALD_BOT_USERNAME")
-    or "emerald_bot"
-)
+BOT_USERNAME = (os.getenv("BOT_USERNAME") or "emerald_bot").lstrip("@")
 
 # Story Template Typen
 STORY_TEMPLATES = {
@@ -58,87 +54,96 @@ STORY_TEMPLATES = {
     }
 }
 
-
-def get_connection():
-    """Get database connection"""
+@contextmanager
+def _conn():
+    """DB Connection über den vorhandenen psycopg2 Pool aus database.py (wenn verfügbar)."""
+    pool_inst = None
+    conn = None
     try:
-        return psycopg2.connect(os.getenv("DATABASE_URL"))
-    except Exception as e:
-        logger.error(f"DB connection error: {e}")
-        return None
+        from .database import _db_pool  # type: ignore
+        pool_inst = _db_pool
+    except Exception:
+        pool_inst = None
 
-
-def init_story_sharing_schema():
-    """Initialize story sharing tables"""
-    conn = get_connection()
-    if not conn:
-        return False
-    
     try:
-        cur = conn.cursor()
-        
-        # Story Shares tracking
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS story_shares (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                chat_id BIGINT,
-                story_template VARCHAR(50),
-                referral_link TEXT,
-                shared_at TIMESTAMP DEFAULT NOW(),
-                clicks INT DEFAULT 0,
-                conversions INT DEFAULT 0,
-                status VARCHAR(50) DEFAULT 'shared'
-            )
-        """)
-        
-        # Story Click tracking
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS story_clicks (
-                id SERIAL PRIMARY KEY,
-                share_id INT,
-                visitor_id BIGINT,
-                clicked_at TIMESTAMP DEFAULT NOW(),
-                source VARCHAR(50),
-                FOREIGN KEY (share_id) REFERENCES story_shares(id)
-            )
-        """)
-        
-        # Story Conversions (visitor joined group/bot)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS story_conversions (
-                id SERIAL PRIMARY KEY,
-                share_id INT,
-                referrer_id BIGINT,
-                visitor_id BIGINT,
-                conversion_type VARCHAR(50),
-                reward_earned NUMERIC(10,2),
-                converted_at TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (share_id) REFERENCES story_shares(id)
-            )
-        """)
-        
-        # Performance-Indizes (Leaderboards / Rate-Limits / Auswertungen)
-        try:
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_chat_user_ts ON story_shares(chat_id, user_id, shared_at DESC);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_user_ts ON story_shares(user_id, shared_at DESC);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_clicks_share_ts ON story_clicks(share_id, clicked_at DESC);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_conversions_share_ts ON story_conversions(share_id, converted_at DESC);")
-        except Exception as _idx_e:
-            logger.warning(f"Index creation skipped: {_idx_e}")
-        
-        conn.commit()
-        logger.info("✅ Story sharing schema initialized")
-        return True
-    except Exception as e:
-        logger.error(f"Schema init error: {e}")
-        conn.rollback()
-        return False
+        if pool_inst:
+            conn = pool_inst.getconn()
+        else:
+            conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        yield conn
     finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+        try:
+            if pool_inst and conn:
+                pool_inst.putconn(conn)
+            elif conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+def init_story_sharing_schema() -> bool:
+    """Initialize story sharing tables + Indizes (Leaderboards/Rate-Limits)."""
+    try:
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            # Story Shares tracking
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS story_shares (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    chat_id BIGINT NOT NULL,
+                    story_template VARCHAR(50),
+                    referral_link TEXT,
+                    shared_at TIMESTAMP DEFAULT NOW(),
+                    clicks INT DEFAULT 0,
+                    conversions INT DEFAULT 0,
+                    click_rewarded_steps INT DEFAULT 0,
+                    status VARCHAR(50) DEFAULT 'shared'
+                )
+            """)
+
+            # kleine Migrationen (falls Tabelle bereits existiert)
+            cur.execute("ALTER TABLE story_shares ADD COLUMN IF NOT EXISTS click_rewarded_steps INT DEFAULT 0;")
+
+            # Story Click tracking
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS story_clicks (
+                    id SERIAL PRIMARY KEY,
+                    share_id INT NOT NULL,
+                    visitor_id BIGINT,
+                    clicked_at TIMESTAMP DEFAULT NOW(),
+                    source VARCHAR(50),
+                    FOREIGN KEY (share_id) REFERENCES story_shares(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Story Conversions (visitor joined group/bot)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS story_conversions (
+                    id SERIAL PRIMARY KEY,
+                    share_id INT NOT NULL,
+                    referrer_id BIGINT NOT NULL,
+                    visitor_id BIGINT NOT NULL,
+                    conversion_type VARCHAR(50),
+                    reward_earned NUMERIC(10,2),
+                    converted_at TIMESTAMP DEFAULT NOW(),
+                    FOREIGN KEY (share_id) REFERENCES story_shares(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Indizes (extra, aber sehr sinnvoll)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_user_chat_day ON story_shares(user_id, chat_id, shared_at);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_chat_day ON story_shares(chat_id, shared_at);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_clicks_share ON story_clicks(share_id, clicked_at);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_story_conversions_share ON story_conversions(share_id, converted_at);")
+
+            conn.commit()
+            logger.info("✅ Story sharing schema initialized (+indizes)")
+            return True
+    except Exception as e:
+        logger.error(f"Schema init error: {e}", exc_info=True)
+        return False
 
 
 def create_story_share(
@@ -146,164 +151,131 @@ def create_story_share(
     chat_id: int,
     template: str,
     group_name: str = "Meine Gruppe"
-) -> Optional[dict]:
-    """Create a new story share and return share info"""
-    
+) -> Optional[Dict[str, Any]]:
+    """Create a new story share and return share info."""
+
     if template not in STORY_TEMPLATES:
         logger.error(f"Unknown template: {template}")
         return None
-    
-    conn = get_connection()
-    if not conn:
-        return None
-    
-    try:
-        cur = conn.cursor()
-        
-        # Generiere Referral-Link
-        # Format: t.me/<bot>?start=story_USERID_SHAREID
-        referral_link = None
-        
-        cur.execute("""
-            INSERT INTO story_shares 
-            (user_id, chat_id, story_template, referral_link, status)
-            VALUES (%s, %s, %s, %s, 'active')
-            RETURNING id
-        """, (user_id, chat_id, template, referral_link))
-        
-        share_id = cur.fetchone()[0]
-        
-        # Jetzt Referral-Link mit share_id bauen (für korrektes Tracking)
-        referral_link = f"https://t.me/{BOT_USERNAME}?start=story_{user_id}_{share_id}"
-        try:
-            cur.execute("UPDATE story_shares SET referral_link=%s WHERE id=%s;", (referral_link, share_id))
-        except Exception as _e:
-            logger.warning(f"Could not update referral_link for share_id={share_id}: {_e}")
 
-        conn.commit()
-        
-        template_info = STORY_TEMPLATES[template]
-        
-        return {
-            "share_id": share_id,
-            "referral_link": referral_link,
-            "template": template,
-            "title": template_info["title"],
-            "description": template_info["description"],
-            "emoji": template_info["emoji"],
-            "color": template_info["color"],
-            "reward_points": template_info["reward_points"],
-            "group_name": group_name
-        }
+    try:
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            # 1) Insert first to get share_id
+            cur.execute("""
+                INSERT INTO story_shares (user_id, chat_id, story_template, referral_link, status)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (user_id, chat_id, template, "", "active"))
+            share_id = int(cur.fetchone()[0])
+
+            # 2) Build referral link (tamper-resistant: share_id reicht)
+            referral_link = f"https://t.me/{BOT_USERNAME}?start=story_{share_id}"
+
+            cur.execute("UPDATE story_shares SET referral_link=%s WHERE id=%s;", (referral_link, share_id))
+            conn.commit()
+
+            t = STORY_TEMPLATES[template]
+            return {
+                "share_id": share_id,
+                "referral_link": referral_link,
+                "template": template,
+                "title": t["title"],
+                "description": t["description"],
+                "emoji": t["emoji"],
+                "color": t["color"],
+                "reward_points": t["reward_points"],
+                "group_name": group_name
+            }
     except Exception as e:
-        logger.error(f"Create share error: {e}")
-        conn.rollback()
+        logger.error(f"Create share error: {e}", exc_info=True)
         return None
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+
+
+def get_share_by_id(share_id: int) -> Optional[Dict[str, Any]]:
+    try:
+        with _conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, user_id, chat_id, story_template, referral_link, clicks, conversions, click_rewarded_steps, shared_at, status
+                FROM story_shares WHERE id=%s
+            """, (share_id,))
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "share_id": int(r[0]),
+                "user_id": int(r[1]),
+                "chat_id": int(r[2]),
+                "template": r[3],
+                "referral_link": r[4] or "",
+                "clicks": int(r[5] or 0),
+                "conversions": int(r[6] or 0),
+                "click_rewarded_steps": int(r[7] or 0),
+                "shared_at": r[8].isoformat() if r[8] else None,
+                "status": r[9] or "",
+            }
+    except Exception as e:
+        logger.error(f"get_share_by_id error: {e}", exc_info=True)
+        return None
+
+
+def set_click_rewarded_steps(share_id: int, steps: int) -> bool:
+    """Merkt sich, bis zu welchem 10er-Step Click-Rewards bereits vergeben wurden."""
+    try:
+        steps = max(0, int(steps or 0))
+    except Exception:
+        steps = 0
+    try:
+        with _conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE story_shares SET click_rewarded_steps=%s WHERE id=%s;", (steps, share_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"set_click_rewarded_steps error: {e}", exc_info=True)
+        return False
+
 
 def count_shares_today(user_id: int, chat_id: int) -> int:
-    """Counts how many shares a user created today in a specific group."""
-    conn = get_connection()
-    if not conn:
-        return 0
+    """Zählt Shares seit Tagesbeginn (DB-Zeit) – pro User + Gruppe."""
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*) FROM story_shares WHERE user_id=%s AND chat_id=%s AND shared_at::date = NOW()::date;",
-            (user_id, chat_id)
-        )
-        return int(cur.fetchone()[0] or 0)
+        with _conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COUNT(1)
+                FROM story_shares
+                WHERE user_id=%s AND chat_id=%s
+                  AND shared_at >= date_trunc('day', NOW())
+            """, (user_id, chat_id))
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
-        logger.error(f"count_shares_today error: {e}")
+        logger.error(f"count_shares_today error: {e}", exc_info=True)
         return 0
-    finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
 
-
-def get_share_by_id(share_id: int) -> Optional[dict]:
-    """Fetch a share row by id."""
-    conn = get_connection()
-    if not conn:
-        return None
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, user_id, chat_id, story_template, referral_link, shared_at, clicks, conversions, status "
-            "FROM story_shares WHERE id=%s;",
-            (share_id,)
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
-        return {
-            "share_id": row[0],
-            "user_id": row[1],
-            "chat_id": row[2],
-            "template": row[3],
-            "referral_link": row[4] or "",
-            "shared_at": row[5],
-            "clicks": row[6],
-            "conversions": row[7],
-            "status": row[8]
-        }
-    except Exception as e:
-        logger.error(f"get_share_by_id error: {e}")
-        return None
-    finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 def track_story_click(share_id: int, visitor_id: int, source: str = "story") -> bool:
-    """Track when someone clicks on a shared story"""
-    
-    conn = get_connection()
-    if not conn:
-        return False
-    
+    """Track when someone clicks on a shared story.
+    Anti-farm: pro visitor_id nur ein Click pro Share (wenn visitor_id > 0).
+    """
     try:
-        cur = conn.cursor()
-        
-        # Record click
-        cur.execute("""
-            INSERT INTO story_clicks (share_id, visitor_id, source)
-            VALUES (%s, %s, %s)
-        """, (share_id, visitor_id, source))
-        
-        # Increment click count in share
-        cur.execute("""
-            UPDATE story_shares SET clicks = clicks + 1
-            WHERE id = %s
-        """, (share_id,))
-        
-        conn.commit()
-        logger.info(f"Story click tracked: share_id={share_id}, visitor={visitor_id}")
-        return True
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            if visitor_id and visitor_id > 0:
+                cur.execute("SELECT 1 FROM story_clicks WHERE share_id=%s AND visitor_id=%s LIMIT 1;", (share_id, visitor_id))
+                if cur.fetchone():
+                    return True  # already counted
+
+            cur.execute("INSERT INTO story_clicks (share_id, visitor_id, source) VALUES (%s, %s, %s);",
+                        (share_id, visitor_id or None, source))
+            cur.execute("UPDATE story_shares SET clicks = clicks + 1 WHERE id = %s;", (share_id,))
+            conn.commit()
+            return True
     except Exception as e:
-        logger.error(f"Track click error: {e}")
-        conn.rollback()
+        logger.error(f"Track click error: {e}", exc_info=True)
         return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
 
 
 def record_story_conversion(
@@ -313,163 +285,144 @@ def record_story_conversion(
     conversion_type: str = "joined_group",
     reward_points: float = 50.0
 ) -> bool:
-    """Record a conversion from a story share"""
-    
-    conn = get_connection()
-    if not conn:
-        return False
-    
+    """Record a conversion from a story share.
+    Anti-farm: pro visitor_id nur eine Conversion pro Share.
+    """
     try:
-        cur = conn.cursor()
-        
-        # Record conversion
-        cur.execute("""
-            INSERT INTO story_conversions 
-            (share_id, referrer_id, visitor_id, conversion_type, reward_earned)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (share_id, referrer_id, visitor_id, conversion_type, reward_points))
-        
-        # Increment conversion count
-        cur.execute("""
-            UPDATE story_shares SET conversions = conversions + 1
-            WHERE id = %s
-        """, (share_id,))
-        
-        conn.commit()
-        logger.info(f"Conversion recorded: share_id={share_id}, referrer={referrer_id}")
-        return True
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            cur.execute("SELECT 1 FROM story_conversions WHERE share_id=%s AND visitor_id=%s LIMIT 1;", (share_id, visitor_id))
+            if cur.fetchone():
+                return True  # already recorded
+
+            cur.execute("""
+                INSERT INTO story_conversions (share_id, referrer_id, visitor_id, conversion_type, reward_earned)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (share_id, referrer_id, visitor_id, conversion_type, float(reward_points or 0.0)))
+
+            cur.execute("UPDATE story_shares SET conversions = conversions + 1 WHERE id = %s;", (share_id,))
+            conn.commit()
+            return True
     except Exception as e:
-        logger.error(f"Record conversion error: {e}")
-        conn.rollback()
+        logger.error(f"Record conversion error: {e}", exc_info=True)
         return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
 
 
-def get_share_stats(share_id: int) -> Optional[dict]:
+def get_share_stats(share_id: int) -> Optional[Dict[str, Any]]:
     """Get statistics for a story share"""
-    
-    conn = get_connection()
-    if not conn:
-        return None
-    
     try:
-        cur = conn.cursor()
-        
-        cur.execute("""
-            SELECT 
-                id, user_id, chat_id, story_template, 
-                referral_link, clicks, conversions, shared_at
-            FROM story_shares
-            WHERE id = %s
-        """, (share_id,))
-        
-        row = cur.fetchone()
-        if not row:
-            return None
-        
-        return {
-            "share_id": row[0],
-            "user_id": row[1],
-            "chat_id": row[2],
-            "template": row[3],
-            "referral_link": row[4],
-            "clicks": row[5],
-            "conversions": row[6],
-            "shared_at": row[7].isoformat() if row[7] else None,
-            "conversion_rate": (row[6] / row[5] * 100) if row[5] > 0 else 0
-        }
-    except Exception as e:
-        logger.error(f"Get stats error: {e}")
-        return None
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+        with _conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, user_id, chat_id, story_template, referral_link, clicks, conversions, shared_at
+                FROM story_shares
+                WHERE id = %s
+            """, (share_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
 
-
-def get_user_shares(user_id: int, limit: int = 10) -> list:
-    """Get all story shares by a user"""
-    
-    conn = get_connection()
-    if not conn:
-        return []
-    
-    try:
-        cur = conn.cursor()
-        
-        cur.execute("""
-            SELECT 
-                id, story_template, referral_link, 
-                clicks, conversions, shared_at
-            FROM story_shares
-            WHERE user_id = %s
-            ORDER BY shared_at DESC
-            LIMIT %s
-        """, (user_id, limit))
-        
-        rows = cur.fetchall()
-        return [
-            {
-                "share_id": row[0],
-                "template": row[1],
-                "referral_link": row[2],
-                "clicks": row[3],
-                "conversions": row[4],
-                "shared_at": row[5].isoformat() if row[5] else None
+            clicks = int(row[5] or 0)
+            conv = int(row[6] or 0)
+            return {
+                "share_id": int(row[0]),
+                "user_id": int(row[1]),
+                "chat_id": int(row[2]),
+                "template": row[3],
+                "referral_link": row[4],
+                "clicks": clicks,
+                "conversions": conv,
+                "shared_at": row[7].isoformat() if row[7] else None,
+                "conversion_rate": (conv / clicks * 100) if clicks > 0 else 0.0
             }
-            for row in rows
-        ]
     except Exception as e:
-        logger.error(f"Get user shares error: {e}")
-        return []
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+        logger.error(f"Get stats error: {e}", exc_info=True)
+        return None
 
 
-def get_top_shares(days: int = 7, limit: int = 10) -> list:
-    """Get top performing shares (leaderboard)"""
-    
-    conn = get_connection()
-    if not conn:
-        return []
-    
+def get_user_shares(user_id: int, limit: int = 10, chat_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get all story shares by a user (optional: only within a group)."""
     try:
-        cur = conn.cursor()
-        
-        cur.execute("""
-            SELECT 
-                id, user_id, story_template, clicks, conversions, shared_at
-            FROM story_shares
-            WHERE shared_at > NOW() - INTERVAL '%s days'
-            ORDER BY conversions DESC, clicks DESC
-            LIMIT %s
-        """, (days, limit))
-        
-        rows = cur.fetchall()
-        return [
-            {
-                "share_id": row[0],
-                "user_id": row[1],
-                "template": row[2],
-                "clicks": row[3],
-                "conversions": row[4],
-                "shared_at": row[5].isoformat() if row[5] else None
-            }
-            for row in rows
-        ]
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            if chat_id:
+                cur.execute("""
+                    SELECT id, story_template, referral_link, clicks, conversions, shared_at, chat_id
+                    FROM story_shares
+                    WHERE user_id = %s AND chat_id=%s
+                    ORDER BY shared_at DESC
+                    LIMIT %s
+                """, (user_id, chat_id, limit))
+            else:
+                cur.execute("""
+                    SELECT id, story_template, referral_link, clicks, conversions, shared_at, chat_id
+                    FROM story_shares
+                    WHERE user_id = %s
+                    ORDER BY shared_at DESC
+                    LIMIT %s
+                """, (user_id, limit))
+
+            rows = cur.fetchall()
+            return [
+                {
+                    "share_id": int(r[0]),
+                    "template": r[1],
+                    "referral_link": r[2],
+                    "clicks": int(r[3] or 0),
+                    "conversions": int(r[4] or 0),
+                    "shared_at": r[5].isoformat() if r[5] else None,
+                    "chat_id": int(r[6] or 0),
+                }
+                for r in rows
+            ]
     except Exception as e:
-        logger.error(f"Get top shares error: {e}")
+        logger.error(f"Get user shares error: {e}", exc_info=True)
         return []
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+
+
+def get_top_shares(days: int = 7, limit: int = 10, chat_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get top performing shares (leaderboard)."""
+    try:
+        days = max(1, int(days or 7))
+        limit = max(1, min(int(limit or 10), 50))
+    except Exception:
+        days, limit = (7, 10)
+
+    try:
+        with _conn() as conn:
+            cur = conn.cursor()
+
+            if chat_id:
+                cur.execute("""
+                    SELECT id, user_id, story_template, clicks, conversions, shared_at
+                    FROM story_shares
+                    WHERE chat_id=%s AND shared_at > NOW() - (%s * INTERVAL '1 day')
+                    ORDER BY conversions DESC, clicks DESC, shared_at DESC
+                    LIMIT %s
+                """, (chat_id, days, limit))
+            else:
+                cur.execute("""
+                    SELECT id, user_id, story_template, clicks, conversions, shared_at
+                    FROM story_shares
+                    WHERE shared_at > NOW() - (%s * INTERVAL '1 day')
+                    ORDER BY conversions DESC, clicks DESC, shared_at DESC
+                    LIMIT %s
+                """, (days, limit))
+
+            rows = cur.fetchall()
+            return [
+                {
+                    "share_id": int(r[0]),
+                    "user_id": int(r[1]),
+                    "template": r[2],
+                    "clicks": int(r[3] or 0),
+                    "conversions": int(r[4] or 0),
+                    "shared_at": r[5].isoformat() if r[5] else None
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error(f"Get top shares error: {e}", exc_info=True)
+        return []

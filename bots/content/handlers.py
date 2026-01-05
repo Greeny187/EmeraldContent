@@ -832,6 +832,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
+    # Deep-Link Tracking: t.me/<BOT>?start=story_<share_id>
+    # (Conversion = Bot wurde gestartet; Rewards/Attribution pro Gruppe aus share.chat_id)
+    try:
+        if chat.type == "private" and getattr(context, "args", None):
+            arg0 = str(context.args[0] or "")
+            if arg0.startswith("story_"):
+                share_id = int(arg0.split("_", 1)[1])
+                from .story_sharing import get_share_by_id, record_story_conversion
+                from .database import get_story_settings
+                row = get_share_by_id(share_id)
+                if row:
+                    referrer_id = int(row.get("user_id") or 0)
+                    origin_chat_id = int(row.get("chat_id") or 0)
+                    visitor_id = int(user.id)
+                    if referrer_id > 0 and origin_chat_id != 0 and visitor_id != referrer_id:
+                        sharing = get_story_settings(origin_chat_id) or {}
+                        reward_points = int(sharing.get("reward_referral", 100) or 100)
+
+                        # DB-Tracking (anti-farm: pro visitor nur 1x pro share)
+                        record_story_conversion(
+                            share_id=share_id,
+                            referrer_id=referrer_id,
+                            visitor_id=visitor_id,
+                            conversion_type="started_bot",
+                            reward_points=float(reward_points),
+                        )
+
+                        # Optional: EMRD Points
+                        try:
+                            from shared.emrd_rewards_integration import award_points
+                            if reward_points > 0:
+                                award_points(
+                                    user_id=referrer_id,
+                                    chat_id=origin_chat_id,
+                                    event_type="referred_user",
+                                    custom_points=reward_points,
+                                    metadata={"conversion_type": "started_bot", "via_story": True, "share_id": share_id},
+                                )
+                        except Exception:
+                            pass
+    except Exception:
+        logger.exception("Story deep-link tracking failed")
+
     if chat.type in ("group", "supergroup"):
         register_group(chat.id, chat.title)
         return await update.message.reply_text(
