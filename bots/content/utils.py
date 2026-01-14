@@ -4,7 +4,7 @@ import logging
 from telegram.error import BadRequest, Forbidden, RetryAfter
 from telegram.ext import ExtBot
 from telegram import ChatMember, ChatPermissions
-from .database import list_members, remove_member, mark_member_deleted
+from .database import list_members, delete_group_data, mark_member_deleted, get_registered_groups
 
 logger = logging.getLogger(__name__)
 
@@ -263,3 +263,36 @@ async def clean_delete_accounts_for_chat(chat_id: int, bot: ExtBot, *,
     logger.info(f"[clean_delete] Cleanup complete for {chat_id}: removed {removed} deleted accounts (dry_run={dry_run})")
     return removed
 
+async def cleanup_removed_chats(context) -> None:
+    """
+    Prüft alle registrierten Gruppen und löscht alle DB-Daten,
+    wenn der Bot nicht mehr Mitglied der Gruppe ist (left/kicked/kein Zugriff).
+    """
+    bot = context.bot
+    try:
+        groups = get_registered_groups()  # [(chat_id, title), ...]
+    except Exception as e:
+        logger.error(f"[group_cleanup] Konnte Gruppenliste nicht laden: {e}")
+        return
+
+    for chat_id, title in groups:
+        try:
+            try:
+                member = await bot.get_chat_member(chat_id, bot.id)
+            except RetryAfter as e:
+                await asyncio.sleep(getattr(e, "retry_after", 1))
+                member = await bot.get_chat_member(chat_id, bot.id)
+            except (BadRequest, Forbidden) as e:
+                # Kein Zugriff mehr auf die Gruppe -> alles löschen
+                logger.info(f"[group_cleanup] Bot hat keinen Zugriff mehr auf {chat_id} ({title}): {e}")
+                delete_group_data(chat_id)
+                continue
+
+            status = getattr(member, "status", None)
+            if status in ("left", "kicked"):
+                logger.info(f"[group_cleanup] Bot ist '{status}' in {chat_id} ({title}) -> lösche alle Daten.")
+                delete_group_data(chat_id)
+        except Exception as e:
+            logger.warning(f"[group_cleanup] Fehler bei Chat {chat_id}: {e}")
+        # sanfte Drosselung
+        await asyncio.sleep(0.1)

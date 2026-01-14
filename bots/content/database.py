@@ -1,16 +1,16 @@
-# Cache für Spaltenerkennung in pending_inputs
-_pi_col_cache: str | None = None
 import re
 import os
 import json
 import logging
 from urllib.parse import urlparse
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from psycopg2 import pool, OperationalError, InterfaceError
 from psycopg2.extras import Json
-from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+# Cache für Spaltenerkennung in pending_inputs
+_pi_col_cache: str | None = None
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -50,7 +50,6 @@ def _with_cursor(func):
     def wrapped(*args, **kwargs):
         # bis zu 2 Versuche bei transienten Verbindungsproblemen
         import time
-        last_exc = None
         for attempt in (1, 2):
             conn = _db_pool.getconn()
             try:
@@ -66,7 +65,6 @@ def _with_cursor(func):
                     conn.commit()
                     return res
             except (OperationalError, InterfaceError) as e:
-                last_exc = e
                 logger.error(f"[DB] Operational/Interface error in {func.__name__}: {e}")
                 # defekte Verbindung hart schließen und aus dem Pool entfernen
                 try:
@@ -77,8 +75,10 @@ def _with_cursor(func):
                     _db_pool.putconn(conn, close=True)
                 except TypeError:
                     # ältere psycopg2 ohne close-Flag
-                    try: _db_pool.putconn(conn)
-                    except Exception: pass
+                    try:
+                        _db_pool.putconn(conn)
+                    except Exception:
+                        pass
                 if attempt == 2:
                     raise
                 # kurzer Backoff, dann neuer Versuch
@@ -94,12 +94,6 @@ def _with_cursor(func):
                 except Exception:
                     pass
     return wrapped
-
-def clear_welcome_topic(cur, chat_id: int):
-    cur.execute("UPDATE group_settings SET welcome_topic_id=NULL WHERE chat_id=%s", [chat_id])
-
-def clear_welcome_media(cur, chat_id: int):
-    cur.execute("UPDATE group_settings SET welcome_file_id=NULL, welcome_image_url=NULL WHERE chat_id=%s", [chat_id])
 
 async def _call_db_safe(fn, *args, **kwargs):
     """
@@ -879,8 +873,10 @@ def set_ai_mod_settings(cur, chat_id:int, topic_id:int, **fields):
     cols, vals = [], []
     for k,v in fields.items():
         if k in allowed:
-            cols.append(f"{k}=%s"); vals.append(v)
-    if not cols: return
+            cols.append(f"{k}=%s")
+            vals.append(v)
+    if not cols:
+        return
     cur.execute(f"""
       INSERT INTO ai_mod_settings (chat_id, topic_id) VALUES (%s,%s)
       ON CONFLICT (chat_id, topic_id) DO UPDATE SET {", ".join(cols)};
@@ -899,7 +895,8 @@ def get_ai_mod_settings(cur, chat_id:int, topic_id:int) -> dict|None:
         FROM ai_mod_settings WHERE chat_id=%s AND topic_id=%s;
     """, (chat_id, topic_id))
     r = cur.fetchone()
-    if not r: return None
+    if not r:
+        return None
     keys = ["enabled","shadow_mode","model","lang",
             "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh",
             "link_risk_thresh","action_primary","action_secondary","escalate_after","escalate_action",
@@ -921,7 +918,8 @@ def effective_ai_mod_policy(chat_id:int, topic_id:int|None) -> dict:
     }
     if topic_id:
         ov = get_ai_mod_settings(chat_id, topic_id)
-        if ov: base.update({k:v for k,v in ov.items() if v is not None})
+        if ov:
+            base.update({k: v for k, v in ov.items() if v is not None})
     return base
 
 @_with_cursor
@@ -1537,6 +1535,7 @@ def add_user_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_nam
     return cur.rowcount > 0
 
 @_with_cursor
+<<<<<<< Updated upstream
 def list_user_topics(cur, chat_id: int):
     # Liest alle User->Topic-Zuweisungen fuer den Chat.
     cur.execute(
@@ -1547,6 +1546,8 @@ def list_user_topics(cur, chat_id: int):
 
 
 @_with_cursor
+=======
+>>>>>>> Stashed changes
 def remove_topic(cur, chat_id: int, user_id: int, topic_id: int | None = None):
     """Entfernt Topic-Zuordnungen.
 
@@ -1614,6 +1615,7 @@ def remove_topic(cur, chat_id: int, user_id: int, topic_id: int | None = None):
             )
 
 @_with_cursor
+<<<<<<< Updated upstream
 def list_user_topics(cur, chat_id: int):
     """Listet Topic-User Zuordnungen (user_topics) einer Gruppe – für MiniApp-Übersicht."""
     cur.execute("""
@@ -1626,6 +1628,8 @@ def list_user_topics(cur, chat_id: int):
     return [{"user_id": int(u), "topic_id": int(t), "topic_name": (n or "")} for (u, t, n) in rows]
 
 @_with_cursor
+=======
+>>>>>>> Stashed changes
 def sync_user_topic_names(cur, chat_id: int) -> int:
     """Synchronisiert Topic-Namen in user_topics anhand forum_topics.
 +
@@ -1789,13 +1793,17 @@ def set_link_settings(cur, chat_id: int,
 
     parts, params = [], []
     if protection is not None:
-        parts.append("link_protection_enabled = %s");   params.append(protection)
+        parts.append("link_protection_enabled = %s")
+        params.append(protection)
     if warning_on is not None:
-        parts.append("link_warning_enabled = %s");      params.append(warning_on)
+        parts.append("link_warning_enabled = %s")
+        params.append(warning_on)
     if warning_text is not None:
-        parts.append("link_warning_text = %s");         params.append(warning_text)
+        parts.append("link_warning_text = %s")
+        params.append(warning_text)
     if exceptions_on is not None:
-        parts.append("link_exceptions_enabled = %s");   params.append(exceptions_on)
+        parts.append("link_exceptions_enabled = %s")
+        params.append(exceptions_on)
 
     if not parts:
         logger.info("DB: set_link_settings – keine Änderungen")
@@ -2304,10 +2312,13 @@ def list_user_topics(cur, chat_id: int) -> list[dict]:
         except Exception:
             continue
     return out
+<<<<<<< Updated upstream
 
 @_with_cursor
 def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
     cur.execute("DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
+=======
+>>>>>>> Stashed changes
 
 def _extract_link_flags(link_settings):
     """
@@ -2364,12 +2375,27 @@ def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_flags=None, 
     if row:
         base["level"] = (row[0] or "off").lower()
         base["user_whitelist"] = list(row[1] or [])
+<<<<<<< Updated upstream
         if row[2] is not None: base["emoji_max_per_msg"] = int(row[2] or 0)
         if row[3] is not None: base["emoji_max_per_min"] = int(row[3] or 0)
         if row[4] is not None: base["max_msgs_per_10s"] = int(row[4] or 0)
         if row[5] is not None: base["action_primary"] = row[5] or base["action_primary"]
         if row[6] is not None: base["action_secondary"] = row[6] or base["action_secondary"]
         if row[7] is not None: base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
+=======
+        if row[2] is not None:
+            base["emoji_max_per_msg"] = int(row[2] or 0)
+        if row[3] is not None:
+            base["emoji_max_per_min"] = int(row[3] or 0)
+        if row[4] is not None:
+            base["max_msgs_per_10s"] = int(row[4] or 0)
+        if row[5] is not None:
+            base["action_primary"] = row[5] or base["action_primary"]
+        if row[6] is not None:
+            base["action_secondary"] = row[6] or base["action_secondary"]
+        if row[7] is not None:
+            base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
+>>>>>>> Stashed changes
     else:
         base["user_whitelist"] = []
 
@@ -2676,10 +2702,13 @@ def get_rss_feeds(cur) -> List[Tuple[int, str, int]]:
 def set_rss_feed_options(cur, chat_id:int, url:str, *, post_images:bool|None=None, enabled:bool|None=None):
     parts, params = [], []
     if post_images is not None:
-        parts.append("post_images=%s"); params.append(post_images)
+        parts.append("post_images=%s")
+        params.append(post_images)
     if enabled is not None:
-        parts.append("enabled=%s"); params.append(enabled)
-    if not parts: return
+        parts.append("enabled=%s")
+        params.append(enabled)
+    if not parts:
+        return
     sql = "UPDATE rss_feeds SET " + ", ".join(parts) + " WHERE chat_id=%s AND url=%s;"
     cur.execute(sql, params + [chat_id, url])
 
@@ -2732,9 +2761,14 @@ def get_ai_settings(cur, chat_id:int) -> tuple[bool,bool]:
 @_with_cursor
 def set_ai_settings(cur, chat_id:int, faq:bool|None=None, rss:bool|None=None):
     parts, params = [], []
-    if faq is not None: parts.append("ai_faq_enabled=%s"); params.append(faq)
-    if rss is not None: parts.append("ai_rss_summary=%s"); params.append(rss)
-    if not parts: return
+    if faq is not None:
+        parts.append("ai_faq_enabled=%s")
+        params.append(faq)
+    if rss is not None:
+        parts.append("ai_rss_summary=%s")
+        params.append(rss)
+    if not parts:
+        return
     sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
     cur.execute(sql, [chat_id] + params)
 
@@ -2879,8 +2913,10 @@ def set_adv_settings(cur, chat_id:int, **fields):
     cols, vals = [], []
     for k,v in fields.items():
         if k in allowed:
-            cols.append(f"{k}=%s"); vals.append(v)
-    if not cols: return
+            cols.append(f"{k}=%s")
+            vals.append(v)
+    if not cols:
+        return
     cur.execute(f"""
       INSERT INTO adv_settings (chat_id) VALUES (%s)
       ON CONFLICT (chat_id) DO UPDATE SET {", ".join(cols)};
@@ -3069,6 +3105,96 @@ def prune_posted_links(chat_id, keep_last=100):
     finally:
         _db_pool.putconn(conn)
 
+@_with_cursor
+def prune_old_stats(cur, days: int = 90):
+    """
+    Löscht alte Statistikdaten:
+    - message_logs: alles älter als `days` Tage
+    - agg_group_day: alle Tages-Aggregate älter als `days` Tage
+
+    Ziel: maximal `days` Tage Historie behalten.
+    """
+    try:
+        logger.info(f"[prune_old_stats] Lösche message_logs älter als {days} Tage...")
+        cur.execute("""
+            DELETE FROM message_logs
+             WHERE timestamp < NOW() - (%s || ' days')::interval;
+        """, (days,))
+    except Exception as e:
+        logger.warning(f"[prune_old_stats] Fehler beim Löschen aus message_logs: {e}")
+
+    try:
+        logger.info(f"[prune_old_stats] Lösche agg_group_day älter als {days} Tage...")
+        _ensure_agg_group_day(cur)
+        cur.execute("""
+            DELETE FROM agg_group_day
+             WHERE stat_date < (CURRENT_DATE - (%s || ' days')::interval);
+        """, (days,))
+    except Exception as e:
+        logger.warning(f"[prune_old_stats] Fehler beim Löschen aus agg_group_day: {e}")
+
+
+@_with_cursor
+def delete_group_data(cur, chat_id: int):
+    """
+    Entfernt alle Daten zu einer Gruppe aus der Datenbank.
+    Wird verwendet, wenn der Bot nicht mehr in der Gruppe ist.
+    """
+    logger.info(f"[delete_group_data] Entferne alle Daten für Chat {chat_id}...")
+
+    # Logs & Statistiken
+    cur.execute("DELETE FROM message_logs      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM member_events     WHERE chat_id=%s OR group_id=%s;", (chat_id, chat_id))
+    cur.execute("DELETE FROM daily_stats       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM agg_group_day     WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_events       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM night_events      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM reply_times       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM auto_responses    WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM mood_meter        WHERE chat_id=%s;", (chat_id,))
+
+    # Themen / Router / Spam-Policy
+    cur.execute("DELETE FROM forum_topics         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM topic_router_rules   WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_policy          WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_policy_topic    WHERE chat_id=%s;", (chat_id,))
+
+    # Nightmode & AI
+    cur.execute("DELETE FROM night_mode           WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM ai_mod_settings      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM ai_mod_logs          WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM user_strikes         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM user_strike_events   WHERE chat_id=%s;", (chat_id,))
+
+    # Werbung / Pro / Mood
+    cur.execute("DELETE FROM adv_settings         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM adv_impressions      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM group_subscriptions  WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM mood_topics          WHERE chat_id=%s;", (chat_id,))
+
+    # RSS / Links
+    cur.execute("DELETE FROM rss_feeds            WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM last_posts           WHERE chat_id=%s;", (chat_id,))
+
+    # Welcome / Rules / Farewell
+    cur.execute("DELETE FROM welcome              WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM rules                WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM farewell             WHERE chat_id=%s;", (chat_id,))
+
+    # Mitglieder
+    cur.execute("DELETE FROM members              WHERE chat_id=%s;", (chat_id,))
+
+    # pending_inputs (chat_id/ctx_chat_id berücksichtigen)
+    col = _pending_inputs_col(cur)
+    cur.execute(f"DELETE FROM pending_inputs WHERE {col}=%s;", (chat_id,))
+
+    # Settings & Gruppen-Eintrag zum Schluss
+    cur.execute("DELETE FROM group_settings       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM groups               WHERE chat_id=%s;", (chat_id,))
+
+    logger.info(f"[delete_group_data] Daten für Chat {chat_id} vollständig entfernt.")
+
+
 def get_all_group_ids():
     conn = _db_pool.getconn()
     try:
@@ -3185,16 +3311,36 @@ def set_night_mode(cur, chat_id: int,
                    write_lock=None,
                    lock_message=None):
     parts, params = [], []
-    if enabled is not None: parts.append("enabled=%s"); params.append(enabled)
-    if start_minute is not None: parts.append("start_minute=%s"); params.append(start_minute)
-    if end_minute is not None: parts.append("end_minute=%s"); params.append(end_minute)
-    if delete_non_admin_msgs is not None: parts.append("delete_non_admin_msgs=%s"); params.append(delete_non_admin_msgs)
-    if warn_once is not None: parts.append("warn_once=%s"); params.append(warn_once)
-    if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
-    if hard_mode is not None: parts.append("hard_mode=%s"); params.append(hard_mode)
-    if override_until is not None: parts.append("override_until=%s"); params.append(override_until)
-    if write_lock is not None: parts.append("write_lock=%s"); params.append(write_lock)
-    if lock_message is not None: parts.append("lock_message=%s"); params.append(lock_message)
+    if enabled is not None:
+        parts.append("enabled=%s")
+        params.append(enabled)
+    if start_minute is not None:
+        parts.append("start_minute=%s")
+        params.append(start_minute)
+    if end_minute is not None:
+        parts.append("end_minute=%s")
+        params.append(end_minute)
+    if delete_non_admin_msgs is not None:
+        parts.append("delete_non_admin_msgs=%s")
+        params.append(delete_non_admin_msgs)
+    if warn_once is not None:
+        parts.append("warn_once=%s")
+        params.append(warn_once)
+    if timezone is not None:
+        parts.append("timezone=%s")
+        params.append(timezone)
+    if hard_mode is not None:
+        parts.append("hard_mode=%s")
+        params.append(hard_mode)
+    if override_until is not None:
+        parts.append("override_until=%s")
+        params.append(override_until)
+    if write_lock is not None:
+        parts.append("write_lock=%s")
+        params.append(write_lock)
+    if lock_message is not None:
+        parts.append("lock_message=%s")
+        params.append(lock_message)
 
     if not parts:
         return
@@ -3431,32 +3577,6 @@ def init_all_schemas():
     ensure_forum_topics_schema()
     ensure_ai_moderation_schema()
     logger.info("✅ All schemas initialized successfully")
-
-# --- Clean Delete Helper Functions ---
-@_with_cursor
-def list_members(cur, chat_id: int) -> list[int]:
-    """
-    Holt alle Mitglied-UIDs aus der Datenbank für einen Chat.
-    Wird für Clean-Delete verwendet um gelöschte Accounts zu finden.
-    """
-    cur.execute("""
-        SELECT DISTINCT user_id FROM message_logs
-        WHERE chat_id = %s
-        UNION
-        SELECT DISTINCT user_id FROM member_events
-        WHERE group_id = %s
-        ORDER BY user_id
-    """, (chat_id, chat_id))
-    return [row[0] for row in cur.fetchall()]
-
-@_with_cursor
-def remove_member(cur, chat_id: int, user_id: int):
-    """
-    Entfernt einen Mitglied aus den lokalen Tracking-Tabellen.
-    """
-    cur.execute("DELETE FROM message_logs WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
-    cur.execute("DELETE FROM member_events WHERE group_id = %s AND user_id = %s", (chat_id, user_id))
-    logger.debug(f"[clean_delete] Removed user {user_id} from tracking tables for {chat_id}")
 
 if __name__ == "__main__":
     init_all_schemas()

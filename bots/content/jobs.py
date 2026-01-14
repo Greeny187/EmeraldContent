@@ -4,7 +4,7 @@ import datetime as dt
 import asyncio
 from datetime import date, time, datetime, timedelta
 from zoneinfo import ZoneInfo
-from telegram.ext import ContextTypes, Application
+from telegram.ext import ContextTypes
 from shared.telethon_client import telethon_client, start_telethon
 from telethon.tl.functions.channels import GetFullChannelRequest
 
@@ -17,16 +17,14 @@ except ImportError:
     GetForumTopicsRequest = None
 from .database import (_db_pool, get_registered_groups, is_daily_stats_enabled, 
                     get_all_group_ids, get_clean_deleted_settings, get_agg_rows, get_last_agg_stat_date, guess_agg_start_date,
-                    purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic) # <-- HIER HINZUGEFÜGT
+                    purge_deleted_members, get_group_stats, get_night_mode, upsert_forum_topic, prune_old_stats) # <-- HIER HINZUGEFÜGT
 from .statistic import (
-    DEVELOPER_IDS, get_all_group_ids, get_group_meta, fetch_message_stats,
+    DEVELOPER_IDS, get_group_meta, fetch_message_stats,
     compute_response_times, fetch_media_and_poll_stats, get_member_stats, 
     get_message_insights, get_engagement_metrics, get_trend_analysis, update_group_activity_score, 
-    migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day, get_group_language
-)
+    migrate_stats_rollup, compute_agg_group_day, upsert_agg_group_day)
 from telegram.constants import ParseMode
-from shared.translator import translate_hybrid as tr
-from .utils import clean_delete_accounts_for_chat, _apply_hard_permissions
+from .utils import clean_delete_accounts_for_chat, _apply_hard_permissions, cleanup_removed_chats
 
 
 
@@ -72,7 +70,6 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
             continue
             
         try:
-            lang = get_group_language(chat_id) or 'de'
             top3 = get_group_stats(chat_id, today) or []
             
             if top3:
@@ -82,7 +79,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
                         user = await bot.get_chat_member(chat_id, uid)
                         name = user.user.first_name
                         mention = f"<a href='tg://user?id={uid}'>{name}</a>"
-                    except:
+                    except Exception:
                         mention = f"User {uid}"
                     lines.append(f"{i+1}. {mention}: {cnt} Nachrichten")
                 
@@ -216,6 +213,29 @@ async def job_cleanup_deleted(context):
             )
         except Exception:
             pass
+
+async def prune_old_stats_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Tägliche Retention: alle message_logs + agg_group_day älter als 90 Tage löschen.
+    """
+    try:
+        prune_old_stats(90)
+        logger.info("[prune_old_stats_job] Alte Statistiken (>90 Tage) erfolgreich bereinigt.")
+    except Exception as e:
+        logger.error(f"[prune_old_stats_job] Fehler bei der Bereinigung: {e}")
+
+
+async def cleanup_removed_chats_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Täglicher Check: ist der Bot noch Mitglied in den registrierten Gruppen?
+    Wenn nicht -> komplette Gruppendaten aus der DB entfernen.
+    """
+    try:
+        await cleanup_removed_chats(context)
+        logger.info("[cleanup_removed_chats_job] Gruppen-Cleanup abgeschlossen.")
+    except Exception as e:
+        logger.error(f"[cleanup_removed_chats_job] Fehler beim Gruppen-Cleanup: {e}")
+
 
 # 2.2 pro Gruppe (re)planen
 def schedule_cleanup_for_chat(job_queue, chat_id:int, tz_str:str="Europe/Berlin"):
@@ -526,6 +546,20 @@ def register_jobs(app):
     
     jq.run_once(backfill_missing_agg, when=timedelta(seconds=20), name="agg_backfill_boot")
 
+    # Retention: alte Stats (Messages + Aggregates) bereinigen
+    jq.run_daily(
+        prune_old_stats_job,
+        time(hour=3, minute=15, tzinfo=ZoneInfo(TIMEZONE)),
+        name="prune_old_stats"
+    )
+
+    # Gruppen-Cleanup: Bot nicht mehr in Gruppe -> Daten löschen
+    jq.run_daily(
+        cleanup_removed_chats_job,
+        time(hour=5, minute=0, tzinfo=ZoneInfo(TIMEZONE)),
+        name="cleanup_removed_chats"
+    )
+
     # Täglich in der Nacht: evtl. Lücken automatisch schließen
     jq.run_daily(backfill_missing_agg, time(hour=4, minute=30, tzinfo=ZoneInfo(TIMEZONE)), name="agg_backfill_daily")
     
@@ -558,7 +592,8 @@ def register_jobs(app):
                 continue
             if cfg.get("weekday") is not None and int(cfg["weekday"]) != now.weekday():
                 continue
-            hh = int(cfg.get("hh",3)); mm = int(cfg.get("mm",0))
+            hh = int(cfg.get("hh", 3))
+            mm = int(cfg.get("mm", 0))
             # Auslösen in dem 5-Minuten-Fenster, in dem der Ticker läuft
             if now.hour == hh and now.minute in {mm, (mm+1)%60, (mm+2)%60, (mm+3)%60, (mm+4)%60}:
                 try:
