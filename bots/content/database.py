@@ -1535,19 +1535,6 @@ def add_user_topic(cur, chat_id: int, user_id: int, topic_id: int = 0, topic_nam
     return cur.rowcount > 0
 
 @_with_cursor
-<<<<<<< Updated upstream
-def list_user_topics(cur, chat_id: int):
-    # Liest alle User->Topic-Zuweisungen fuer den Chat.
-    cur.execute(
-        "SELECT user_id, topic_id, topic_name FROM user_topics WHERE chat_id = %s ORDER BY user_id;",
-        (chat_id,)
-    )
-    return [(int(u), int(tid), name) for (u, tid, name) in cur.fetchall()]
-
-
-@_with_cursor
-=======
->>>>>>> Stashed changes
 def remove_topic(cur, chat_id: int, user_id: int, topic_id: int | None = None):
     """Entfernt Topic-Zuordnungen.
 
@@ -1613,150 +1600,6 @@ def remove_topic(cur, chat_id: int, user_id: int, topic_id: int | None = None):
                 "ON CONFLICT (chat_id,user_id) DO NOTHING;",
                 (chat_id, user_id, int(rr[0]), rr[1])
             )
-
-@_with_cursor
-<<<<<<< Updated upstream
-def list_user_topics(cur, chat_id: int):
-    """Listet Topic-User Zuordnungen (user_topics) einer Gruppe – für MiniApp-Übersicht."""
-    cur.execute("""
-        SELECT user_id, topic_id, COALESCE(topic_name,'') AS topic_name
-          FROM user_topics
-         WHERE chat_id=%s
-         ORDER BY topic_id ASC, user_id ASC;
-    """, (chat_id,))
-    rows = cur.fetchall() or []
-    return [{"user_id": int(u), "topic_id": int(t), "topic_name": (n or "")} for (u, t, n) in rows]
-
-@_with_cursor
-=======
->>>>>>> Stashed changes
-def sync_user_topic_names(cur, chat_id: int) -> int:
-    """Synchronisiert Topic-Namen in user_topics anhand forum_topics.
-+
-    Hintergrund: Topic-Namen werden durch Bot-Events/last_seen in forum_topics aktuell gehalten.
-    Diese Funktion zieht die aktuellen Namen in die User-Zuordnung nach (MiniApp „Sync“).
-    """
-    cur.execute("""
-        UPDATE user_topics ut
-           SET topic_name = ft.name
-          FROM forum_topics ft
-         WHERE ut.chat_id=%s
-           AND ft.chat_id = ut.chat_id
-           AND ft.topic_id = ut.topic_id
-           AND COALESCE(ft.name,'') <> ''
-           AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
-    """, (chat_id,))
-    return cur.rowcount
-
-@_with_cursor
-def has_topic(cur, chat_id: int, user_id: int, topic_id: int = None) -> bool:
-    """Prüft, ob ein User für ein Topic als Owner eingetragen ist.
-    Neu: prüft zuerst user_topics_map (multi), danach user_topics (legacy).
-    topic_id ist optional (wenn nicht angegeben, prüft nur auf irgendein Topic).
-    """
-    if topic_id is not None:
-        cur.execute(
-            "SELECT 1 FROM user_topics_map WHERE chat_id = %s AND user_id = %s AND topic_id = %s;",
-            (chat_id, user_id, topic_id)
-        )
-        if cur.fetchone() is not None:
-            return True
-        cur.execute(
-            "SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s AND topic_id = %s;",
-            (chat_id, user_id, topic_id)
-        )
-    else:
-        cur.execute("SELECT 1 FROM user_topics_map WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
-        if cur.fetchone() is not None:
-            return True
-        cur.execute("SELECT 1 FROM user_topics WHERE chat_id = %s AND user_id = %s;", (chat_id, user_id))
-    return cur.fetchone() is not None
-
-@_with_cursor
-def get_topic_owners(cur, chat_id: int) -> List[int]:
-
-    cur.execute(
-        '''
-        SELECT DISTINCT user_id
-          FROM (
-                SELECT user_id FROM user_topics_map WHERE chat_id=%s
-                UNION ALL
-                SELECT user_id FROM user_topics WHERE chat_id=%s
-          ) x;
-        ''',
-        (chat_id, chat_id)
-    )
-    return [row[0] for row in cur.fetchall()]
-
-@_with_cursor
-def list_user_topics(cur, chat_id: int) -> list[dict]:
-    """Listet alle Topic-User Zuordnungen einer Gruppe.
-
-    Kombiniert user_topics_map (multi) + user_topics (legacy) ohne Duplikate.
-    """
-    cur.execute(
-        '''
-        SELECT user_id, topic_id, COALESCE(topic_name,'') AS topic_name
-          FROM (
-                SELECT user_id, topic_id, topic_name FROM user_topics_map WHERE chat_id=%s
-                UNION ALL
-                SELECT user_id, topic_id, topic_name FROM user_topics WHERE chat_id=%s
-          ) x
-         GROUP BY user_id, topic_id, topic_name
-         ORDER BY topic_id ASC, user_id ASC;
-        ''',
-        (chat_id, chat_id)
-    )
-    rows = cur.fetchall() or []
-    return [{"user_id": int(u), "topic_id": int(t), "topic_name": (n or "")} for (u, t, n) in rows]
-
-@_with_cursor
-def sync_user_topic_names(cur, chat_id: int) -> int:
-    """Synchronisiert Topic-Namen in user_topics_map (und legacy) anhand forum_topics."""
-    """Synchronisiert Topic-Namen anhand `forum_topics`.
-
-    - Wenn `user_topics_map` existiert: aktualisiert dort (Multi-Mapping)
-    - Aktualisiert zusätzlich `user_topics` (Legacy)
-    """
-    updated = 0
-
-    # Multi-Mapping (falls Tabelle existiert)
-    try:
-        cur.execute(
-            '''
-            UPDATE user_topics_map ut
-               SET topic_name = ft.name
-              FROM forum_topics ft
-             WHERE ut.chat_id=%s
-               AND ft.chat_id = ut.chat_id
-               AND ft.topic_id = ut.topic_id
-               AND COALESCE(ft.name,'') <> ''
-               AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
-            ''',
-            (chat_id,)
-        )
-        updated += cur.rowcount
-    except Exception:
-        try:
-            cur.connection.rollback()
-        except Exception:
-            pass
-
-    cur.execute(
-        '''
-        UPDATE user_topics ut
-           SET topic_name = ft.name
-          FROM forum_topics ft
-         WHERE ut.chat_id=%s
-           AND ft.chat_id = ut.chat_id
-           AND ft.topic_id = ut.topic_id
-           AND COALESCE(ft.name,'') <> ''
-           AND (ut.topic_name IS NULL OR ut.topic_name = '' OR ut.topic_name <> ft.name);
-        ''',
-        (chat_id,)
-    )
-    updated += cur.rowcount
-    return updated
 
 @_with_cursor
 def get_link_settings(cur, chat_id:int):
@@ -2312,13 +2155,6 @@ def list_user_topics(cur, chat_id: int) -> list[dict]:
         except Exception:
             continue
     return out
-<<<<<<< Updated upstream
-
-@_with_cursor
-def delete_spam_policy_topic(cur, chat_id:int, topic_id:int):
-    cur.execute("DELETE FROM spam_policy_topic WHERE chat_id=%s AND topic_id=%s;", (chat_id, topic_id))
-=======
->>>>>>> Stashed changes
 
 def _extract_link_flags(link_settings):
     """
@@ -2375,14 +2211,6 @@ def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_flags=None, 
     if row:
         base["level"] = (row[0] or "off").lower()
         base["user_whitelist"] = list(row[1] or [])
-<<<<<<< Updated upstream
-        if row[2] is not None: base["emoji_max_per_msg"] = int(row[2] or 0)
-        if row[3] is not None: base["emoji_max_per_min"] = int(row[3] or 0)
-        if row[4] is not None: base["max_msgs_per_10s"] = int(row[4] or 0)
-        if row[5] is not None: base["action_primary"] = row[5] or base["action_primary"]
-        if row[6] is not None: base["action_secondary"] = row[6] or base["action_secondary"]
-        if row[7] is not None: base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
-=======
         if row[2] is not None:
             base["emoji_max_per_msg"] = int(row[2] or 0)
         if row[3] is not None:
@@ -2395,7 +2223,6 @@ def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_flags=None, 
             base["action_secondary"] = row[6] or base["action_secondary"]
         if row[7] is not None:
             base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
->>>>>>> Stashed changes
     else:
         base["user_whitelist"] = []
 
