@@ -3069,6 +3069,96 @@ def prune_posted_links(chat_id, keep_last=100):
     finally:
         _db_pool.putconn(conn)
 
+@_with_cursor
+def prune_old_stats(cur, days: int = 90):
+    """
+    Löscht alte Statistikdaten:
+    - message_logs: alles älter als `days` Tage
+    - agg_group_day: alle Tages-Aggregate älter als `days` Tage
+
+    Ziel: maximal `days` Tage Historie behalten.
+    """
+    try:
+        logger.info(f"[prune_old_stats] Lösche message_logs älter als {days} Tage...")
+        cur.execute("""
+            DELETE FROM message_logs
+             WHERE timestamp < NOW() - (%s || ' days')::interval;
+        """, (days,))
+    except Exception as e:
+        logger.warning(f"[prune_old_stats] Fehler beim Löschen aus message_logs: {e}")
+
+    try:
+        logger.info(f"[prune_old_stats] Lösche agg_group_day älter als {days} Tage...")
+        _ensure_agg_group_day(cur)
+        cur.execute("""
+            DELETE FROM agg_group_day
+             WHERE stat_date < (CURRENT_DATE - (%s || ' days')::interval);
+        """, (days,))
+    except Exception as e:
+        logger.warning(f"[prune_old_stats] Fehler beim Löschen aus agg_group_day: {e}")
+
+
+@_with_cursor
+def delete_group_data(cur, chat_id: int):
+    """
+    Entfernt alle Daten zu einer Gruppe aus der Datenbank.
+    Wird verwendet, wenn der Bot nicht mehr in der Gruppe ist.
+    """
+    logger.info(f"[delete_group_data] Entferne alle Daten für Chat {chat_id}...")
+
+    # Logs & Statistiken
+    cur.execute("DELETE FROM message_logs      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM member_events     WHERE chat_id=%s OR group_id=%s;", (chat_id, chat_id))
+    cur.execute("DELETE FROM daily_stats       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM agg_group_day     WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_events       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM night_events      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM reply_times       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM auto_responses    WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM mood_meter        WHERE chat_id=%s;", (chat_id,))
+
+    # Themen / Router / Spam-Policy
+    cur.execute("DELETE FROM forum_topics         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM topic_router_rules   WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_policy          WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM spam_policy_topic    WHERE chat_id=%s;", (chat_id,))
+
+    # Nightmode & AI
+    cur.execute("DELETE FROM night_mode           WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM ai_mod_settings      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM ai_mod_logs          WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM user_strikes         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM user_strike_events   WHERE chat_id=%s;", (chat_id,))
+
+    # Werbung / Pro / Mood
+    cur.execute("DELETE FROM adv_settings         WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM adv_impressions      WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM group_subscriptions  WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM mood_topics          WHERE chat_id=%s;", (chat_id,))
+
+    # RSS / Links
+    cur.execute("DELETE FROM rss_feeds            WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM last_posts           WHERE chat_id=%s;", (chat_id,))
+
+    # Welcome / Rules / Farewell
+    cur.execute("DELETE FROM welcome              WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM rules                WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM farewell             WHERE chat_id=%s;", (chat_id,))
+
+    # Mitglieder
+    cur.execute("DELETE FROM members              WHERE chat_id=%s;", (chat_id,))
+
+    # pending_inputs (chat_id/ctx_chat_id berücksichtigen)
+    col = _pending_inputs_col(cur)
+    cur.execute(f"DELETE FROM pending_inputs WHERE {col}=%s;", (chat_id,))
+
+    # Settings & Gruppen-Eintrag zum Schluss
+    cur.execute("DELETE FROM group_settings       WHERE chat_id=%s;", (chat_id,))
+    cur.execute("DELETE FROM groups               WHERE chat_id=%s;", (chat_id,))
+
+    logger.info(f"[delete_group_data] Daten für Chat {chat_id} vollständig entfernt.")
+
+
 def get_all_group_ids():
     conn = _db_pool.getconn()
     try:
