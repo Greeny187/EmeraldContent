@@ -899,7 +899,8 @@ def get_ai_mod_settings(cur, chat_id:int, topic_id:int) -> dict|None:
         FROM ai_mod_settings WHERE chat_id=%s AND topic_id=%s;
     """, (chat_id, topic_id))
     r = cur.fetchone()
-    if not r: return None
+    if not r:
+        return None
     keys = ["enabled","shadow_mode","model","lang",
             "tox_thresh","hate_thresh","sex_thresh","harass_thresh","selfharm_thresh","violence_thresh",
             "link_risk_thresh","action_primary","action_secondary","escalate_after","escalate_action",
@@ -2734,7 +2735,8 @@ def set_ai_settings(cur, chat_id:int, faq:bool|None=None, rss:bool|None=None):
     parts, params = [], []
     if faq is not None: parts.append("ai_faq_enabled=%s"); params.append(faq)
     if rss is not None: parts.append("ai_rss_summary=%s"); params.append(rss)
-    if not parts: return
+    if not parts: 
+        return
     sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
     cur.execute(sql, [chat_id] + params)
 
@@ -2879,8 +2881,10 @@ def set_adv_settings(cur, chat_id:int, **fields):
     cols, vals = [], []
     for k,v in fields.items():
         if k in allowed:
-            cols.append(f"{k}=%s"); vals.append(v)
-    if not cols: return
+            cols.append(f"{k}=%s"); 
+            vals.append(v)
+    if not cols: 
+        return
     cur.execute(f"""
       INSERT INTO adv_settings (chat_id) VALUES (%s)
       ON CONFLICT (chat_id) DO UPDATE SET {", ".join(cols)};
