@@ -724,6 +724,8 @@ def init_db(cur):
         );
         """
     )
+    cur.execute("ALTER TABLE user_topics_map ALTER COLUMN topic_id SET DEFAULT 0;")
+    cur.execute("UPDATE user_topics_map SET topic_id=0 WHERE topic_id IS NULL;")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_user_topics_map_chat_user ON user_topics_map(chat_id, user_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_user_topics_map_chat_topic ON user_topics_map(chat_id, topic_id);")
@@ -731,7 +733,7 @@ def init_db(cur):
     cur.execute(
         '''
         INSERT INTO user_topics_map(chat_id, user_id, topic_id, topic_name)
-        SELECT chat_id, user_id, topic_id, topic_name
+        SELECT chat_id, user_id, COALESCE(topic_id, 0), topic_name
           FROM user_topics
         ON CONFLICT (chat_id, user_id, topic_id) DO NOTHING;
         '''
@@ -1166,16 +1168,18 @@ def add_pending_reward(
     event_type: str,
     ref_id: Optional[int] = None,
 ) -> None:
-    """
-    Schreibt einen Reward-Punktestand in die Pending-Tabelle.
-    """
+    payload = {}
+    if ref_id is not None:
+        payload["ref_id"] = ref_id
+
     cur.execute(
         """
-        INSERT INTO rewards_pending (chat_id, user_id, points, event_type, ref_id)
+        INSERT INTO rewards_pending (chat_id, user_id, points, event_type, payload)
         VALUES (%s, %s, %s, %s, %s);
         """,
-        (chat_id, user_id, points, event_type, ref_id),
+        (chat_id, user_id, int(points), event_type, Json(payload) if payload else None),
     )
+
 
 
 @_with_cursor
@@ -1427,16 +1431,14 @@ def purge_deleted_members(cur, chat_id: Optional[int] = None):
 
 @_with_cursor
 def log_member_event(cur, chat_id: int, user_id: int, event_type: str):
-    """
-    Log a member event (join, leave, kick) for statistics aggregation.
-    Uses schema from statistic.py: group_id, user_id, event, event_time (not chat_id, event_type, ts)
-    event_type: 'join', 'leave', 'kick'
-    """
-    # Nutze 'event' spalte (nicht event_type) und 'group_id' (nicht chat_id) für Konsistenz mit statistic.py
-    cur.execute("""
-        INSERT INTO member_events (group_id, user_id, event, event_time)
+    cur.execute(
+        """
+        INSERT INTO member_events (chat_id, user_id, event_type, ts)
         VALUES (%s, %s, %s, NOW());
-    """, (chat_id, user_id, event_type))
+        """,
+        (chat_id, user_id, event_type),
+    )
+
 
 @_with_cursor
 def ensure_forum_topics_schema(cur):
@@ -1922,16 +1924,15 @@ def compute_agg_group_day(cur, chat_id:int, stat_date):
         """, (chat_id, d0, d1))
         messages_total, active_users = cur.fetchone() or (0,0)
 
-    # member events - nutze 'event' spalte und 'group_id' (vom statistic.py schema)
     cur.execute("""
         SELECT
-          COUNT(*) FILTER (WHERE event='join')  AS joins,
-          COUNT(*) FILTER (WHERE event='leave') AS leaves,
-          COUNT(*) FILTER (WHERE event='kick')  AS kicks
+        COUNT(*) FILTER (WHERE event_type='join')  AS joins,
+        COUNT(*) FILTER (WHERE event_type='leave') AS leaves,
+        COUNT(*) FILTER (WHERE event_type='kick')  AS kicks
         FROM member_events
-        WHERE group_id=%s AND event_time >= %s AND event_time < %s
+        WHERE chat_id=%s AND ts >= %s AND ts < %s
     """, (chat_id, d0, d1))
-    joins, leaves, kicks = cur.fetchone() or (0,0,0)
+    joins, leaves, kicks = cur.fetchone() or (0, 0, 0)
 
     # reply percentiles
     cur.execute("""

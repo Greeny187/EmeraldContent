@@ -22,6 +22,7 @@ def migrate_tradedex_schema(cur) -> None:
     Fix: fehlende Spalten wie dex_name (CREATE TABLE IF NOT EXISTS ergänzt keine Columns).
     """
     # Pools
+    cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS pool_address VARCHAR(255);")
     cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS dex_name VARCHAR(50);")
     cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS tvl_usd DOUBLE PRECISION DEFAULT 0;")
     cur.execute("ALTER TABLE tradedex_pools ADD COLUMN IF NOT EXISTS volume_24h_usd DOUBLE PRECISION DEFAULT 0;")
@@ -34,6 +35,19 @@ def migrate_tradedex_schema(cur) -> None:
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_pool') THEN
             ALTER TABLE tradedex_pools ADD CONSTRAINT unique_pool UNIQUE (dex_name, pool_address);
+        END IF;
+        -- Constraint nur anlegen, wenn beide Spalten wirklich existieren
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_pool')
+           AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_name='tradedex_pools' AND column_name='dex_name'
+           )
+           AND EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_name='tradedex_pools' AND column_name='pool_address'
+           )
+        THEN
+           ALTER TABLE tradedex_pools ADD CONSTRAINT unique_pool UNIQUE (dex_name, pool_address);
         END IF;
     END $$;
     """)
