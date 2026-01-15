@@ -1,5 +1,3 @@
-# Cache für Spaltenerkennung in pending_inputs
-_pi_col_cache: str | None = None
 import re
 import os
 import json
@@ -14,6 +12,9 @@ from zoneinfo import ZoneInfo
 
 # Logger setup
 logger = logging.getLogger(__name__)
+
+# Cache für Spaltenerkennung in pending_inputs
+_pi_col_cache: str | None = None
 
 DEFAULT_BOT_KEY = os.getenv("BOT1_KEY", "content")
 
@@ -66,7 +67,6 @@ def _with_cursor(func):
                     conn.commit()
                     return res
             except (OperationalError, InterfaceError) as e:
-                last_exc = e
                 logger.error(f"[DB] Operational/Interface error in {func.__name__}: {e}")
                 # defekte Verbindung hart schließen und aus dem Pool entfernen
                 try:
@@ -94,12 +94,6 @@ def _with_cursor(func):
                 except Exception:
                     pass
     return wrapped
-
-def clear_welcome_topic(cur, chat_id: int):
-    cur.execute("UPDATE group_settings SET welcome_topic_id=NULL WHERE chat_id=%s", [chat_id])
-
-def clear_welcome_media(cur, chat_id: int):
-    cur.execute("UPDATE group_settings SET welcome_file_id=NULL, welcome_image_url=NULL WHERE chat_id=%s", [chat_id])
 
 async def _call_db_safe(fn, *args, **kwargs):
     """
