@@ -1,15 +1,5 @@
-# emrd_rewards_integration.py
-"""
-Integration Module zwischen Content Bot Handlers und EMRD Reward System
-Verknüpft Bot-Events mit dem neuen Reward-System
-"""
-
 import logging
 from typing import Optional, Dict
-
-logger = logging.getLogger(__name__)
-
-# Import das neue Reward System
 from shared.emrd_rewards import (
     add_reward_to_queue,
     get_pending_rewards,
@@ -18,6 +8,8 @@ from shared.emrd_rewards import (
     points_to_emrd_nanoton,
     emrd_nanoton_to_readable
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # REWARD EVENTS - Punkte Vergabe nach bestimmten Aktionen
@@ -49,6 +41,11 @@ REWARD_POINTS = {
     # Spezial
     "achievement_unlocked": 250,     # Achievement erreicht
     "milestone_reached": 500,        # Milestone erreicht
+    
+    # Story Sharing (Emerald)
+    "story_shared": 50,
+    "story_click_milestone": 25,
+    "referred_user": 100,
 }
 
 
@@ -353,3 +350,41 @@ async def get_pending_claims_queue() -> Dict:
         logger.error(f"Error getting claims queue: {e}")
         return {"pending_count": 0, "claims": []}
 
+def _resolve_add_points():
+    """
+    Versucht, add_emrd_points aus dem Content-Bot zu importieren.
+    Passe den Importpfad an, falls dein Package anders heißt.
+    """
+    # häufiges Layout: bots/content/database.py
+    try:
+        from bots.content.database import add_emrd_points  # type: ignore
+        return add_emrd_points
+    except Exception:
+        pass
+
+    # fallback: direktes database.py im PYTHONPATH
+    try:
+        from database import add_emrd_points  # type: ignore
+        return add_emrd_points
+    except Exception:
+        pass
+
+    return None
+
+
+def award_points(user_id: int, chat_id: int, points: float, reason: str = "story", meta: Optional[dict] = None) -> bool:
+    """
+    Vergibt EMRD-Punkte (Ledger). On-chain Auszahlung passiert NICHT hier,
+    sondern später über Claim/Worker.
+    """
+    add_points = _resolve_add_points()
+    if not callable(add_points):
+        logger.warning("award_points: add_emrd_points not available (import failed)")
+        return False
+
+    try:
+        add_points(chat_id, user_id, float(points or 0.0), reason=reason, meta=meta or {})
+        return True
+    except Exception as e:
+        logger.error("award_points failed: %s", e, exc_info=True)
+        return False

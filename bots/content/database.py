@@ -51,7 +51,6 @@ def _with_cursor(func):
     def wrapped(*args, **kwargs):
         # bis zu 2 Versuche bei transienten Verbindungsproblemen
         import time
-        last_exc = None
         for attempt in (1, 2):
             conn = _db_pool.getconn()
             try:
@@ -77,19 +76,33 @@ def _with_cursor(func):
                     _db_pool.putconn(conn, close=True)
                 except TypeError:
                     # ältere psycopg2 ohne close-Flag
-                    try: _db_pool.putconn(conn)
-                    except Exception: pass
+                    try:
+                        _db_pool.putconn(conn)
+                    except Exception: 
+                        pass
                 if attempt == 2:
                     raise
                 # kurzer Backoff, dann neuer Versuch
                 time.sleep(0.2)
                 continue
             except Exception as e:
+                # WICHTIG: Transaktion zurücksetzen, sonst bleibt die Conn "aborted"
+                try:
+                    if conn and not getattr(conn, "closed", 0):
+                        conn.rollback()
+                except Exception:
+                    pass
+
                 logger.error(f"[DB] Exception in {func.__name__}: {e}", exc_info=True)
                 raise
             finally:
                 try:
                     if conn and not getattr(conn, "closed", 0):
+                        # extra safety: nie eine kaputte TX zurück in den Pool
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
                         _db_pool.putconn(conn)
                 except Exception:
                     pass
@@ -106,6 +119,29 @@ async def _call_db_safe(fn, *args, **kwargs):
     except Exception:
         logger.exception("DB-Fehler in %s", getattr(fn, "__name__", str(fn)))
         raise
+
+def _alter_table_safe(cur, sql: str):
+    sp = "sp_schema_alter"
+    try:
+        cur.execute(f"SAVEPOINT {sp};")
+        cur.execute(sql)
+        cur.execute(f"RELEASE SAVEPOINT {sp};")
+    except Exception as e:
+        # rollback nur dieses Statements
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp};")
+            cur.execute(f"RELEASE SAVEPOINT {sp};")
+        except Exception:
+            try:
+                cur.connection.rollback()
+            except Exception:
+                pass
+
+        msg = str(e).lower()
+        if "does not exist" in msg and "relation" in msg:
+            logger.debug("Schema-Skip (Tabelle fehlt): %s", sql)
+        else:
+            logger.warning("Schema-Änderung fehlgeschlagen: %s -- %s", sql, e)
 
 def load_group_settings(cur, chat_id, bot_key: str):
     cur.execute("""
@@ -733,7 +769,7 @@ def init_db(cur):
         '''
         INSERT INTO user_topics_map(chat_id, user_id, topic_id, topic_name)
         SELECT chat_id, user_id, COALESCE(topic_id, 0), topic_name
-          FROM user_topics
+        FROM user_topics
         ON CONFLICT (chat_id, user_id, topic_id) DO NOTHING;
         '''
     )
@@ -741,8 +777,9 @@ def init_db(cur):
     # Best effort: vorhandene Single-Assignments in die Map spiegeln (ohne Überschreiben)
     try:
         cur.execute(
-            "INSERT INTO user_topics_map(chat_id,user_id,topic_id,topic_name) "
-            "SELECT chat_id,user_id,topic_id,topic_name FROM user_topics "
+            "INSERT INTO user_topics_map (chat_id, user_id, topic_id)"
+            "SELECT chat_id, user_id, COALESCE(topic_id, 0)"
+            "FROM user_topics"
             "ON CONFLICT DO NOTHING;"
         )
     except Exception:
@@ -880,8 +917,10 @@ def set_ai_mod_settings(cur, chat_id:int, topic_id:int, **fields):
     cols, vals = [], []
     for k,v in fields.items():
         if k in allowed:
-            cols.append(f"{k}=%s"); vals.append(v)
-    if not cols: return
+            cols.append(f"{k}=%s") 
+            vals.append(v)
+    if not cols: 
+        return
     cur.execute(f"""
       INSERT INTO ai_mod_settings (chat_id, topic_id) VALUES (%s,%s)
       ON CONFLICT (chat_id, topic_id) DO UPDATE SET {", ".join(cols)};
@@ -1009,6 +1048,84 @@ STORY_SHARING_DEFAULT = {
     "reward_clicks": 0,
     "reward_referral": 100,
 }
+
+@_with_cursor
+def get_emrd_balance(cur, chat_id: int, user_id: int) -> float:
+    cur.execute("SELECT balance FROM emrd_points WHERE chat_id=%s AND user_id=%s;", (chat_id, user_id))
+    r = cur.fetchone()
+    try:
+        return float(r[0]) if r else 0.0
+    except Exception:
+        return 0.0
+
+@_with_cursor
+def add_emrd_points(cur, chat_id: int, user_id: int, delta: float, reason: str, meta: dict | None = None):
+    """Addiert (oder subtrahiert) EMRD-Punkte im Ledger und loggt ein Event."""
+    try:
+        delta_f = float(delta or 0.0)
+    except Exception:
+        delta_f = 0.0
+    if delta_f == 0.0:
+        return
+    cur.execute("""
+        INSERT INTO emrd_points(chat_id, user_id, balance, updated_at)
+        VALUES (%s,%s,%s,NOW())
+        ON CONFLICT (chat_id, user_id) DO UPDATE
+          SET balance = emrd_points.balance + EXCLUDED.balance,
+              updated_at = NOW();
+    """, (chat_id, user_id, delta_f))
+    cur.execute("""
+        INSERT INTO emrd_point_events(chat_id, user_id, reason, delta, meta)
+        VALUES (%s,%s,%s,%s,%s);
+    """, (chat_id, user_id, (reason or 'unknown')[:64], delta_f, Json(meta or {})))
+
+@_with_cursor
+def create_emrd_claim(cur, chat_id: int, user_id: int, amount: float, wallet_address: str) -> int | None:
+    """Erstellt einen Claim (Auszahlungsauftrag). Auszahlung/On-Chain passiert asynchron über Worker."""
+    try:
+        amt = float(amount or 0.0)
+    except Exception:
+        amt = 0.0
+    if amt <= 0:
+        return None
+
+    # Balance prüfen
+    bal = get_emrd_balance(chat_id, user_id)
+    if bal < amt:
+        return None
+
+    # Balance reservieren (sofort abziehen)
+    add_emrd_points(chat_id, user_id, -amt, reason="claim_reserve", meta={"wallet": wallet_address})
+
+    cur.execute("""
+        INSERT INTO emrd_claims(chat_id, user_id, amount, wallet_address, status)
+        VALUES (%s,%s,%s,%s,'pending')
+        RETURNING claim_id;
+    """, (chat_id, user_id, amt, wallet_address))
+    return int(cur.fetchone()[0])
+
+@_with_cursor
+def list_pending_emrd_claims(cur, limit: int = 50):
+    cur.execute("""
+        SELECT claim_id, chat_id, user_id, amount, wallet_address, created_at
+          FROM emrd_claims
+         WHERE status='pending'
+         ORDER BY created_at ASC
+         LIMIT %s;
+    """, (max(1, min(int(limit or 50), 200)),))
+    return cur.fetchall() or []
+
+@_with_cursor
+def mark_emrd_claim(cur, claim_id: int, status: str, tx_hash: str | None = None, note: str | None = None):
+    status = (status or "").strip()[:24]
+    cur.execute("""
+        UPDATE emrd_claims
+           SET status=%s,
+               tx_hash=%s,
+               note=%s,
+               processed_at = CASE WHEN %s IN ('paid','rejected') THEN NOW() ELSE processed_at END
+         WHERE claim_id=%s;
+    """, (status, tx_hash, note, status, int(claim_id)))
 
 def _story_key(chat_id: int) -> str:
     return f"story_sharing:{int(chat_id)}"
@@ -1729,13 +1846,17 @@ def set_link_settings(cur, chat_id: int,
 
     parts, params = [], []
     if protection is not None:
-        parts.append("link_protection_enabled = %s");   params.append(protection)
+        parts.append("link_protection_enabled = %s")   
+        params.append(protection)
     if warning_on is not None:
-        parts.append("link_warning_enabled = %s");      params.append(warning_on)
+        parts.append("link_warning_enabled = %s")
+        params.append(warning_on)
     if warning_text is not None:
-        parts.append("link_warning_text = %s");         params.append(warning_text)
+        parts.append("link_warning_text = %s")
+        params.append(warning_text)
     if exceptions_on is not None:
-        parts.append("link_exceptions_enabled = %s");   params.append(exceptions_on)
+        parts.append("link_exceptions_enabled = %s")
+        params.append(exceptions_on)
 
     if not parts:
         logger.info("DB: set_link_settings – keine Änderungen")
@@ -3221,7 +3342,8 @@ def set_night_mode(cur, chat_id: int,
     if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
     if hard_mode is not None: parts.append("hard_mode=%s"); params.append(hard_mode)
     if override_until is not None: parts.append("override_until=%s"); params.append(override_until)
-    if write_lock is not None: parts.append("write_lock=%s"); params.append(write_lock)
+    if write_lock is not None: 
+        parts.append("write_lock=%s"); params.append(write_lock)
     if lock_message is not None: parts.append("lock_message=%s"); params.append(lock_message)
 
     if not parts:
@@ -3289,6 +3411,31 @@ def mark_payment_paid(cur, order_id:str, provider:str) -> tuple[bool,int,int]:
     row = cur.fetchone()
     return (True, row[0], row[1]) if row else (False, 0, 0)
 
+# --- Clean Delete Helper Functions ---
+@_with_cursor
+def list_members(cur, chat_id: int) -> list[int]:
+    """
+    Holt alle Mitglied-UIDs aus der Datenbank für einen Chat.
+    Wird für Clean-Delete verwendet um gelöschte Accounts zu finden.
+    """
+    cur.execute("""
+        SELECT DISTINCT user_id FROM message_logs
+        WHERE chat_id = %s
+        UNION
+        SELECT DISTINCT user_id FROM member_events
+        WHERE group_id = %s
+        ORDER BY user_id
+    """, (chat_id, chat_id))
+    return [row[0] for row in cur.fetchall()]
+
+@_with_cursor
+def remove_member(cur, chat_id: int, user_id: int):
+    """
+    Entfernt einen Mitglied aus den lokalen Tracking-Tabellen.
+    """
+    cur.execute("DELETE FROM message_logs WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+    cur.execute("DELETE FROM member_events WHERE group_id = %s AND user_id = %s", (chat_id, user_id))
+    logger.debug(f"[clean_delete] Removed user {user_id} from tracking tables for {chat_id}")
 
 # --- Legacy Migration Utility ---
 def migrate_db():
@@ -3459,32 +3606,6 @@ def init_all_schemas():
     ensure_forum_topics_schema()
     ensure_ai_moderation_schema()
     logger.info("✅ All schemas initialized successfully")
-
-# --- Clean Delete Helper Functions ---
-@_with_cursor
-def list_members(cur, chat_id: int) -> list[int]:
-    """
-    Holt alle Mitglied-UIDs aus der Datenbank für einen Chat.
-    Wird für Clean-Delete verwendet um gelöschte Accounts zu finden.
-    """
-    cur.execute("""
-        SELECT DISTINCT user_id FROM message_logs
-        WHERE chat_id = %s
-        UNION
-        SELECT DISTINCT user_id FROM member_events
-        WHERE group_id = %s
-        ORDER BY user_id
-    """, (chat_id, chat_id))
-    return [row[0] for row in cur.fetchall()]
-
-@_with_cursor
-def remove_member(cur, chat_id: int, user_id: int):
-    """
-    Entfernt einen Mitglied aus den lokalen Tracking-Tabellen.
-    """
-    cur.execute("DELETE FROM message_logs WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
-    cur.execute("DELETE FROM member_events WHERE group_id = %s AND user_id = %s", (chat_id, user_id))
-    logger.debug(f"[clean_delete] Removed user {user_id} from tracking tables for {chat_id}")
 
 if __name__ == "__main__":
     init_all_schemas()

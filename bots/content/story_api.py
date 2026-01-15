@@ -8,7 +8,6 @@ Story Sharing API Endpoints (Emerald)
 import logging
 import os
 import json
-from urllib.parse import parse_qs
 import urllib.parse
 from aiohttp import web
 from typing import Optional, List
@@ -29,6 +28,11 @@ from .story_sharing import (
 )
 from .story_card_generator import generate_share_card
 from .database import get_story_settings, get_group_title
+try:
+    from shared.emrd_rewards import get_pending_rewards, create_reward_claim
+except Exception:
+    get_pending_rewards = None
+    create_reward_claim = None
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ def _token_secrets_from_request(request: web.Request) -> List[bytes]:
     seen = set()
     for s in secrets:
         if s not in seen:
-            uniq.append(s); 
+            uniq.append(s)
             seen.add(s)
     return uniq
 
@@ -162,6 +166,10 @@ async def register_story_api(webapp):
     webapp.router.add_post("/api/stories/click", click_share)
     webapp.router.add_post("/api/stories/convert", convert_share)
 
+    # Rewards / EMRD (optional)
+    webapp.router.add_get("/api/rewards/balance", get_rewards_balance)
+    webapp.router.add_post("/api/rewards/claim", create_rewards_claim)
+
     webapp.router.add_get("/api/stories/stats/{share_id}", get_stats)
     webapp.router.add_get("/api/stories/user/{user_id}", get_user_stories)
     webapp.router.add_get("/api/stories/top", get_top)
@@ -175,6 +183,8 @@ async def register_story_api(webapp):
         "/api/stories/create",
         "/api/stories/click",
         "/api/stories/convert",
+        "/api/rewards/balance",
+        "/api/rewards/claim",
         "/api/stories/top",
         "/api/stories/card/{template}",
         "/api/stories/card/share/{share_id}",
@@ -532,4 +542,48 @@ async def get_card_image(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.error("Get card image error: %s", e, exc_info=True)
+        return _json(request, {"success": False, "error": str(e)}, status=500)
+
+async def get_rewards_balance(request: web.Request) -> web.Response:
+    """GET /api/rewards/balance – zeigt ausstehende Rewards (Option 2: rewards_pending) global pro User."""
+    try:
+        uid = _resolve_uid(request)
+        if uid <= 0:
+            return _json(request, {"success": False, "error": "auth_required"}, status=403)
+        if not callable(get_pending_rewards):
+            return _json(request, {"success": False, "error": "rewards_not_configured"}, status=501)
+        bal = float(get_pending_rewards(uid))
+        return _json(request, {"success": True, "user_id": uid, "balance": bal})
+    except Exception as e:
+        logger.error("get_rewards_balance error: %s", e, exc_info=True)
+        return _json(request, {"success": False, "error": str(e)}, status=500)
+
+
+async def create_rewards_claim(request: web.Request) -> web.Response:
+    """POST /api/rewards/claim – erstellt einen Claim (Queue). Auszahlung erfolgt später über Worker."""
+    try:
+        uid = _resolve_uid(request)
+        data = await request.json()
+        chat_id = int(data.get("chat_id", 0) or 0)
+        amount = float(data.get("amount", 0) or 0)
+        wallet = (data.get("wallet_address") or "").strip()
+
+        if uid <= 0:
+            return _json(request, {"success": False, "error": "auth_required"}, status=403)
+        if chat_id == 0:
+            return _json(request, {"success": False, "error": "chat_id erforderlich"}, status=400)
+        if amount <= 0:
+            return _json(request, {"success": False, "error": "amount muss > 0 sein"}, status=400)
+        if not wallet:
+            return _json(request, {"success": False, "error": "wallet_address erforderlich"}, status=400)
+        if not callable(create_reward_claim):
+            return _json(request, {"success": False, "error": "rewards_not_configured"}, status=501)
+
+        result = await create_reward_claim(uid, wallet, claim_type="manual")
+        if not result or not result.get("success"):
+            return _json(request, {"success": False, "error": result.get("message","claim_failed") if result else "claim_failed"}, status=400)
+
+        return _json(request, {"success": True, "claim_id": int(result.get("claim_id"))})
+    except Exception as e:
+        logger.error("create_rewards_claim error: %s", e, exc_info=True)
         return _json(request, {"success": False, "error": str(e)}, status=500)
