@@ -962,7 +962,8 @@ def effective_ai_mod_policy(chat_id:int, topic_id:int|None) -> dict:
     }
     if topic_id:
         ov = get_ai_mod_settings(chat_id, topic_id)
-        if ov: base.update({k:v for k,v in ov.items() if v is not None})
+        if ov: 
+            base.update({k:v for k,v in ov.items() if v is not None})
     return base
 
 @_with_cursor
@@ -2420,12 +2421,18 @@ def effective_spam_policy(cur, chat_id:int, topic_id:int|None, link_flags=None, 
     if row:
         base["level"] = (row[0] or "off").lower()
         base["user_whitelist"] = list(row[1] or [])
-        if row[2] is not None: base["emoji_max_per_msg"] = int(row[2] or 0)
-        if row[3] is not None: base["emoji_max_per_min"] = int(row[3] or 0)
-        if row[4] is not None: base["max_msgs_per_10s"] = int(row[4] or 0)
-        if row[5] is not None: base["action_primary"] = row[5] or base["action_primary"]
-        if row[6] is not None: base["action_secondary"] = row[6] or base["action_secondary"]
-        if row[7] is not None: base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
+        if row[2] is not None: 
+            base["emoji_max_per_msg"] = int(row[2] or 0)
+        if row[3] is not None: 
+            base["emoji_max_per_min"] = int(row[3] or 0)
+        if row[4] is not None: 
+            base["max_msgs_per_10s"] = int(row[4] or 0)
+        if row[5] is not None: 
+            base["action_primary"] = row[5] or base["action_primary"]
+        if row[6] is not None: 
+            base["action_secondary"] = row[6] or base["action_secondary"]
+        if row[7] is not None: 
+            base["escalation_threshold"] = int(row[7] or base["escalation_threshold"])
     else:
         base["user_whitelist"] = []
 
@@ -2732,10 +2739,13 @@ def get_rss_feeds(cur) -> List[Tuple[int, str, int]]:
 def set_rss_feed_options(cur, chat_id:int, url:str, *, post_images:bool|None=None, enabled:bool|None=None):
     parts, params = [], []
     if post_images is not None:
-        parts.append("post_images=%s"); params.append(post_images)
+        parts.append("post_images=%s")
+        params.append(post_images)
     if enabled is not None:
-        parts.append("enabled=%s"); params.append(enabled)
-    if not parts: return
+        parts.append("enabled=%s")
+        params.append(enabled)
+    if not parts:
+        return
     sql = "UPDATE rss_feeds SET " + ", ".join(parts) + " WHERE chat_id=%s AND url=%s;"
     cur.execute(sql, params + [chat_id, url])
 
@@ -2788,8 +2798,12 @@ def get_ai_settings(cur, chat_id:int) -> tuple[bool,bool]:
 @_with_cursor
 def set_ai_settings(cur, chat_id:int, faq:bool|None=None, rss:bool|None=None):
     parts, params = [], []
-    if faq is not None: parts.append("ai_faq_enabled=%s"); params.append(faq)
-    if rss is not None: parts.append("ai_rss_summary=%s"); params.append(rss)
+    if faq is not None: 
+        parts.append("ai_faq_enabled=%s")
+        params.append(faq)
+    if rss is not None: 
+        parts.append("ai_rss_summary=%s")
+        params.append(rss)
     if not parts: 
         return
     sql = "INSERT INTO group_settings(chat_id) VALUES (%s) ON CONFLICT (chat_id) DO UPDATE SET " + ", ".join(parts)
@@ -3334,17 +3348,36 @@ def set_night_mode(cur, chat_id: int,
                    write_lock=None,
                    lock_message=None):
     parts, params = [], []
-    if enabled is not None: parts.append("enabled=%s"); params.append(enabled)
-    if start_minute is not None: parts.append("start_minute=%s"); params.append(start_minute)
-    if end_minute is not None: parts.append("end_minute=%s"); params.append(end_minute)
-    if delete_non_admin_msgs is not None: parts.append("delete_non_admin_msgs=%s"); params.append(delete_non_admin_msgs)
-    if warn_once is not None: parts.append("warn_once=%s"); params.append(warn_once)
-    if timezone is not None: parts.append("timezone=%s"); params.append(timezone)
-    if hard_mode is not None: parts.append("hard_mode=%s"); params.append(hard_mode)
-    if override_until is not None: parts.append("override_until=%s"); params.append(override_until)
+    if enabled is not None:
+        parts.append("enabled=%s")
+        params.append(enabled)
+    if start_minute is not None:
+        parts.append("start_minute=%s")
+        params.append(start_minute)
+    if end_minute is not None:
+        parts.append("end_minute=%s")
+        params.append(end_minute)
+    if delete_non_admin_msgs is not None:
+        parts.append("delete_non_admin_msgs=%s")
+        params.append(delete_non_admin_msgs)
+    if warn_once is not None:
+        parts.append("warn_once=%s")
+        params.append(warn_once)
+    if timezone is not None:
+        parts.append("timezone=%s")
+        params.append(timezone)
+    if hard_mode is not None:
+        parts.append("hard_mode=%s")
+        params.append(hard_mode)
+    if override_until is not None:
+        parts.append("override_until=%s")
+        params.append(override_until)
     if write_lock is not None: 
-        parts.append("write_lock=%s"); params.append(write_lock)
-    if lock_message is not None: parts.append("lock_message=%s"); params.append(lock_message)
+        parts.append("write_lock=%s")
+        params.append(write_lock)
+    if lock_message is not None: 
+        parts.append("lock_message=%s")
+        params.append(lock_message)
 
     if not parts:
         return
