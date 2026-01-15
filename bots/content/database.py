@@ -713,22 +713,23 @@ def init_db(cur):
         );
     """)
     
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_topics_map (
-            chat_id BIGINT,
-            user_id BIGINT,
-            topic_id BIGINT,
-            topic_name TEXT,
-            PRIMARY KEY (chat_id, user_id, topic_id)
-        );
-        """
-    )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_topics_map (
+      chat_id   BIGINT NOT NULL,
+      user_id   BIGINT NOT NULL,
+      topic_id  BIGINT NOT NULL DEFAULT 0,
+      topic_name TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (chat_id, user_id, topic_id)
+    );
+    """)
     cur.execute("ALTER TABLE user_topics_map ALTER COLUMN topic_id SET DEFAULT 0;")
     cur.execute("UPDATE user_topics_map SET topic_id=0 WHERE topic_id IS NULL;")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_user_topics_map_chat_user ON user_topics_map(chat_id, user_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_user_topics_map_chat_topic ON user_topics_map(chat_id, topic_id);")
+    
     # Backfill aus Legacy (sicher, ändert keine bestehenden Einträge)
     cur.execute(
         '''
