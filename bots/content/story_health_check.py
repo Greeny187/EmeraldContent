@@ -192,10 +192,11 @@ class StorySystemHealthCheck:
             config = self.config
             
             required_settings = {
-                'sharing.enabled': 'boolean',
-                'sharing.reward_share': 'number',
-                'sharing.reward_referral': 'number',
-                'sharing.reward_clicks': 'number',
+                "enabled": "boolean",
+                "daily_limit": "number",
+                "reward_share": "number",
+                "reward_referral": "number",
+                "reward_clicks": "number",
             }
             
             missing = []

@@ -985,13 +985,16 @@ def set_global_config(cur, key: str, value: dict):
     """, (key, Json(value)))
 
 
-# --- Story-Sharing (pro Gruppe, gespeichert in global_config als JSON) ---
 STORY_SHARING_DEFAULT = {
     "enabled": True,
     "referral_tracking": True,
     "show_analytics": True,
     "leaderboard_enabled": True,
+
+    # Anti-Farm: max. Shares pro User/Tag (pro Gruppe)
     "daily_limit": 5,
+
+    # Template-Schalter (pro Gruppe)
     "templates": {
         "group_bot": True,
         "stats": True,
@@ -999,10 +1002,12 @@ STORY_SHARING_DEFAULT = {
         "emrd_rewards": True,
         "affiliate": True
     },
-    # Reward-Schalter (die tatsächliche Vergabe kann bot-abhängig implementiert werden)
-    "reward_share": True,
-    "reward_clicks": False,
-    "reward_referral": True
+
+    # Rewards (Punkte/Token-Äquivalent). 0 = aus / nutze Template-Default (falls vorhanden).
+    # Wichtig: Die tatsächliche Token-Auszahlung passiert erst über Claim/Wallet-Flow.
+    "reward_share": 0,
+    "reward_clicks": 0,
+    "reward_referral": 100,
 }
 
 def _story_key(chat_id: int) -> str:
@@ -1035,24 +1040,35 @@ def set_story_settings(cur, chat_id: int, settings: dict):
     """Speichert Story-Sharing Settings für eine Gruppe (cid)."""
     if not isinstance(settings, dict):
         settings = {}
-    # Sanitize minimal
-    clean = {}
-    for k in ("enabled","referral_tracking","show_analytics","leaderboard_enabled","daily_limit",
-              "reward_share","reward_clicks","reward_referral","templates"):
+
+    clean: dict = {}
+
+    # Bool-Flags
+    for k in ("enabled", "referral_tracking", "show_analytics", "leaderboard_enabled"):
         if k in settings:
-            clean[k] = settings[k]
-    # normalize types
-    for k in ("enabled","referral_tracking","show_analytics","leaderboard_enabled","reward_share","reward_clicks","reward_referral"):
-        if k in clean:
-            clean[k] = bool(clean[k])
-    if "daily_limit" in clean:
+            clean[k] = bool(settings.get(k))
+
+    # Daily limit (int, 1..50)
+    if "daily_limit" in settings:
         try:
-            clean["daily_limit"] = int(clean["daily_limit"])
+            v = int(settings.get("daily_limit") or STORY_SHARING_DEFAULT["daily_limit"])
+            clean["daily_limit"] = max(1, min(v, 50))
         except Exception:
             clean["daily_limit"] = STORY_SHARING_DEFAULT["daily_limit"]
-    if "templates" in clean and isinstance(clean["templates"], dict):
-        # keep only known templates
-        clean["templates"] = {t: bool(clean["templates"].get(t, True)) for t in STORY_SHARING_DEFAULT["templates"].keys()}
+
+    # Rewards (int >= 0)
+    for k, default in (("reward_share", 0), ("reward_clicks", 0), ("reward_referral", 100)):
+        if k in settings:
+            try:
+                clean[k] = max(0, int(settings.get(k) or default))
+            except Exception:
+                clean[k] = default
+
+    # Templates (nur bekannte Keys)
+    if isinstance(settings.get("templates"), dict):
+        tmpl_in = settings["templates"]
+        clean["templates"] = {t: bool(tmpl_in.get(t, True)) for t in STORY_SHARING_DEFAULT["templates"].keys()}
+    
     cur.execute("""
       INSERT INTO global_config(key, value)
       VALUES (%s,%s)

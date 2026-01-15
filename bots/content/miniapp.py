@@ -20,6 +20,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
 
 from bots.content.database import upsert_forum_topic
+from bots.crossposter import app
 from .access import parse_webapp_user_id, is_admin_or_owner
 from .patchnotes import __version__, PATCH_NOTES
 from shared.payments import create_payment_order 
@@ -2022,10 +2023,9 @@ async def _cors_ok(request):
         }
     )
 
-
 def _attach_http_routes(app: Application) -> bool:
     """Versucht, die HTTP-Routen am PTB-aiohttp-Webserver zu registrieren.
-    Gibt True zurück, wenn registriert (oder bereits vorhanden), sonst False.
+    Funktioniert nur, wenn der Bot in Webhook-Mode läuft (app.webhook_application()).
     """
     try:
         webapp = app.webhook_application()
@@ -2033,16 +2033,21 @@ def _attach_http_routes(app: Application) -> bool:
         webapp = None
 
     if not webapp:
-        logger.info("[miniapp] webhook_application() noch nicht verfügbar – retry folgt")
+        logger.info("[miniapp] webhook_application() noch nicht verfügbar (oder Polling-Mode) – retry folgt")
         return False
 
-    # Doppelte Registrierung vermeiden:
+    # Doppelte Registrierung vermeiden
     if webapp.get("_miniapp_routes_attached"):
         return True
+    try:
+        register_miniapp_routes(webapp, app)
+    except Exception as e:
+        logger.warning(f"[miniapp] register_miniapp_routes fehlgeschlagen: {e}", exc_info=True)
+        return False
 
-    webapp.setdefault("_ptb_apps", [])
-    webapp["_ptb_apps"].append(app)
-    webapp.setdefault("ptb_app", app)
+    webapp["_miniapp_routes_attached"] = True
+    logger.info("[miniapp] HTTP-Routen registriert (Miniapp + Story API)")
+    return True
 
 def register_miniapp_routes(webapp, app):
     global ALLOWED_ORIGIN
@@ -2114,3 +2119,17 @@ def register_miniapp(app: Application):
     # 2) Neuer Handler für Paginierung
     app.add_handler(CallbackQueryHandler(miniapp_pagination_handler, pattern="^miniapp_"))
 
+    # 3) HTTP-Routen (aiohttp) anhängen – wichtig für Miniapp + Story API
+    # Hinweis: klappt nur im Webhook-Mode. Im Polling-Mode sind die Routes nicht verfügbar.
+    try:
+        ok = _attach_http_routes(app)
+        if not ok and getattr(app, "job_queue", None):
+            async def _retry_attach(ctx):
+                try:
+                    if _attach_http_routes(app):
+                        ctx.job.schedule_removal()
+                except Exception:
+                    pass
+            app.job_queue.run_repeating(_retry_attach, interval=3, first=1, name="miniapp_attach_routes")
+    except Exception as e:
+        logger.warning(f"[miniapp] Route-Attach Setup fehlgeschlagen: {e}")

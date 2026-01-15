@@ -137,6 +137,8 @@ def init_story_sharing_schema() -> bool:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_story_shares_chat_day ON story_shares(chat_id, shared_at);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_story_clicks_share ON story_clicks(share_id, clicked_at);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_story_conversions_share ON story_conversions(share_id, converted_at);")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uidx_story_clicks_share_visitor ON story_clicks(share_id, visitor_id) WHERE visitor_id IS NOT NULL;")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uidx_story_conversions_share_visitor ON story_conversions(share_id, visitor_id);")
 
             conn.commit()
             logger.info("✅ Story sharing schema initialized (+indizes)")

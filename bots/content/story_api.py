@@ -9,8 +9,11 @@ import logging
 import os
 import json
 from urllib.parse import parse_qs
+import urllib.parse
 from aiohttp import web
-
+from typing import Optional, List
+import hmac
+import hashlib
 from .story_sharing import (
     create_story_share,
     track_story_click,
@@ -34,20 +37,63 @@ try:
 except Exception:  # pragma: no cover
     award_points = None  # type: ignore
 
-from typing import Optional
+def _token_secrets_from_request(request: web.Request) -> List[bytes]:
+    """Sammelt mögliche BOT-Token-Secrets (sha256(token)) aus Env + PTB-App."""
+    secrets: List[bytes] = []
 
+    # 1) Env Tokens (Multi-Bot)
+    for k in ("BOT1_TOKEN","BOT2_TOKEN","BOT3_TOKEN","BOT4_TOKEN","BOT5_TOKEN","BOT6_TOKEN","BOT_TOKEN"):
+        t = os.getenv(k)
+        if t:
+            try:
+                secrets.append(hashlib.sha256(t.encode()).digest())
+            except Exception:
+                pass
 
-def parse_webapp_user_id(init_data: Optional[str]) -> int:
-    """Extrahiert user.id aus Telegram WebApp initData (ohne Signatur-Validierung)."""
-    if not init_data:
-        return 0
+    # 2) PTB-App Token (falls vorhanden)
     try:
-        parsed = parse_qs(init_data, strict_parsing=False)
-        if parsed.get("signature") and parsed.get("user"):
-            user = json.loads(parsed["user"][0])
-            return int(user.get("id") or 0)
+        ptb_app = request.app.get("ptb_app")
+        tok = getattr(getattr(ptb_app, "bot", None), "token", None)
+        if tok:
+            secrets.append(hashlib.sha256(str(tok).encode()).digest())
     except Exception:
         pass
+
+    # de-dupe
+    uniq = []
+    seen = set()
+    for s in secrets:
+        if s not in seen:
+            uniq.append(s); 
+            seen.add(s)
+    return uniq
+
+
+def _verify_init_data(init_data: str, secret: bytes) -> int:
+    """Telegram WebApp initData Signatur-Prüfung (HMAC-SHA256)."""
+    parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+    recv_hash = parsed.get("hash")
+    if not recv_hash:
+        return 0
+    items = [(k, v) for k, v in parsed.items() if k != "hash"]
+    check_str = "\n".join(f"{k}={v}" for k, v in sorted(items))
+    calc = hmac.new(secret, msg=check_str.encode(), digestmod=hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calc, recv_hash):
+        return 0
+    try:
+        user = json.loads(parsed.get("user") or "{}")
+        return int(user.get("id") or 0)
+    except Exception:
+        return 0
+
+def parse_webapp_user_id(request: web.Request, init_data: Optional[str]) -> int:
+    """Extrahiert user.id aus Telegram WebApp initData – NUR wenn Signatur gültig."""
+    if not init_data:
+        return 0
+    for secret in _token_secrets_from_request(request):
+        uid = _verify_init_data(init_data, secret)
+        if uid:
+            return uid
     return 0
 
 
@@ -57,13 +103,13 @@ def _resolve_uid(request: web.Request) -> int:
         or request.headers.get("x-telegram-web-app-data")
         or request.query.get("init_data")
     )
-    uid = parse_webapp_user_id(init_str)
+    uid = parse_webapp_user_id(request, init_str)
     if uid > 0:
         return uid
 
     # Fallback: uid in der Query (für Browser-Tests)
     q_uid = request.query.get("uid")
-    if q_uid and str(q_uid).lstrip("-").isdigit():
+    if os.getenv("ALLOW_BROWSER_DEV", "0") == "1" and q_uid and str(q_uid).lstrip("-").isdigit():
         return int(q_uid)
 
     # Optionaler Dev-Bypass
