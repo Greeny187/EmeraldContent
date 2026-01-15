@@ -394,9 +394,9 @@ def init_db(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_adv_impr_chat_ts ON adv_impressions(chat_id, ts DESC);")
 
     # Hilfsindex für Message-basierte Trigger
-    cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
-    
+    _alter_table_safe(cur, "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
+    _alter_table_safe(cur, "CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS translations_cache (
