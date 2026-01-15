@@ -180,8 +180,10 @@ def ensure_multi_bot_schema(cur):
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_group_settings_bot_chat ON group_settings (bot_key, chat_id)",
 
         # Logs & Statistiken
-        "ALTER TABLE message_logs    ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
-        "CREATE INDEX IF NOT EXISTS ix_message_logs_bot_chat_ts ON message_logs (bot_key, chat_id, timestamp DESC)",
+        # Hilfsindex für Message-basierte Trigger
+        # WICHTIG: message_logs kann auf frischer DB hier noch nicht existieren → init_db darf nicht crashen.
+        _alter_table_safe(cur, "ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS topic_id BIGINT;")
+        _alter_table_safe(cur, "CREATE INDEX IF NOT EXISTS idx_msglogs_topic_user_ts ON message_logs(chat_id, topic_id, user_id, timestamp DESC);")
         "ALTER TABLE daily_stats     ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_stats_bot_chat_date_user ON daily_stats (bot_key, chat_id, stat_date, user_id)",
         "ALTER TABLE reply_times     ADD COLUMN IF NOT EXISTS bot_key text NOT NULL DEFAULT 'content'",
@@ -612,12 +614,14 @@ def init_db(cur):
         """
     )
     # ADD MISSING TABLES FOR STATISTICS
+    # (topic_id optional; wird ggf. oben/über migrate_db ergänzt)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS message_logs (
             chat_id BIGINT,
             user_id BIGINT,
-            timestamp TIMESTAMPTZ DEFAULT NOW()
+            timestamp TIMESTAMPTZ DEFAULT NOW(),
+            topic_id BIGINT
         );
         """
     )
