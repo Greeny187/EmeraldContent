@@ -4,7 +4,9 @@ import os
 import urllib.parse
 import logging
 import asyncio
-import hmac, hashlib
+import hmac
+import hashlib
+import inspect
 from io import BytesIO
 from aiohttp import web
 from aiohttp.web_response import Response
@@ -16,11 +18,8 @@ from decimal import Decimal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, InputFile
 from telegram.constants import ChatMemberStatus
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from functools import partial
-
 from bots.content.database import upsert_forum_topic
-from bots.crossposter import app
 from .access import parse_webapp_user_id, is_admin_or_owner
 from .patchnotes import __version__, PATCH_NOTES
 from shared.payments import create_payment_order 
@@ -1048,8 +1047,8 @@ def _db():
             set_farewell, delete_farewell, get_farewell, get_agg_summary, get_heatmap,
             get_link_settings, set_link_settings, get_spam_policy, set_spam_policy, get_spam_policy_topic, set_spam_policy_topic,
             list_spam_policy_topics, delete_spam_policy_topic,
-            list_forum_topics, sync_user_topic_names, list_user_topics, delete_spam_policy_topic, effective_spam_policy,
-            list_forum_topics, assign_topic, remove_topic, list_user_topics,
+            list_forum_topics, sync_user_topic_names, list_user_topics, effective_spam_policy,
+            assign_topic, remove_topic, 
             get_rss_topic, set_rss_topic_for_group_feeds, add_rss_feed, remove_rss_feed, set_rss_feed_options, list_rss_feeds,
             get_ai_settings, set_ai_settings, upsert_faq, delete_faq,
             set_daily_stats, is_daily_stats_enabled, get_top_responders, get_agg_rows,
@@ -1058,11 +1057,12 @@ def _db():
             get_rss_feeds_full, get_subscription_info, effective_ai_mod_policy, get_ai_mod_settings, 
             set_ai_mod_settings, list_faqs, list_topic_router_rules, get_night_mode, set_pro_until,
             get_captcha_settings, set_captcha_settings, get_global_config, set_global_config,
-            list_forum_topics, count_forum_topics, upsert_forum_topic,
-            list_user_topics, sync_user_topic_names, get_story_settings, set_story_settings
+            count_forum_topics, upsert_forum_topic, get_story_settings, set_story_settings
         )
         # explizit ein dict bauen, damit die Funktionen korrekt referenziert werden
         return {
+            "get_story_settings": get_story_settings,
+            "set_story_settings": set_story_settings,
             "get_clean_deleted_settings": get_clean_deleted_settings,
             "set_clean_deleted_settings": set_clean_deleted_settings,
             "get_captcha_settings": get_captcha_settings,
@@ -1145,7 +1145,6 @@ def _db():
             'get_registered_groups', 'set_welcome', 'delete_welcome', 'get_welcome']
             # ... alle anderen benötigten Funktionen ...
         }
-    return locals()
 
 # === Helpers =================================================================
 async def _is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
@@ -2061,21 +2060,19 @@ def register_miniapp_routes(webapp, app):
     webapp.router.add_route("GET", "/miniapp/stats",     route_stats)
     webapp.router.add_route("GET", "/miniapp/file",      route_file)
     webapp.router.add_route("GET", "/miniapp/send_mood", route_send_mood)
-    webapp.router.add_route("POST", "/miniapp/topics/sync", route_topics_sync)
     webapp.router.add_route("POST", "/miniapp/apply",    route_apply)
     webapp.router.add_route("GET",  "/miniapp/spam/effective", route_spam_effective)
     webapp.router.add_route("POST", "/miniapp/topics/sync",   route_topics_sync)
     for p in ("/miniapp/groups","/miniapp/state","/miniapp/stats",
               "/miniapp/file","/miniapp/send_mood","/miniapp/topics/sync","/miniapp/apply"):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
-    for p in ("/miniapp/spam/effective","/miniapp/topics/sync"):
+    for p in ("/miniapp/spam/effective",):
         webapp.router.add_route("OPTIONS", p, _cors_ok)
         
     # --- Story-Sharing API (Emerald) ---
     try:
         from .story_api import register_story_api
         res = register_story_api(webapp)
-        import inspect, asyncio
         if inspect.iscoroutine(res):
             try:
                 asyncio.get_running_loop().create_task(res)

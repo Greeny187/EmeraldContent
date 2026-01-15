@@ -1,8 +1,10 @@
 # payments.py - Zentrale Zahlungsintegration für alle Bots
-import os, uuid, time, hmac, hashlib, logging
-import asyncio
+import hashlib
+import hmac
+import logging
+import os
+import uuid
 import httpx
-import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
